@@ -1,0 +1,25 @@
+[package]
+name = "vyr-size"
+description = "F9 static-size measurement vehicle: a linked thumbv7em ELF over the real render path (NOT runnable firmware)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# A measurement stub, never a published crate.
+publish = false
+
+[features]
+# Default = everything, so the host gate (check / clippy / test) compiles
+# every cfg branch and `cargo run -p vyr-size` smoke-runs the full stub.
+# The size matrix opts DOWN: `--no-default-features [--features font[,image]]`.
+default = ["font", "image"]
+# Bake fonts/roboto.ttf into .rodata + render the F5 text fixture (the MCU
+# model: TTF in flash, glyph cache in RAM).
+font = []
+# Bake the 24x24 RGBA checker into .rodata + render the F6 image fixture
+# (the F15 bake-to-flash model: decode is a build step, the device blits).
+image = []
+
+[dependencies]
+vyr-core = { path = "../vyr-core" }

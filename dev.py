@@ -26,6 +26,7 @@ COMMANDS = {
     "selftest": "render the demo scene to ./tmp/selftest.png via vyr-cli (logs ns/px + counters)",
     "bench": "perf gate: release vyr-bench check vs committed baseline + scaling-law assertion",
     "bench-record": "re-record vyr-bench/baseline.json (a reviewed act — commit it separately)",
+    "size-mcu": "F9 static numbers: build the vyr-size matrix for thumbv7em + arm-none-eabi-size table",
     "gate": "the full pre-commit gate: fmt-check + clippy + test + check-mcu",
 }
 
@@ -107,6 +108,93 @@ def cmd_bench_record(rest: list[str]) -> int:
     return _run(["cargo", "run", "--release", "-p", "vyr-bench", "--", "record", *rest])
 
 
+# --- F9 static size (issue #9) -------------------------------------------
+
+SIZE_TARGET = "thumbv7em-none-eabihf"
+# (config label, cargo profile, feature flags). Features select baked ASSETS,
+# not code — the IR interpreter's full vocabulary is statically reachable
+# from render() in every config (vyr-size/src/main.rs module docs).
+SIZE_MATRIX = [
+    ("code-only", "release", ["--no-default-features"]),
+    ("code-only", "release-mcu", ["--no-default-features"]),
+    ("font", "release", ["--no-default-features", "--features", "font"]),
+    ("font", "release-mcu", ["--no-default-features", "--features", "font"]),
+    ("font,image", "release", ["--no-default-features", "--features", "font,image"]),
+    ("font,image", "release-mcu", ["--no-default-features", "--features", "font,image"]),
+]
+# STM32F427 budgets (vyr-size/link.ld carries the same map).
+F427_FLASH = 2 * 1024 * 1024
+F427_RAM = 192 * 1024  # SRAM1+2+3; the 64K CCM is extra, not modelled
+# vyr-size's bump-allocator arena: measurement scaffolding in .bss, netted
+# out in the "static RAM net" column (keep in sync with ARENA_BYTES in
+# vyr-size/src/main.rs).
+SIZE_ARENA = 64 * 1024
+
+
+def cmd_size_mcu(_rest: list[str]) -> int:
+    import shutil
+
+    size_tool = shutil.which("arm-none-eabi-size")
+    if size_tool is None:
+        _log("ERROR: arm-none-eabi-size not on PATH (need the ARM GNU toolchain)")
+        return 1
+    rows: list[tuple[str, str, int, int, int]] = []
+    for label, profile, flags in SIZE_MATRIX:
+        rc = _run(
+            [
+                "cargo",
+                "build",
+                "-p",
+                "vyr-size",
+                "--target",
+                SIZE_TARGET,
+                "--profile",
+                profile,
+                *flags,
+            ]
+        )
+        if rc != 0:
+            _log(f"size-mcu FAILED building {label} / {profile}")
+            return rc
+        elf = REPO / "target" / SIZE_TARGET / profile / "vyr-size"
+        out = subprocess.run(
+            [size_tool, str(elf)], capture_output=True, text=True, cwd=REPO, check=False
+        )
+        if out.returncode != 0:
+            _log(f"ERROR: {size_tool} rc={out.returncode}: {out.stderr.strip()}")
+            return out.returncode
+        # Berkeley format: header line, then "text data bss dec hex filename".
+        text, data, bss = (int(v) for v in out.stdout.splitlines()[1].split()[:3])
+        rows.append((label, profile, text, data, bss))
+        _log(f"sized {label} / {profile}: text={text} data={data} bss={bss}")
+    hdr = (
+        f"{'config':<11} {'profile':<11} {'text':>9} {'data':>6} {'bss':>7} "
+        f"{'flash':>9} {'%2MiB':>6} {'sRAM':>7} {'net':>6} {'%192K':>6}"
+    )
+    lines = [
+        "F9 static size — vyr-size on thumbv7em-none-eabihf (STM32F427 map)",
+        hdr,
+        "-" * len(hdr),
+    ]
+    for label, profile, text, data, bss in rows:
+        flash = text + data  # .text+.rodata (+ .data load image) — all in flash
+        sram = data + bss  # static RAM footprint as linked
+        net = sram - SIZE_ARENA  # minus the measurement arena (scaffolding)
+        lines.append(
+            f"{label:<11} {profile:<11} {text:>9} {data:>6} {bss:>7} "
+            f"{flash:>9} {flash / F427_FLASH:>6.1%} {sram:>7} {net:>6} "
+            f"{net / F427_RAM:>6.2%}"
+        )
+    lines.append(
+        f"(flash = text+data; sRAM = data+bss; net = sRAM - {SIZE_ARENA} B bump arena; "
+        f"%RAM is net of F427's 192 KiB — working RAM model: docs/measurements/f9-static.md)"
+    )
+    for line in lines:
+        print(line)
+        _log(line)
+    return 0
+
+
 def cmd_gate(_rest: list[str]) -> int:
     for step in (cmd_fmt_check, cmd_clippy, cmd_test, cmd_check_mcu):
         rc = step([])
@@ -127,6 +215,7 @@ HANDLERS = {
     "selftest": cmd_selftest,
     "bench": cmd_bench,
     "bench-record": cmd_bench_record,
+    "size-mcu": cmd_size_mcu,
     "gate": cmd_gate,
 }
 

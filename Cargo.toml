@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["vyr-core", "vyr-cli", "vyr-bench"]
+members = ["vyr-core", "vyr-cli", "vyr-bench", "vyr-size"]
 
 [workspace.package]
 version = "0.0.1"
@@ -8,3 +8,17 @@ edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/awtoau/vyr"
 authors = ["awto <dan@awto.au>"]
+
+# The MCU-honest size profile (F9, #9): smallest-code optimization, fat LTO,
+# one codegen unit, abort-on-panic (the embedded reality — thumbv7em's target
+# spec aborts regardless; stated so the profile means the same thing
+# everywhere), symbols stripped (section sizes are unaffected; use the plain
+# `release` ELF for symbol-level analysis). `release` stays the desktop
+# oracle profile; `./dev.py size-mcu` measures BOTH.
+[profile.release-mcu]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

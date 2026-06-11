@@ -313,6 +313,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vyr-size"
+version = "0.0.1"
+dependencies = [
+ "vyr-core",
+]
+
+[[package]]
 name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

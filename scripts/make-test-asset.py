@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the committed F6 test asset: vyr-core/tests/assets/checker-24.png.
+"""Generate the committed F6 test asset: vyr-core/tests/assets/checker-24.png
+— plus its RAW twin vyr-size/assets/checker-24.rgba (same pixel() spec,
+flattened straight RGBA, no PNG container) for the F9 size vehicle's
+`include_bytes!` (no_std core cannot decode PNG; baking decoded pixels into
+flash is exactly the F15 model the size number should reflect).
 
 A 24x24 straight-alpha RGBA PNG, fully deterministic pixel spec (stdlib only
 — zlib + struct, no PIL):
@@ -26,6 +30,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "vyr-core" / "tests" / "assets" / "checker-24.png"
+OUT_RAW = REPO / "vyr-size" / "assets" / "checker-24.rgba"
 LOG = REPO / "tmp" / "make-test-asset.log"
 SIZE = 24
 
@@ -58,10 +63,12 @@ def chunk(tag: bytes, data: bytes) -> bytes:
 
 def main() -> int:
     raw = bytearray()
+    raw_rgba = bytearray()
     for y in range(SIZE):
         raw.append(0)  # filter type 0 (None) per row — simplest, deterministic
         for x in range(SIZE):
             raw.extend(pixel(x, y))
+            raw_rgba.extend(pixel(x, y))
     ihdr = struct.pack(">IIBBBBB", SIZE, SIZE, 8, 6, 0, 0, 0)  # 8-bit RGBA
     png = (b"\x89PNG\r\n\x1a\n"
            + chunk(b"IHDR", ihdr)
@@ -70,6 +77,9 @@ def main() -> int:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_bytes(png)
     log(f"wrote {OUT} ({len(png)} bytes, {SIZE}x{SIZE} RGBA)")
+    OUT_RAW.parent.mkdir(parents=True, exist_ok=True)
+    OUT_RAW.write_bytes(raw_rgba)
+    log(f"wrote {OUT_RAW} ({len(raw_rgba)} bytes raw straight-RGBA)")
     return 0
 
 
