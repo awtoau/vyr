@@ -271,13 +271,27 @@ def cmd_anim(rest: list[str]) -> int:
 
 
 def _anim_video(dump: Path, w: int, h: int) -> int:
-    """Assemble the PNG sequence into a LOSSLESS video: FFV1 (intra-only,
-    mathematically lossless) in Matroska — the eyeball/demo artifact, ./tmp
-    only, never committed (the committed regression form is the hash chain)."""
-    out = TMP / f"anim-{w}x{h}-ffv1.mkv"
+    """Assemble the PNG sequence into a LOSSLESS video — and PROVE it.
+
+    Dan's rule: rig videos are never lossy-compressed, and every artifact
+    DECLARES its resolution + colour depth. So:
+    - the filename carries the spec (…-rgb888-60fps-ffv1.mkv),
+    - the pixel format is EXPLICIT (-pix_fmt bgr0: 8-bit/channel RGB, full
+      range, NO chroma subsampling — never inferred, never yuv420),
+    - the container embeds a metadata comment,
+    - a sidecar .json states the spec machine-readably,
+    - and losslessness is VERIFIED, not asserted: frame 0 is decoded back
+      out of the video and byte-compared to the source PNG's pixels.
+    The video is the eyeball/demo artifact (./tmp only, never committed —
+    the committed regression form is the hash chain)."""
+    spec = f"{w}x{h}-rgb888-60fps-ffv1"
+    out = TMP / f"anim-{spec}.mkv"
+    comment = (f"vyr rig: {w}x{h}, RGB 8-bit/channel (bgr0), full range, "
+               f"no chroma subsampling, 60 fps, FFV1 (mathematically lossless)")
     args = [
         "ffmpeg", "-y", "-framerate", "60", "-i", str(dump / "frame-%04d.png"),
-        "-c:v", "ffv1", "-level", "3", str(out),
+        "-c:v", "ffv1", "-level", "3", "-pix_fmt", "bgr0",
+        "-metadata", f"comment={comment}", str(out),
     ]
     _log("ffmpeg exact command: " + " ".join(args))
     log_path = TMP / "ffmpeg-anim.log"
@@ -286,7 +300,33 @@ def _anim_video(dump: Path, w: int, h: int) -> int:
     if rc != 0:
         _log(f"ERROR: ffmpeg rc={rc} (see {log_path})")
         return rc
-    _log(f"lossless video → {out} ({out.stat().st_size:,} B; ffmpeg log: {log_path})")
+    # Roundtrip proof: decode frame 0 from the video, byte-compare pixels.
+    check = TMP / "anim-roundtrip-frame0.png"
+    rc = subprocess.call(
+        ["ffmpeg", "-y", "-i", str(out), "-vframes", "1", str(check)],
+        cwd=REPO, stdout=open(log_path, "ab"), stderr=subprocess.STDOUT)
+    if rc != 0:
+        _log(f"ERROR: roundtrip decode rc={rc}")
+        return rc
+    from PIL import Image
+
+    with Image.open(dump / "frame-0000.png") as a, Image.open(check) as b:
+        same = a.convert("RGB").tobytes() == b.convert("RGB").tobytes()
+    if not same:
+        _log(f"ERROR: LOSSLESS VIOLATION — {out.name} frame 0 != source PNG "
+             "(pixel mismatch after decode; investigate the encode chain)")
+        return 1
+    _log("roundtrip VERIFIED: video frame 0 == source PNG, byte-for-byte")
+    sidecar = {
+        "width": w, "height": h, "fps": 60, "codec": "ffv1 level 3",
+        "pix_fmt": "bgr0", "color_depth": "8-bit/channel RGB, full range",
+        "chroma_subsampling": "none", "lossless": True,
+        "roundtrip_verified": True,
+        "frames": len(list(dump.glob("frame-*.png"))),
+    }
+    out.with_suffix(".json").write_text(json.dumps(sidecar, indent=2) + "\n")
+    _log(f"lossless video → {out} ({out.stat().st_size:,} B; spec sidecar: "
+         f"{out.with_suffix('.json').name}; ffmpeg log: {log_path})")
     return 0
 
 
