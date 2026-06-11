@@ -213,9 +213,17 @@ QEMU_M4_MACHINE = "netduinoplus2"  # STM32F405: M4F + 192 KiB SRAM (the F427 bud
 # deltas are therefore insn counts: 1 cs = 10^7 insns.
 QEMU_M4_INSNS_PER_CS = 10_000_000
 QEMU_M4_TIMED_FRAMES = 4  # keep in sync with TIMED_FRAMES in vyr-size/src/workload.rs
+# F16 (#16) gap-recovery anchors for `qemu-m4 --draft`. The Exact figure is
+# THIS vehicle's own measured Quality::Exact insns/frame (docs/measurements/
+# f9-static.md, "~75.0 M insns/frame"); the LVGL figure is the ~10 M
+# insns/frame the M4 benchmark measured for an LVGL equivalent (the 7.4x
+# per-pixel gap that motivated F16). Both are anchors for the recovered-gap %,
+# not measured by this run — Draft's own insns/frame IS what the run measures.
+QEMU_M4_EXACT_INSNS = 75_000_000
+QEMU_M4_LVGL_INSNS = 10_000_000
 
 
-def cmd_qemu_m4(_rest: list[str]) -> int:
+def cmd_qemu_m4(rest: list[str]) -> int:
     import re
     import shutil
 
@@ -223,7 +231,14 @@ def cmd_qemu_m4(_rest: list[str]) -> int:
         _log("ERROR: qemu-system-arm not on PATH (dnf install qemu-system-arm)")
         return 1
     log_path = TMP / "qemu-m4.log"
-    flags = ["--no-default-features", "--features", "run-qemu"]
+    # F16 (#16): --draft renders the workload at Quality::Draft (integer no-AA
+    # fast path) — a build-time feature (the M4 binary has no env). The
+    # headline insns/frame then compares Draft vs the Exact 75 M / LVGL 10 M.
+    draft = "--draft" in rest
+    tier = "Draft" if draft else "Exact"
+    feats = "run-qemu,draft" if draft else "run-qemu"
+    flags = ["--no-default-features", "--features", feats]
+    _log(f"qemu-m4 quality tier: {tier}")
 
     # 1) Host reference leg: same workload, counting allocator — the x86
     #    frame hash the M4 must reproduce (plus the band==full self-check).
@@ -287,12 +302,15 @@ def cmd_qemu_m4(_rest: list[str]) -> int:
     g_peak = _re1(r"workload ok: heap peak=(\d+) B", gout)
     g_live = _re1(r"workload ok: heap peak=\d+ B live-end=(\d+) B", gout)
     g_cs = _re1(r"timed: \d+ warmed frames in (\d+) cs virtual", gout)
+    g_cov = _re1(r"F16 fast-path: \d+ / \d+ delivered px \(([\d.]+)%\)", gout)
     lines = [
-        f"qemu-m4 result ({QEMU_M4_MACHINE}, icount shift=0, wall {wall:.1f}s):",
+        f"qemu-m4 result ({QEMU_M4_MACHINE}, icount shift=0, wall {wall:.1f}s, quality={tier}):",
         f"  frame hash   M4 {g_hash} vs x86-64 {host_hash} → "
         + ("IDENTICAL (cross-ISA, banded==full)" if g_hash == host_hash else "MISMATCH"),
         f"  heap peak    M4 {g_peak} B (live-end {g_live} B) vs x86-64 {host_peak} B",
     ]
+    if g_cov is not None:
+        lines.append(f"  F16 fast-path coverage {g_cov}% of delivered px (integer no-AA spans)")
     for ph in re.finditer(r"phase ([\w-]+): heap live=(\d+) B peak=(\d+) B", gout):
         lines.append(f"  phase {ph.group(1):<11} live={ph.group(2):>7} B  peak={ph.group(3):>7} B")
     if g_cs is not None:
@@ -307,6 +325,22 @@ def cmd_qemu_m4(_rest: list[str]) -> int:
             f"  @180 MHz     ~{est_ms:.0f} ms/frame ESTIMATE — assumes CPI=1.0; a real M4's "
             "CPI, flash wait states and caches differ (calibrate on the F9 board half)",
         ]
+        # F16 (#16) headline: Draft insns/frame vs the Exact 75 M anchor and
+        # the LVGL ~10 M anchor — "how much of the 7.4x gap does Draft recover".
+        if draft:
+            exact_anchor = QEMU_M4_EXACT_INSNS
+            lvgl_anchor = QEMU_M4_LVGL_INSNS
+            saved = exact_anchor - per_frame
+            gap = exact_anchor - lvgl_anchor
+            recovered = 100.0 * saved / gap if gap else 0.0
+            speedup = exact_anchor / per_frame if per_frame else 0.0
+            lines += [
+                f"  F16 Draft    {per_frame:,} insns/frame vs Exact {exact_anchor:,} "
+                f"= {speedup:.2f}x; vs LVGL anchor {lvgl_anchor:,}",
+                f"  F16 GAP      Draft recovers {recovered:.0f}% of the Exact→LVGL gap "
+                f"({saved:,} of {gap:,} insns/frame) — remaining gap is the non-fast-path "
+                "ops (discs/rings/line/glyph/image) + tiny-skia residue",
+            ]
     for line in lines:
         print(line)
         _log(line)

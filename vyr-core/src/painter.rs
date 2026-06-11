@@ -92,7 +92,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{Canvas, OpClass, PlacedGlyph, Rect, RenderStats, Rgb, RgbaImage};
+use crate::{Canvas, OpClass, PlacedGlyph, Quality, Rect, RenderStats, Rgb, RgbaImage};
 use tiny_skia::{
     FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap, Point,
     PremultipliedColorU8, SpreadMode, Transform,
@@ -196,9 +196,36 @@ enum ClipFate {
     Masked,
 }
 
+/// ## The Draft quality tier (F16, #16) — integer, no AA, no tiny-skia
+///
+/// `Quality::Draft` is the budgeted-MCU runtime tier: it recovers the
+/// per-pixel cost the Exact tier spends on float-coverage AA. The ONE hot
+/// op it accelerates is the dominant UI primitive — an **opaque
+/// axis-aligned `fill_rrect` with radius 0** (backgrounds, panels, bar
+/// fills, track fills, the screen backdrop): instead of building a polygon
+/// and handing it to tiny-skia's float rasterizer, [`fill_rrect_draft`]
+/// writes premultiplied pixels DIRECTLY into the pixmap, one integer span
+/// per row — memset-class, no path, no coverage, no float.
+///
+/// **Band-exact WITHIN the tier by the same induction as the glyph/image
+/// blits** (module docs above): the span fill is a pure function of WORLD
+/// position (the world rect ∩ the band ∩ the rect-only clip), written with
+/// the exact-integer world→gutter-local offset. No AA, no fringe, no
+/// arc — every band that touches a given world pixel writes the same byte.
+/// Enforcement: `tests/draft_golden.rs` (Draft golden hash + even/uneven
+/// band equivalence). Draft pixels DIFFER from Exact (hard edges, no AA) —
+/// that is the tier's deliberate trade; Draft is NEVER asserted == Exact.
+///
+/// **Everything else falls back to the Exact path in Draft v1** and is
+/// counted honestly: radius>0 fills draw the rect SQUARE (corners are hard;
+/// the fidelity loss is the measurement's job to report), translucent fills
+/// and disc/ring/line/gradient/glyph/image take the float path unchanged.
+/// [`RenderStats::fastpath_pixels`] records exactly how many pixels the fast
+/// path carried so the coverage % is honest (#21).
 pub struct TinySkiaCanvas {
     pixmap: Pixmap,
     area: Rect,
+    quality: Quality,
     stats: RenderStats,
     /// Active clip stack (world coords). Empty = band-only clipping.
     clips: Vec<Clip>,
@@ -218,10 +245,21 @@ impl TinySkiaCanvas {
     /// coordinates; the backing pixmap is `(area.w + 2·GUTTER) ×
     /// (area.h + 2·GUTTER)` — see [`GUTTER`].
     pub fn new(area: Rect) -> Option<Self> {
+        Self::new_with_quality(area, Quality::Exact)
+    }
+
+    /// A canvas for ONE band at an explicit [`Quality`] tier (F16, #16).
+    /// `Quality::Exact` is identical to [`Self::new`] (the oracle path);
+    /// `Quality::Draft` enables the integer no-AA fast path for opaque
+    /// axis-aligned fills (struct docs). The pixmap is still allocated either
+    /// way — the gutter overscan stays (its removal is a future `Fast` knob,
+    /// #16); Draft's win is per-pixel work, not the band's fixed cost.
+    pub fn new_with_quality(area: Rect, quality: Quality) -> Option<Self> {
         let pixmap = Pixmap::new(area.w + 2 * GUTTER, area.h + 2 * GUTTER)?;
         Some(Self {
             pixmap,
             area,
+            quality,
             stats: RenderStats::default(),
             clips: Vec::new(),
             clip_bounds: Rect {
@@ -413,6 +451,71 @@ impl TinySkiaCanvas {
         self.clip_mask = Some(mask);
     }
 
+    /// Draft fast path for an OPAQUE AXIS-ALIGNED rect (radius 0, alpha 255):
+    /// write premultiplied pixels directly into the band pixmap, one integer
+    /// span per row — no path, no coverage, no tiny-skia (struct docs, F16).
+    ///
+    /// Band-exact within the Draft tier by the same induction as the
+    /// glyph/image blits: the written region is (world rect ∩ band ∩
+    /// rect-only clip), addressed with the exact-integer world→gutter-local
+    /// offset, so every band that touches a world pixel writes the same byte.
+    /// Returns `true` if it handled the op; `false` means the caller must use
+    /// the Exact path (a rounded clip overlaps → `ClipFate::Masked`; the
+    /// fast path declines so the clip stays exact).
+    fn fill_rrect_draft(&mut self, r: Rect, color: Rgb, _alpha: u8) -> bool {
+        // Fate under the active clip — world-space verdict (band-invariant).
+        match self.op_clip(r) {
+            ClipFate::Skip => return true,    // nothing to draw, op handled
+            ClipFate::Masked => return false, // rounded clip → let Exact run
+            ClipFate::Unclipped => {}
+            ClipFate::RectSpans(_) => {} // rect-only clip: intersect below
+        }
+        // World-space draw rect = the op rect ∩ all rect-only clip entries
+        // (clip_bounds is exactly that intersection when every entry is a
+        // rect, which Masked already excluded). Intersect in world coords.
+        let mut wx0 = r.x;
+        let mut wy0 = r.y;
+        let mut wx1 = r.x + r.w as i32;
+        let mut wy1 = r.y + r.h as i32;
+        if !self.clips.is_empty() {
+            let cb = self.clip_bounds;
+            wx0 = wx0.max(cb.x);
+            wy0 = wy0.max(cb.y);
+            wx1 = wx1.min(cb.x + cb.w as i32);
+            wy1 = wy1.min(cb.y + cb.h as i32);
+        }
+        // Clamp to this band (the outermost clip, I1).
+        wx0 = wx0.max(self.area.x);
+        wy0 = wy0.max(self.area.y);
+        wx1 = wx1.min(self.area.x + self.area.w as i32);
+        wy1 = wy1.min(self.area.y + self.area.h as i32);
+        if wx1 <= wx0 || wy1 <= wy0 {
+            return true; // fully outside this band — op handled, no pixels
+        }
+        // Opaque source-over of an opaque colour = a plain store of the
+        // premultiplied colour (alpha 255 ⇒ premultiplied == straight). One
+        // store per pixel; the inner loop is a straight slice write.
+        let Some(src) = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, 0xFF) else {
+            return false;
+        };
+        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let pm_w = self.pixmap.width() as i32;
+        let px = self.pixmap.pixels_mut();
+        for wy in wy0..wy1 {
+            let ly = wy + oyi;
+            let row = (ly * pm_w) as usize;
+            let c0 = (wx0 + oxi) as usize;
+            let c1 = (wx1 + oxi) as usize;
+            px[row + c0..row + c1].fill(src);
+        }
+        // Exact span attribution — these pixels took the fast path.
+        let drawn = (wx1 - wx0) as u64 * (wy1 - wy0) as u64;
+        self.stats.pixels_written += drawn;
+        self.stats.pixels_by_class[OpClass::OpaqueFill as usize] += drawn;
+        self.stats.fastpath_pixels += drawn;
+        true
+    }
+
     fn fill(&mut self, contours: &[&[(f32, f32)]], color: Rgb, alpha: u8, bbox: Rect) {
         let fate = self.op_clip_fill(bbox);
         if fate == ClipFate::Skip {
@@ -541,6 +644,16 @@ impl Canvas for TinySkiaCanvas {
 
     fn fill_rrect(&mut self, r: Rect, radius: u32, color: Rgb, alpha: u8) {
         let rad = Self::clamp_radius(r, radius);
+        // F16 Draft fast path: an OPAQUE fill draws as an integer span fill,
+        // no AA, no tiny-skia (struct docs). Radius>0 draws SQUARE in Draft —
+        // corners are hard (the documented fidelity loss); the measurement
+        // reports how many pixels that affects. Translucent fills, and any
+        // op the fast path declines (rounded clip overlap → Masked), fall
+        // through to the Exact path below.
+        if self.quality == Quality::Draft && alpha == 0xFF && self.fill_rrect_draft(r, color, alpha)
+        {
+            return;
+        }
         let pts = rrect_points(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
         self.fill(&[&pts], color, alpha, r);
         self.count(Self::class_for(alpha), r);

@@ -263,7 +263,13 @@ fn main() -> ! {
     // SAFETY: sole reference ever taken to the CCM band buffer (single
     // pass through main on a single-threaded target).
     let band_buf = unsafe { &mut *BAND_BUF.0.get() };
-    match crate::workload::run(&mut emit, &heap, Some(&clock), band_buf) {
+    match crate::workload::run(
+        &mut emit,
+        &heap,
+        Some(&clock),
+        band_buf,
+        crate::workload::WORKLOAD_QUALITY,
+    ) {
         Ok(_) => exit(true),
         Err(e) => {
             write_line(&alloc::format!("ERROR [vyr-size] workload failed: {e:?}"));

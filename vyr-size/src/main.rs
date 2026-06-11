@@ -315,7 +315,8 @@ fn main() {
     // Heap-allocated on the host (vyr-cli's shape); the M4 leg places it in
     // CCM instead — see workload::BAND_BYTES for why both are honest.
     let mut band_buf = alloc::vec![0u8; workload::BAND_BYTES];
-    let banded = match workload::run(&mut emit, &heap, None, &mut band_buf) {
+    let quality = workload::WORKLOAD_QUALITY;
+    let banded = match workload::run(&mut emit, &heap, None, &mut band_buf, quality) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("ERROR [vyr-size] host run-qemu workload FAILED: {e:?}");
@@ -323,7 +324,7 @@ fn main() {
         }
     };
     // Band-equivalence self-check, host-only (full frame needs 567 KB):
-    match workload::full_frame_hash() {
+    match workload::full_frame_hash(quality) {
         Ok(full) if full == banded => {
             println!("INFO  [vyr-size] full-frame fnv1a={full:#018x} == banded (band equivalence)");
         }

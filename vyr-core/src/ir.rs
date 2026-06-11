@@ -107,7 +107,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::{Assets, Canvas, Fonts, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
+use crate::{Assets, Canvas, Fonts, Quality, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
 
 #[derive(Debug, Deserialize)]
 pub struct Node {
@@ -162,7 +162,23 @@ impl Request {
         buf: &mut [u8],
         stride: usize,
     ) -> Result<RenderStats, RenderError> {
-        let mut canvas = TinySkiaCanvas::new(area)
+        self.render_with_quality(fonts, assets, area, buf, stride, Quality::Exact)
+    }
+
+    /// [`Request::render_with`] at an explicit [`Quality`] tier (F16, #16).
+    /// `Quality::Exact` is the oracle path (byte-identical to `render_with`);
+    /// `Quality::Draft` builds a Draft canvas — the walk is unchanged, the
+    /// per-op fast/slow decision lives in the painter (see its struct docs).
+    pub fn render_with_quality(
+        &self,
+        fonts: &mut Fonts,
+        assets: &Assets,
+        area: Rect,
+        buf: &mut [u8],
+        stride: usize,
+        quality: Quality,
+    ) -> Result<RenderStats, RenderError> {
+        let mut canvas = TinySkiaCanvas::new_with_quality(area, quality)
             .ok_or_else(|| RenderError::BadIr("pixmap allocation failed".into()))?;
         // Screen backdrop: the root's background, else the near-white paper
         // default (see module docs) — painted across the whole screen.

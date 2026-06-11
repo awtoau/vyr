@@ -32,7 +32,7 @@ use vyr_core::demo::{
     CLIP_FLAT_IR, CLIP_IR, DEMO_H, DEMO_IR, DEMO_W, IMAGE_ASSET, IMAGE_IR, PANEL_NEXT_IR,
     PANEL_PREV_IR, TEXT_IR, demo_scene,
 };
-use vyr_core::{Assets, Canvas, Fonts, Rect, Rgb, RgbaImage, TinySkiaCanvas, dirty_rects};
+use vyr_core::{Assets, Canvas, Fonts, Quality, Rect, Rgb, RgbaImage, TinySkiaCanvas, dirty_rects};
 
 /// A check fails when a bench exceeds baseline × this. 1.5 = real regressions
 /// fire, day-to-day desktop noise (a few %) does not.
@@ -463,6 +463,165 @@ fn bench_ir_scene() -> f64 {
     })
 }
 
+// --- F16 Draft-tier benches (#16) ------------------------------------------
+// The Exact vs Draft per-pixel comparison: same fixture, same band, two
+// quality tiers. The DEMO_IR scene is text/image-free (empty registries are
+// honest), and its opaque rects exercise the integer fast path (~81% of
+// delivered pixels) while the discs/rings/line fall back to Exact — so the
+// scene number is the realistic blended speedup, not a best-case rect.
+
+fn render_demo_quality(quality: Quality) -> f64 {
+    let mut fonts = Fonts::new();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with_quality(
+            DEMO_IR,
+            &mut fonts,
+            &assets,
+            Rect {
+                x: 0,
+                y: 0,
+                w: DEMO_W,
+                h: DEMO_H,
+            },
+            &mut buf,
+            (DEMO_W * 3) as usize,
+            quality,
+        )
+        .expect("demo fixture renders");
+    })
+}
+
+fn bench_ir_scene_exact() -> f64 {
+    render_demo_quality(Quality::Exact)
+}
+
+fn bench_ir_scene_draft() -> f64 {
+    render_demo_quality(Quality::Draft)
+}
+
+/// One opaque radius-0 rect at Draft — the pure integer span-fill cost, the
+/// micro-bench twin of the Exact `prim/fill_rrect_64` (which uses radius 8).
+/// This is the raw lever: an opaque axis-aligned fill with no AA.
+fn bench_fill_rect_draft() -> f64 {
+    let mut c = TinySkiaCanvas::new_with_quality(
+        Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 120,
+        },
+        Quality::Draft,
+    )
+    .expect("pixmap");
+    measure(|| {
+        c.fill_rrect(
+            Rect {
+                x: 20,
+                y: 20,
+                w: 64,
+                h: 64,
+            },
+            0,
+            INK,
+            0xFF,
+        )
+    })
+}
+
+/// The Exact twin of [`bench_fill_rect_draft`] — radius 0, alpha 255, so the
+/// ONLY difference vs Draft is the AA path. The ratio of the two ns/px is the
+/// honest per-op lever the fast path pulls.
+fn bench_fill_rect_exact() -> f64 {
+    let mut c = band_canvas();
+    measure(|| {
+        c.fill_rrect(
+            Rect {
+                x: 20,
+                y: 20,
+                w: 64,
+                h: 64,
+            },
+            0,
+            INK,
+            0xFF,
+        )
+    })
+}
+
+/// Render DEMO_IR full-frame at `quality` and return the RGB888 bytes —
+/// the fidelity-delta source.
+fn demo_bytes(quality: Quality) -> Vec<u8> {
+    let mut fonts = Fonts::new();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    vyr_core::render_with_quality(
+        DEMO_IR,
+        &mut fonts,
+        &assets,
+        Rect {
+            x: 0,
+            y: 0,
+            w: DEMO_W,
+            h: DEMO_H,
+        },
+        &mut buf,
+        (DEMO_W * 3) as usize,
+        quality,
+    )
+    .expect("demo renders");
+    buf
+}
+
+/// The #21 honest fidelity delta: Draft vs Exact on the SAME fixture —
+/// differing-pixel count + %, max single-channel error, and the fast-path
+/// coverage % (how much of the frame the integer path actually carried).
+/// Logged, not gated (Draft is its own tier; it is NEVER asserted == Exact).
+fn log_draft_fidelity() {
+    let exact = demo_bytes(Quality::Exact);
+    let draft = demo_bytes(Quality::Draft);
+    let mut diff_px = 0u64;
+    let mut max_chan = 0u8;
+    for (e, d) in exact.chunks_exact(3).zip(draft.chunks_exact(3)) {
+        if e != d {
+            diff_px += 1;
+            for k in 0..3 {
+                max_chan = max_chan.max(e[k].abs_diff(d[k]));
+            }
+        }
+    }
+    let total_px = (DEMO_W * DEMO_H) as u64;
+    // Fast-path coverage from the stats (a second render — cheap, one frame).
+    let mut fonts = Fonts::new();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    let stats = vyr_core::render_with_quality(
+        DEMO_IR,
+        &mut fonts,
+        &assets,
+        Rect {
+            x: 0,
+            y: 0,
+            w: DEMO_W,
+            h: DEMO_H,
+        },
+        &mut buf,
+        (DEMO_W * 3) as usize,
+        Quality::Draft,
+    )
+    .expect("demo renders");
+    log(&format!(
+        "F16 Draft fidelity (scene/ir_full): {diff_px}/{total_px} px differ ({:.1}%), \
+         max channel error {max_chan}/255; fast-path coverage {}/{} delivered px ({:.1}%) \
+         — the rest fall back to Exact (discs/rings/line/AA corners)",
+        100.0 * diff_px as f64 / total_px as f64,
+        stats.fastpath_pixels,
+        stats.pixels_written,
+        100.0 * stats.fastpath_pixels as f64 / stats.pixels_written as f64,
+    ));
+}
+
 fn benches() -> Vec<Bench> {
     vec![
         Bench {
@@ -514,6 +673,29 @@ fn benches() -> Vec<Bench> {
             name: "scene/ir_full",
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_ir_scene,
+        },
+        // F16 (#16): the same scene at Exact vs Draft — the blended per-pixel
+        // speedup (opaque rects fast, curves fall back), plus the raw opaque
+        // radius-0 fill lever both ways.
+        Bench {
+            name: "scene/ir_full_exact",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_ir_scene_exact,
+        },
+        Bench {
+            name: "scene/ir_full_draft",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_ir_scene_draft,
+        },
+        Bench {
+            name: "prim/fill_rect0_exact",
+            pixels: 64.0 * 64.0,
+            run: bench_fill_rect_exact,
+        },
+        Bench {
+            name: "prim/fill_rect0_draft",
+            pixels: 64.0 * 64.0,
+            run: bench_fill_rect_draft,
         },
         Bench {
             name: "scene/text_full",
@@ -646,6 +828,30 @@ fn main() -> std::process::ExitCode {
             (clip / flat - 1.0) * 100.0
         ));
     }
+
+    // F16 (#16) headlines: the Draft tier's measured value, in both the
+    // per-op lever and the blended-scene form, plus the fidelity it costs.
+    if let (Some(re), Some(rd)) = (
+        results.get("prim/fill_rect0_exact"),
+        results.get("prim/fill_rect0_draft"),
+    ) {
+        log(&format!(
+            "F16 Draft lever (opaque radius-0 fill): Exact {re:.2} ns/px vs Draft {rd:.2} ns/px \
+             = {:.1}x faster per pixel (integer span fill, no AA)",
+            re / rd
+        ));
+    }
+    if let (Some(se), Some(sd)) = (
+        raw_ns.get("scene/ir_full_exact"),
+        raw_ns.get("scene/ir_full_draft"),
+    ) {
+        log(&format!(
+            "F16 Draft scene (DEMO_IR full frame): Exact {se:.0} ns vs Draft {sd:.0} ns \
+             = {:.2}x faster (blended — opaque rects fast, curves fall back)",
+            se / sd
+        ));
+    }
+    log_draft_fidelity();
 
     match scaling_assertion() {
         Ok(lines) => {

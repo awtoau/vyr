@@ -114,6 +114,29 @@ pub enum OpClass {
     AaEdge,
 }
 
+/// Render quality tier (F16, #16): a SMALL DISCRETE ENUM, never a float, and
+/// **every tier is individually deterministic** (same input + same tier =
+/// same bytes, banding included). [`Quality::Exact`] is the DEFAULT and the
+/// oracle/conformance mode — the float-AA tiny-skia path, byte-stable against
+/// the F1 goldens. [`Quality::Draft`] is the integer, no-AA fast path for
+/// budgeted MCU runtime: opaque axis-aligned fills become direct integer span
+/// writes (no path, no coverage, no tiny-skia), recovering the per-pixel cost
+/// AA spends. Draft pixels DIFFER from Exact (hard edges, no AA) — that is the
+/// tier's deliberate trade; Draft has its OWN goldens, never compared to
+/// Exact. Room is left for a future `Fast` (half-density flattening) — not
+/// built yet (#16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Quality {
+    /// Float-AA tiny-skia path. The default everywhere oracle-facing.
+    #[default]
+    Exact,
+    /// Integer, no-AA fast path. Opaque rects → direct span fills; the
+    /// minority ops (disc/ring/line/gradient/glyph/image, and translucent
+    /// fills) fall back to the Exact path in v1, counted honestly so the
+    /// fast-path coverage is measurable ([`RenderStats::fastpath_pixels`]).
+    Draft,
+}
+
 /// Always-compiled render counters (invariant I3): what the benches read,
 /// what the farm reply reports, what the debug HUD displays. Pixel counts,
 /// not timings — core has no clock (I7).
@@ -136,6 +159,13 @@ pub struct RenderStats {
     pub glyphs_rasterized: u64,
     pub glyph_cache_entries: u64,
     pub glyph_cache_bytes: u64,
+    /// F16 (#16): pixels that took the [`Quality::Draft`] integer no-AA fast
+    /// path (direct span fills) rather than the tiny-skia/Exact fallback.
+    /// Always 0 under [`Quality::Exact`]. The honesty number for the Draft
+    /// measurement: fast-path coverage % = `fastpath_pixels / pixels_written`
+    /// (#21 honest-delta pattern — say exactly how much of the frame the fast
+    /// path actually carried, and how much fell back).
+    pub fastpath_pixels: u64,
 }
 
 /// Hard render failure (invariant I6): an unknown widget type or a missing
@@ -243,6 +273,22 @@ pub fn render_with(
     stride: usize,
 ) -> Result<RenderStats, RenderError> {
     ir::Request::parse(ir_json)?.render_with(fonts, assets, area, buf, stride)
+}
+
+/// [`render_with`] at an explicit [`Quality`] tier (F16, #16). `Quality::Exact`
+/// is byte-identical to [`render_with`] (the oracle path); `Quality::Draft`
+/// takes the integer no-AA fast path where it applies — different bytes, its
+/// own goldens.
+pub fn render_with_quality(
+    ir_json: &str,
+    fonts: &mut Fonts,
+    assets: &Assets,
+    area: Rect,
+    buf: &mut [u8],
+    stride: usize,
+    quality: Quality,
+) -> Result<RenderStats, RenderError> {
+    ir::Request::parse(ir_json)?.render_with_quality(fonts, assets, area, buf, stride, quality)
 }
 
 /// [`render_with`] with an empty asset registry — convenience for image-free

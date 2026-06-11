@@ -24,9 +24,19 @@ use alloc::format;
 #[cfg(not(target_os = "none"))]
 use alloc::vec;
 
-use vyr_core::{Assets, Fonts, Rect, RenderError, RenderStats};
+use vyr_core::{Assets, Fonts, Quality, Rect, RenderError, RenderStats};
 
 use crate::opaque;
+
+/// F16 (#16): the quality tier this build renders at. `Quality::Exact` by
+/// default (the 75 M-insn oracle frame); `--features draft` selects
+/// `Quality::Draft` (integer no-AA fast path) — a build-time choice because
+/// the M4 binary has no env. `./dev.py qemu-m4 --draft` flips it.
+#[cfg(not(feature = "draft"))]
+pub const WORKLOAD_QUALITY: Quality = Quality::Exact;
+/// See [`WORKLOAD_QUALITY`].
+#[cfg(feature = "draft")]
+pub const WORKLOAD_QUALITY: Quality = Quality::Draft;
 
 /// Fixture frame size — the 480×270 the vyvanse memory profiles use.
 pub const FIXTURE_W: u32 = 480;
@@ -119,12 +129,14 @@ fn render_frame_banded(
     fonts: &mut Fonts,
     assets: &Assets,
     band_buf: &mut [u8],
+    quality: Quality,
     report: Option<(&mut dyn FnMut(&str), &dyn Fn() -> (usize, usize))>,
 ) -> Result<(u64, u64, RenderStats), RenderError> {
     let stride = (FIXTURE_W * 3) as usize;
     let mut report = report;
     let mut hash = FNV_OFFSET;
     let mut pixels = 0u64;
+    let mut fastpath = 0u64;
     let mut stats = RenderStats::default();
     let mut y = 0u32;
     while y < FIXTURE_H {
@@ -136,8 +148,10 @@ fn render_frame_banded(
             h,
         };
         let len = stride * h as usize;
-        stats = req.render_with(fonts, assets, band, &mut band_buf[..len], stride)?;
+        stats =
+            req.render_with_quality(fonts, assets, band, &mut band_buf[..len], stride, quality)?;
         pixels += stats.pixels_written;
+        fastpath += stats.fastpath_pixels;
         // black_box: the band bytes must be materialized before hashing.
         hash = fnv1a_fold(hash, core::hint::black_box(&band_buf[..len]));
         if y == 0
@@ -147,6 +161,9 @@ fn render_frame_banded(
         }
         y += h;
     }
+    // Carry the FRAME-summed fast-path coverage (the per-band stats hold only
+    // the last band's) so the F16 honesty number is the whole frame's.
+    stats.fastpath_pixels = fastpath;
     Ok((hash, pixels, stats))
 }
 
@@ -161,6 +178,7 @@ pub fn run(
     heap: &dyn Fn() -> (usize, usize),
     clock_cs: Option<&dyn Fn() -> i32>,
     band_buf: &mut [u8],
+    quality: Quality,
 ) -> Result<u64, RenderError> {
     if band_buf.len() != BAND_BYTES {
         // Honest hard failure — a short buffer would render a thinner band
@@ -170,9 +188,13 @@ pub fn run(
             band_buf.len()
         )));
     }
+    let qname = match quality {
+        Quality::Exact => "Exact",
+        Quality::Draft => "Draft",
+    };
     emit(&format!(
         "INFO  [vyr-size] workload: {FIXTURE_W}x{FIXTURE_H} RGB888 in {FIXTURE_W}x{BAND_H} \
-         horizontal bands; subset font {} B (full roboto: 162,876 B)",
+         horizontal bands; subset font {} B (full roboto: 162,876 B); quality={qname}",
         SUBSET_FONT.len()
     ));
 
@@ -198,12 +220,26 @@ pub fn run(
         &mut fonts,
         &assets,
         band_buf,
+        quality,
         Some((&mut *emit, heap)),
     )?;
     phase(emit, heap, "frame");
     let bands = FIXTURE_H.div_ceil(BAND_H);
     emit(&format!(
         "INFO  [vyr-size] frame fnv1a={hash:#018x} bands={bands} pixels_written={pixels}"
+    ));
+    // F16 (#16) honesty: how much of THIS frame the integer fast path carried
+    // (0 under Exact). The remaining pixels took the tiny-skia/Exact path —
+    // the residue the headline insns/frame still pays for.
+    let cov = if pixels > 0 {
+        100.0 * stats.fastpath_pixels as f64 / pixels as f64
+    } else {
+        0.0
+    };
+    emit(&format!(
+        "INFO  [vyr-size] F16 fast-path: {} / {pixels} delivered px ({cov:.1}%) via the \
+         integer no-AA span fill (quality={qname})",
+        stats.fastpath_pixels
     ));
     emit(&format!(
         "INFO  [vyr-size] glyph cache: rasterized={} entries={} bytes={}",
@@ -217,7 +253,8 @@ pub fn run(
         const TIMED_FRAMES: u32 = 4;
         let t0 = clock();
         for _ in 0..TIMED_FRAMES {
-            let (h2, _, _) = render_frame_banded(&req, &mut fonts, &assets, band_buf, None)?;
+            let (h2, _, _) =
+                render_frame_banded(&req, &mut fonts, &assets, band_buf, quality, None)?;
             if h2 != hash {
                 emit(&format!(
                     "ERROR [vyr-size] warmed frame hash {h2:#018x} != first {hash:#018x}"
@@ -244,7 +281,7 @@ pub fn run(
 /// (the 567,424 B gutter pixmap a 192 KiB part can never hold), hashed with
 /// the same FNV — must equal the banded stream's hash (band equivalence).
 #[cfg(not(target_os = "none"))]
-pub fn full_frame_hash() -> Result<u64, RenderError> {
+pub fn full_frame_hash(quality: Quality) -> Result<u64, RenderError> {
     let mut fonts = Fonts::new();
     fonts.register("roboto", SUBSET_FONT.to_vec())?;
     let mut assets = Assets::new();
@@ -260,6 +297,8 @@ pub fn full_frame_hash() -> Result<u64, RenderError> {
         w: FIXTURE_W,
         h: FIXTURE_H,
     };
-    vyr_core::render_with(FIXTURE_IR, &mut fonts, &assets, area, &mut buf, stride)?;
+    vyr_core::render_with_quality(
+        FIXTURE_IR, &mut fonts, &assets, area, &mut buf, stride, quality,
+    )?;
     Ok(fnv1a_fold(FNV_OFFSET, &buf))
 }

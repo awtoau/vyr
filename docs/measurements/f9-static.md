@@ -294,3 +294,62 @@ Reproduce: `./dev.py qemu-m4` here; the table:
 awto-vyvanse. Still open for the BOARD half: real-silicon CPI calibration of
 the insn counts, RGB565 convert cost, glyph-cache boot-fill wall time, and
 the #19 zero-copy font registration.
+
+### F16 Draft tier — measured insns/frame on the SAME emulated M4 (#16) — 2026-06-12
+
+The Exact frame above costs **~75 M insns/frame** because the tiny-skia
+float-coverage AA path runs on every fill — the M4 benchmark exposed a ~7.4×
+per-pixel gap vs an LVGL equivalent (~10 M insns/frame). F16's **Draft** tier
+is the first lever against it: an OPAQUE axis-aligned `fill_rrect` (radius 0)
+— the dominant UI op (backgrounds, panels, track/bar fills, the screen
+backdrop) — becomes a direct integer span fill into the pixmap (memset-class,
+no path, no coverage, no tiny-skia). Everything else (rounded corners → drawn
+SQUARE, discs/rings/line/gradient/glyph/image, translucent fills) falls back
+to the Exact path in v1; `RenderStats::fastpath_pixels` records exactly how
+much the fast path carried so the number is honest. Draft is its own
+deterministic, band-exact tier (own goldens, `tests/draft_golden.rs`); it is
+NEVER compared byte-for-byte to Exact.
+
+**The headline, same vehicle, same 480×270 banded frame, same icount clock**
+(`./dev.py qemu-m4` vs `./dev.py qemu-m4 --draft`):
+
+| tier | insns/frame | insn/px | fast-path coverage | cross-ISA hash |
+|---|---|---|---|---|
+| **Exact** (default, oracle) | **77.5 M** (31 cs) | 598 | 0.0 % | M4 == x86-64, banded == full |
+| **Draft** (integer no-AA) | **57.5 M** (23 cs) | 444 | **80.7 %** | M4 == x86-64, banded == full |
+| _LVGL anchor_ (the gap target) | _~10 M_ | _~77_ | — | — |
+
+- **Draft = 1.30× the Exact frame** (77.5 M → 57.5 M; 8 cs saved of 31), and
+  against the 75 M-Exact / 10 M-LVGL anchors **Draft recovers ~27 % of the
+  Exact→LVGL gap** (17.5 M of 65 M insns/frame). Draft stays fully
+  deterministic and band-exact cross-ISA (M4 hash == host hash == full-frame
+  hash, a DIFFERENT hash from Exact — the no-AA bytes).
+- **Fast-path coverage 80.7 %** of delivered pixels took the integer span
+  fill on this fixture; the **remaining ~19 % + every curve/glyph/image op**
+  still pay the tiny-skia/Exact cost — that residue IS the remaining gap. The
+  panel fixture is curve- and text-heavy (a full gauge ring, four text runs,
+  an image, sliders/toggle with disc knobs), so it is a conservative read;
+  a fill-dominated UI (dashboards, bar panels) would recover more.
+- **Host micro-numbers** (`./dev.py bench`, x86-64 release): the raw lever —
+  an opaque radius-0 fill — is **24× faster per pixel** (0.81 → 0.03 ns/px:
+  the float rasterizer vs a slice `fill`); the blended DEMO_IR scene (rects
+  fast, curves fall back) is **1.5× faster** end-to-end. Fidelity delta Draft
+  vs Exact on DEMO_IR: **628/14400 px differ (4.4 %), max channel error
+  220/255** — concentrated on the square-corner pixels (radius drawn square)
+  and the hard fill edges that Exact anti-aliases.
+
+**Honest read — does F16 make vyr embedded-competitive?** Not on its own, and
+not from Draft v1 alone: 57.5 M insns/frame is still ~5.7× the LVGL anchor.
+The full-frame 60 fps story was never the M4 plan (the F3 dirty-rect path is
+~8× cheaper per step, and that composes with Draft); Draft is the
+per-pixel-cost half of the same answer. The biggest remaining lever is the
+non-fast-path ops — once integer no-AA disc/ring/line land (Bresenham-class,
+no float) the fast-path coverage rises toward 100 % and the tiny-skia residue
+drops out, and the future `Fast` knob (gutter-off + half-density flattening)
+removes the per-band overscan. Draft is the proof the lever WORKS and is
+measurable; closing the gap is the rest of #16 plus #21 (the dirty-path knob).
+
+Reproduce: `./dev.py qemu-m4 --draft` (Draft) vs `./dev.py qemu-m4` (Exact);
+host deltas `./dev.py bench` (the `F16 Draft …` log lines + the
+`scene/ir_full_{exact,draft}` / `prim/fill_rect0_{exact,draft}` baseline
+rows).
