@@ -17,7 +17,8 @@ widget vocabulary. It is being built in three stages:
 **Status: painting.** F1 (polygon-only tiny-skia painter, byte-exact band
 equivalence), F2 (ns/px perf gate + scaling-law assertion), F3-lite (IR
 rendered natively from the `vy_` vocabulary), F5 (TTF text via skrifa +
-rasterize-once glyph cache — the FULL text path is `no_std`) are landed, and
+rasterize-once glyph cache — the FULL text path is `no_std`), F6 (PNG assets:
+decode in the cli, deterministic integer blits in core) are landed, and
 vyr runs live as the fifth backend in the awto-vyvanse render farm. See the
 **[milestone gallery](docs/milestones/README.md)** — the renderer's history
 in its own golden pixels. The full plan — architecture, day-1 invariants

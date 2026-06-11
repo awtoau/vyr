@@ -16,6 +16,7 @@ static server). On GitHub this README renders inline below.
 | **F3-lite — IR widgets** | 2026-06-11 | `83a7c09` | ![F3](f3-ir-widgets.png) | The `vy_` vocabulary rendered natively from IR JSON (no lowering): bordered frame, disc, 60% slider + knob, toggle ON, gauge ring, rule. `IR_GOLDEN_FNV1A`; band-exact. |
 | **F5 — text** | 2026-06-11 | `834ed5e` | ![F5](f5-text.png) | skrifa-parsed Roboto through the rasterize-once A8 glyph cache: 14px label, button with centred ink-inherited label, 20px `vy_lcd`. `TEXT_GOLDEN_FNV1A`; band-exact (glyph curves never meet band clipping). Full path is `no_std` (thumbv7em). |
 | **F7 — the farm speaks vyr** | 2026-06-11 | vyvanse `84a612d` / `2fac0e9` | ![frame](f7-farm-frame.png) ![slider](f7-farm-slider.png) ![label](f7-farm-label.png) | The same widgets rendered THROUGH the vyvanse render farm (`render(thing, "vyr")` → vyr_server → one-shot vyr-cli), ~2 ms each — vyr live as the fifth backend beside Qt/LVGL/TGX/Flutter. |
+| **F6 — images** | 2026-06-11 | `28ea911` | ![F6](f6-image.png) | The committed 24×24 RGBA checker blitted from the caller-owned `Assets` registry (decode in cli, core blits — I7): natural size inside a bigger widget, CLIPPED by a smaller one, over a frame, via `vy_imagebutton`. The semi-transparent quadrant blends by exact integer source-over (spot-asserted to the byte); the transparent hole skips. `IMAGE_GOLDEN_FNV1A`; band-exact (integer blits — the glyph argument). |
 
 ## Engineering gallery — the special bits
 
@@ -154,3 +155,4 @@ budget blows and recovers when headroom returns.
 |---|---|---|
 | F2 baseline | fills 1.3 · strokes 2.5 · discs 3.7 · rings 5.2 · gradients 6.7 · IR scene 5.9 | scaling table exposed the per-band fixed cost (1.0×→2.1× as bands shrink) — first recorded optimization target |
 | F5 text | glyph blits 1.37 · text scene 1.86 | 19 cached masks = 2,209 B RAM; rasterize-once proven by counters |
+| F6 images | image blits 2.33 (half-opaque/half-blend 64×64) · image scene 1.66 | decode is a load cost (shell); the recurring per-frame cost is the pure blit |

@@ -75,6 +75,23 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<div class="stage">
+  <div class="imgs"><img src="f6-image.png" alt="F6 images"></div>
+  <div>
+    <h2>F6 — images <span class="meta">2026-06-11 · <code>28ea911</code></span></h2>
+    <p>The committed 24×24 RGBA checker blitted from the caller-owned
+    <code>Assets</code> registry (PNG decode lives in vyr-cli; core only ever
+    blits registered pixels — invariant I7): natural size inside a bigger
+    widget rect, CLIPPED by a smaller one, over a frame fill, and via
+    <code>vy_imagebutton</code>. The semi-transparent quadrant blends by the
+    same exact-rounding integer source-over as glyphs (spot-asserted to the
+    byte: yellow&nbsp;a=128 over the blue backdrop = exactly 157,165,82); the
+    transparent centre hole skips. Band-exact by the glyph argument; blits
+    cost 2.33&nbsp;ns/px. Natural-size matches LVGL/TGX; Qt's scale-to-fit
+    divergence is recorded on issue #6.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
 <p class="lede">The places where vyr does something non-obvious, with the
 evidence images.</p>
