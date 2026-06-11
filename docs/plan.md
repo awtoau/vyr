@@ -144,8 +144,11 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
   `schema_version` checked); render-node-per-`vy_`-type registry; layout =
   `BoxConstraints` down / `Size` up, **v1 absolute pass-through** (today's IR
   is x/y/w/h) with the protocol scaffolded for flex later; dirty-rect
-  tracking; hard error on unknown types (I6); committed vyvanse-generated IR
-  fixtures (I8).
+  tracking; **clip stack** in the paint protocol (containers clip children,
+  rounded-corner clip for radius boxes, scroll containers clip by
+  construction — clipping composes with banding, the band is just the
+  outermost clip); hard error on unknown types (I6); committed
+  vyvanse-generated IR fixtures (I8).
 - **Acceptance:** fixture IRs render; unknown-type fixture errors usefully;
   band-equivalence golden green across all fixtures.
 - **Depends:** F1, F2.
@@ -162,17 +165,30 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
   tolerance (pre-F8 spot check).
 - **Depends:** F3 (text widgets also F5; image also F6).
 
-### F5 — Text
-- **Goal:** real glyphs, the same fonts every other backend uses, scoped to
-  what the IR carries (single-style, single-direction runs — **not** a
-  paragraph engine; parley only if the IR ever grows wrapping/rich text).
-- **Deliverables:** desktop path: `skrifa` (parse) + `swash` (scale/raster)
-  with the vyvanse standard test fonts (Roboto vector, Spleen bitmap);
-  glyph_run through Canvas; **MCU path designed, not built**: feature-gated
-  baked bitmap glyphs (swash/skrifa `no_std` availability to be verified — do
-  not promise vector text on M4F in v1).
+### F5 — Text: FULL font support, one format, runtime-rasterized + glyph cache
+- **Goal:** full vector font support as an EARLY target — **one format
+  (TTF/OTF), pick the best, no second font pipeline**. One rasterizer serves
+  desktop oracle and MCU alike; baking becomes an optimization (F15), not a
+  separate text stack. Scope stays: single-style, single-direction runs (not
+  a paragraph engine; no shaping — parley/HarfBuzz territory is explicitly
+  out until the IR grows rich text).
+- **Architecture:** `skrifa` (charmap, metrics/advances, **outlines**;
+  `no_std`-friendly) → outline filled by the same tiny-skia painter →
+  **glyph cache**: each (font, size, codepoint) rasterized ONCE to an A8
+  alpha mask, then `glyph_run` is pure cached blits. Likely drops the swash
+  dependency entirely (verify: kerning needs, embedded-bitmap strikes for
+  Spleen). On MCU the same path runs at boot/first-use: TTF lives in flash
+  (systems have the flash for it), cache lives in RAM — ~95 ASCII glyphs at
+  14 px ≈ low-tens-of-KB, fine for F427-class; F15 moves the cache itself to
+  flash at build time for tiny-RAM parts.
+- **Deliverables:** glyph cache in core (`no_std`); vyvanse standard test
+  fonts (Roboto vector + Spleen) rendered through it; cache-size counters
+  wired into RenderStats; unicode beyond ASCII works by construction (cache
+  keyed by codepoint) but coverage/fallback policy stays IR-driven.
 - **Acceptance:** label/lcd/button text geometry within spec tolerance;
-  cross-backend text comparison sane (same fonts).
+  cross-backend text comparison sane (same fonts); glyph rasterized exactly
+  once per (font,size,cp) — proven by counters; `no_std` build includes the
+  full text path.
 - **Depends:** F3.
 
 ### F6 — Images
@@ -223,7 +239,11 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
   full-framebuffer (external SDRAM) AND banded into small SRAM working
   buffers (the path is CI-proven by F1/F8 — this *measures* band size vs
   frame time on target); ns/px on target (f32 AA on the single-precision
-  FPU — tiny-skia is f32, the right float); hot-path identification;
+  FPU — tiny-skia is f32, the right float); **RGB565 output measured** (real
+  MCU panels are 565, not the oracle's 888 — pixel-format conversion is a
+  painter/flush concern and the convert cost belongs in the numbers; the
+  format decision feeds F13's DMA2D path, which converts in hardware);
+  boot-time glyph-cache fill measured (F5); hot-path identification;
   **verdict doc**: ship-it / add own fixed-function painter tier behind the
   trait / C++-tier fallback — decided on numbers.
 - **Acceptance:** published numbers table + recorded go/no-go.
@@ -284,6 +304,26 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
   editor-shell decision itself is a vye-side decision, tracked in vyvanse.)
   **Depends:** F3/F4.
 
+### F15 — Bake-to-flash: build-time asset pre-render (the LAST optimization)
+- **Goal:** the tiny-RAM/boot-time optimization, deliberately sequenced last
+  because F5 makes it nearly free: a build step that runs **the same
+  rasterizer/decoder as the runtime** to pre-render assets into
+  flash-resident tables. Baked output is pixel-identical to the runtime path
+  *by construction* (same code), and a golden asserts it.
+- **Scope — fonts:** subset scan from the IR (static strings are known;
+  dynamic text via declared ranges — the TouchGFX wildcard-range lesson, e.g.
+  `0x20-0x7E`) → pre-rasterized glyph tables in flash; runtime glyph cache
+  consults baked tables first, falls back to live rasterization if the TTF is
+  also shipped, or hard-errors on a missing glyph in baked-only builds (I6 —
+  never a tofu box the IR didn't ask for).
+- **Scope — images:** PNG decoded + converted to the target pixel format at
+  build time, blitted raw from flash (the same generalization: decode is a
+  build step, the device blits).
+- **Acceptance:** baked-vs-runtime byte-identical golden; flash/RAM deltas
+  measured vs the F9 baseline; subset report (which glyphs, from which IR
+  strings) emitted at build time — no silent coverage gaps.
+- **Depends:** F5 (fonts), F6 (images), F9 (numbers to beat).
+
 ---
 
 ## 4. Milestones
@@ -294,7 +334,7 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
 | **M2 — oracle live** | full v1 vocab via the farm, conformance flipped, nightly CI | F3–F8 |
 | **M3 — embedded verdict** | measured flash/RAM/ns-px on M4F target, go/no-go doc | F9 (+F10 hooks) |
 | **M4 — toolkit alpha** | debug suite, interaction design, import-and-run demos | F10–F12 |
-| later | accel painters, editor embedding | F13, F14 |
+| later | accel painters, editor embedding, bake-to-flash | F13, F14, F15 |
 
 ## 5. Open decisions
 
@@ -304,3 +344,9 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
    first — roller? list?).
 3. CLA mechanics (DCO accepted now; CLA bot for substantial contributions —
    see `LICENSING.md`).
+4. F5 glyph source crate: skrifa outlines + tiny-skia fill (recommended) vs
+   fontdue vs ab_glyph — decide inside F5 with a bake-off on the standard
+   fonts (criteria: no_std, determinism, output quality at 10–16 px,
+   Spleen/bitmap-strike handling, kerning).
+5. crates.io: reserve `vyr-core` / `vyr-cli` names early (publish 0.0.1
+   skeletons) — public repo means the names are now visible.
