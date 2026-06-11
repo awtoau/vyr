@@ -55,8 +55,10 @@ One discoverable entry point per repo; AI agents enumerate it via
 - Golden hashes and perf baselines are committed; CI compares nightly.
 - Re-blessing is its own reviewed commit with the reason in the message —
   never a drive-by alongside a feature.
-- `VYR_BLESS=1` prints new hashes; `VYR_TEST_DUMP=1` writes PNGs to `./tmp/`
-  for eyeballing.
+- `./dev.py test --bless` prints new hashes; `./dev.py test --dump` writes
+  PNGs to `./tmp/` for eyeballing. (dev.py sets `VYR_BLESS`/`VYR_TEST_DUMP`
+  internally — never put env-var prefixes on the command line; they break
+  permission-allowlist token matching.)
 
 ## Commits
 

@@ -15,6 +15,9 @@ tiny-skia = { version = "0.11", default-features = false, features = ["no-std-fl
 # Deterministic software float math for our own curve flattening (same
 # rounding on every host and on thumbv7em — no platform libm variance).
 libm = "0.2"
+# IR ingestion (F3) — no_std + alloc.
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 # Tests are std (separate crates); png is for optional VYR_TEST_DUMP output.

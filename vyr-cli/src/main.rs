@@ -100,18 +100,18 @@ fn render(ir_path: &str, out: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // Frame size from env (farm contract), demo size default until F3/F7
-    // finalise the request shape.
-    let w: u32 = std::env::var("VYR_W")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEMO_W);
-    let h: u32 = std::env::var("VYR_H")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEMO_H);
+    // Frame size comes from the request itself ({"w","h","root"} — the farm
+    // contract); parse first so the buffer is allocated to the real size.
+    let req = match vyr_core::ir::Request::parse(&ir) {
+        Ok(r) => r,
+        Err(e) => {
+            log("ERROR", &format!("bad request: {e:?}"));
+            return ExitCode::from(2);
+        }
+    };
+    let (w, h) = (req.w, req.h);
     let mut buf = vec![0u8; (w * h * 3) as usize];
-    match vyr_core::render(&ir, Rect { x: 0, y: 0, w, h }, &mut buf, (w * 3) as usize) {
+    match req.render(Rect { x: 0, y: 0, w, h }, &mut buf, (w * 3) as usize) {
         Ok(stats) => {
             log("INFO", &format!("stats: {stats:?}"));
             if let Err(e) = write_png(out, w, h, &buf) {

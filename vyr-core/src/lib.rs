@@ -17,6 +17,7 @@
 extern crate alloc;
 
 pub mod demo;
+pub mod ir;
 mod painter;
 pub use painter::TinySkiaCanvas;
 
@@ -104,22 +105,17 @@ pub trait Canvas {
     fn stats(&self) -> RenderStats;
 }
 
-/// THE entry point (invariant I1). Renders the IR `tree` clipped to `area`
-/// into the caller-provided `buf` (RGB888, `stride` bytes per row). A full
-/// frame is `area = whole screen` — there is no other code path.
-///
-/// `tree` is the IR node tree, consumed verbatim in the `vy_` vocabulary
-/// (F3 defines the typed model; this signature takes the JSON text until
-/// then so the contract shape is pinned).
+/// THE entry point (invariant I1). Renders the IR request (JSON:
+/// `{"w","h","root"}`, `root` in `vy_` vocabulary, verbatim — no lowering)
+/// clipped to `area` into the caller-provided `buf` (RGB888, `stride` bytes
+/// per row). A full frame is `area = whole screen` — there is no other code
+/// path. See [`ir`] for the F3-lite widget subset and the honest-failure
+/// rules (text/image pre-F5/F6 = hard error).
 pub fn render(
-    _ir_json: &str,
-    _area: Rect,
-    _buf: &mut [u8],
-    _stride: usize,
+    ir_json: &str,
+    area: Rect,
+    buf: &mut [u8],
+    stride: usize,
 ) -> Result<RenderStats, RenderError> {
-    // Honest failure from day -1: pre-F1 there are no pixels, so say so —
-    // never return Ok over a buffer we did not write.
-    Err(RenderError::Unimplemented(
-        "vyr-core pre-F1 skeleton: see docs/plan.md (F1 painter, F3 render tree)",
-    ))
+    ir::Request::parse(ir_json)?.render(area, buf, stride)
 }

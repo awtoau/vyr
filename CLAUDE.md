@@ -17,7 +17,9 @@ Global awto rules apply (canonical: `~/git/awto-dan/code/vscode/AGENT-RULES.md`)
   an adaptive/transform-dependent flattening. `tests/golden.rs` enforces.
 - **Every new primitive/widget ships with its bench + golden in the same PR.**
   Goldens/baselines change only as their own reviewed commit (re-bless:
-  `VYR_BLESS=1 ./dev.py test`, then commit the printed hash).
+  `./dev.py test --bless`, then commit the printed hash). Never invoke with
+  env-var prefixes (`VYR_BLESS=1 cargo …`) — they break permission-allowlist
+  token matching; dev.py flags set the env internally.
 - **No default chrome** (IR-authoritative) and **honest failure** (unknown
   widget = hard error before pixels; a blank render is a bug).
 - **Determinism**: no `SystemTime`/`Instant`/randomness in core; float math

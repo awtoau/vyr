@@ -18,7 +18,7 @@ TMP = REPO / "tmp"
 
 COMMANDS = {
     "describe": "list commands as JSON (for agents)",
-    "test": "cargo test --workspace (VYR_BLESS=1 to print new golden hashes; VYR_TEST_DUMP=1 to dump PNGs)",
+    "test": "cargo test --workspace (--bless prints new golden hashes; --dump writes PNGs to ./tmp/)",
     "check": "cargo check --workspace",
     "check-mcu": "cargo check -p vyr-core --target thumbv7em-none-eabihf (the no_std gate, invariant I7)",
     "clippy": "cargo clippy --workspace --all-targets",
@@ -40,9 +40,17 @@ def _log(msg: str) -> None:
         f.write(line + "\n")
 
 
-def _run(args: list[str]) -> int:
+def _run(args: list[str], env_extra: dict[str, str] | None = None) -> int:
+    # env vars are passed HERE (never as command-line prefixes) so invocations
+    # stay plain-token commands that permission allowlists can match.
+    import os
+
+    env = None
+    if env_extra:
+        env = dict(os.environ, **env_extra)
+        _log("env: " + " ".join(f"{k}={v}" for k, v in env_extra.items()))
     _log("run: " + " ".join(args))
-    rc = subprocess.call(args, cwd=REPO)
+    rc = subprocess.call(args, cwd=REPO, env=env)
     _log(f"rc={rc}: " + " ".join(args))
     return rc
 
@@ -53,7 +61,15 @@ def cmd_describe(_rest: list[str]) -> int:
 
 
 def cmd_test(rest: list[str]) -> int:
-    return _run(["cargo", "test", "--workspace", *rest])
+    env: dict[str, str] = {}
+    if "--bless" in rest:
+        rest = [a for a in rest if a != "--bless"]
+        env["VYR_BLESS"] = "1"
+        rest = [*rest, "--", "--nocapture"] if "--" not in rest else rest
+    if "--dump" in rest:
+        rest = [a for a in rest if a != "--dump"]
+        env["VYR_TEST_DUMP"] = "1"
+    return _run(["cargo", "test", "--workspace", *rest], env_extra=env or None)
 
 
 def cmd_check(rest: list[str]) -> int:
