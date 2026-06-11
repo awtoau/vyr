@@ -92,6 +92,28 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<div class="stage">
+  <div class="imgs"><img src="f3b-clip-dirty.png" alt="F3 clip stack + dirty rects"></div>
+  <div>
+    <h2>F3 complete — clip stack + dirty rects <span class="meta">2026-06-11 · (see git)</span></h2>
+    <p>Containers clip their children, radius-aware: the disc bites the
+    rounded corner ARC, the checker is trimmed along the top-right arc,
+    glyph runs cut mid-letter, a nested frame clips its rule (stack depth
+    2), and the lower container exercises the pure-rect integer-span fast
+    path. The clip mask is rasterized from the SAME quantized-world
+    polygons as paint geometry, so clipping is band-exact (even + uneven
+    splits) — and every pre-clip golden held byte-identical, because
+    children that stay inside their parents take a containment fast path
+    that never touches a mask. Landed with the retained-mode primitive:
+    <code>dirty_rects(prev,&nbsp;next)</code> (WAS + NOW subtree bboxes,
+    clip-context-tightened) + <code>render_incremental</code> — proven by
+    repainting ONLY the dirty regions onto the old frame and getting the
+    full render's exact bytes (moves, restyles, removals, additions,
+    no-ops). One toggle flip on a 480×320 panel repaints ~8× faster than
+    the full frame, diff included.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
 <p class="lede">The places where vyr does something non-obvious, with the
 evidence images.</p>

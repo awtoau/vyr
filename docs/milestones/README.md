@@ -19,6 +19,7 @@ static server). On GitHub this README renders inline below.
 | **F6 — images** | 2026-06-11 | `28ea911` | ![F6](f6-image.png) | The committed 24×24 RGBA checker blitted from the caller-owned `Assets` registry (decode in cli, core blits — I7): natural size inside a bigger widget, CLIPPED by a smaller one, over a frame, via `vy_imagebutton`. The semi-transparent quadrant blends by exact integer source-over (spot-asserted to the byte); the transparent hole skips. `IMAGE_GOLDEN_FNV1A`; band-exact (integer blits — the glyph argument). |
 
 | **F4 wave 1 — radio + checkbox** | 2026-06-11 | (see git) | ![F4](f4-radio-checkbox.png) | Native `vy_radio`/`vy_checkbox` composites with the #313 mark geometry (ring `max(2,d/10)`, 44% dot, accent `#1E5AA8`) so vyr's native rendering agrees with the lowered composites the other backends draw; labels vertically centred via the measurement API. `STRUCTURE_GOLDEN_FNV1A`; band-exact. The last of the interactive vocabulary — what remains is long-tail placeholders + spec-driven refinement. |
+| **F3 complete — clip stack + dirty rects** | 2026-06-11 | (see git) | ![F3b](f3b-clip-dirty.png) | Containers clip their children, radius-aware: the disc bites the rounded corner ARC, the checker pokes through the top-right arc and is trimmed along it, glyph runs cut mid-letter, a nested frame clips its rule (stack depth 2), and the lower container is the pure-rect integer-span fast path. The clip mask is built from the SAME quantized-world polygons as paint — `CLIP_GOLDEN_FNV1A`, band-exact (even + uneven splits); every pre-clip golden held byte-identical (children inside parents take the containment fast path — provably untouched bytes). And the retained-mode primitive landed with it: `dirty_rects(prev, next)` (WAS + NOW subtree bboxes, clip-context-tightened) + `render_incremental` — **proven by re-rendering ONLY the dirty regions onto the old frame and getting the full render's exact bytes** for moves, restyles, removals, additions and no-ops; also the first arbitrary-rect (vertical-seam) band-equivalence exercise. One toggle flip on a 480×320 panel: ~8× faster than the full frame, diff included. |
 
 ## Engineering gallery — the special bits
 
@@ -88,10 +89,11 @@ and repaints only inside them — through the same `render(tree, area, buf,
 stride)` banding path, so a tall dirty region just becomes a few bands
 through the small working buffer. Tree order is z-order, so whatever overlaps
 the dirty region repaints in the right stacking order automatically. Nothing
-else on screen is touched. (This tracking is F3's remaining open item —
-today's oracle renders full frames; on device, dirty-rect mode IS the normal
-mode, and the F10 partial-buffer visualiser exists to let you literally watch
-it.)
+else on screen is touched. (Landed with the F3-completion row above:
+`dirty_rects(prev, next)` + `render_incremental`, proven byte-identical to
+full renders; the oracle still renders full frames by default — on device,
+dirty-rect mode IS the normal mode, and the F10 partial-buffer visualiser
+exists to let you literally watch it.)
 
 ![dirty diagram](eng-diagram-dirty.png)
 
@@ -184,3 +186,4 @@ story: **vyr is co-developed by two AI sessions on one shared system.**
 | F2 baseline | fills 1.3 · strokes 2.5 · discs 3.7 · rings 5.2 · gradients 6.7 · IR scene 5.9 | scaling table exposed the per-band fixed cost (1.0×→2.1× as bands shrink) — first recorded optimization target |
 | F5 text | glyph blits 1.37 · text scene 1.86 | 19 cached masks = 2,209 B RAM; rasterize-once proven by counters |
 | F6 images | image blits 2.33 (half-opaque/half-blend 64×64) · image scene 1.66 | decode is a load cost (shell); the recurring per-frame cost is the pure blit |
+| F3 clip + dirty | clip-torture scene 8.78 vs flat 6.18 (+42% — every child overflows, the worst case; contained children cost ~0 via the containment fast path) · panel dirty-incremental 30.4 µs vs 248.5 µs full = **8.2× per frame** (480×320, one toggle flips, diff included) | the dirty win is the runtime story: repaint a sliver, byte-identical to the full frame |
