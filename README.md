@@ -24,7 +24,11 @@ backend in the awto-vyvanse render farm, and F18 — the rig — drives a
 600-frame deterministic animation with incremental==full proven byte-exact
 EVERY frame, a resolution ladder to 4K (incremental repaint runs 4K at 14×
 the 60 fps budget), and cross-ISA goldens: the same run replayed on emulated
-ARMv7 is hash-identical on all 600 frames. See the
+ARMv7 is hash-identical on all 600 frames. F9 phase 1: vyr **boots on an
+emulated Cortex-M4** (`./dev.py qemu-m4` — real vector table + crt0,
+128 KiB-SRAM budget) and renders a 480×270 banded frame byte-identical to
+x86-64, heap peak 106 KB with an 8 KB ASCII-subset font
+([measured numbers](docs/measurements/f9-static.md)). See the
 **[milestone gallery](docs/milestones/README.md)** — the renderer's history
 in its own golden pixels — and the **[perf history](docs/perf/index.html)**.
 The full plan — architecture, day-1 invariants I1–I8, the feature tracks —

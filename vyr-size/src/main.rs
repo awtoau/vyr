@@ -8,10 +8,19 @@
 //! `./dev.py size-mcu` builds the feature/profile matrix and prints the
 //! table; `docs/measurements/f9-static.md` records the numbers.
 //!
-//! **NOT runnable firmware.** No cortex-m-rt, no vector table, no `.data`
-//! copy-up or `.bss` zeroing, no clocks. `_start` exists so the linker has a
-//! live root reaching the real render path and `--gc-sections` keeps exactly
-//! what a real firmware would keep. Flashing this ELF would not boot.
+//! **NOT runnable firmware** in its default/size-matrix configs. No
+//! cortex-m-rt, no vector table, no `.data` copy-up or `.bss` zeroing, no
+//! clocks. `_start` exists so the linker has a live root reaching the real
+//! render path and `--gc-sections` keeps exactly what a real firmware would
+//! keep. Flashing this ELF would not boot.
+//!
+//! **EXCEPT `--features run-qemu`** (#9 dynamic half): that config IS
+//! runnable — [`m4`] adds a vector table + crt0 + semihosting + a counted
+//! real heap, [`workload`] renders a 480×270 fixture in 480×16 bands with
+//! the ASCII subset font, and `./dev.py qemu-m4` boots it under
+//! `qemu-system-arm -machine netduinoplus2` (its own linker script:
+//! link-qemu.ld). The same feature on a host runs the same workload under a
+//! counting allocator — the cross-ISA hash reference.
 //!
 //! `unsafe` is allowed HERE ONLY (the bump allocator in [`mcu`]); vyr-core
 //! itself stays `#![forbid(unsafe_code)]` — this crate is measurement
@@ -35,8 +44,15 @@
 
 extern crate alloc;
 
+#[cfg(all(target_os = "none", feature = "run-qemu"))]
+mod m4;
+#[cfg(feature = "run-qemu")]
+mod workload;
+
+#[cfg(not(feature = "run-qemu"))]
 use alloc::vec;
 
+#[cfg(not(feature = "run-qemu"))]
 use vyr_core::{Assets, Fonts, Rect, RenderError};
 
 /// Make a baked-in byte/str constant opaque to the optimizer — the moral
@@ -54,6 +70,7 @@ fn opaque<T>(v: T) -> T {
 /// the MCU working mode (invariant I1): small band, caller-provided RGB888
 /// buffer. `y = 16` crosses real content in all three fixtures. Returns a
 /// fold of every output byte so the optimizer cannot discard the render.
+#[cfg(not(feature = "run-qemu"))]
 fn render_band(ir: &str, fonts: &mut Fonts, assets: &Assets) -> Result<u8, RenderError> {
     const W: usize = 120;
     const H: usize = 16;
@@ -73,7 +90,7 @@ fn render_band(ir: &str, fonts: &mut Fonts, assets: &Assets) -> Result<u8, Rende
     Ok(acc)
 }
 
-#[cfg(feature = "font")]
+#[cfg(all(feature = "font", not(feature = "run-qemu")))]
 fn make_fonts() -> Result<Fonts, RenderError> {
     let mut fonts = Fonts::new();
     // The MCU font model (plan §F5): the TTF lives in flash. include_bytes!
@@ -87,12 +104,12 @@ fn make_fonts() -> Result<Fonts, RenderError> {
     Ok(fonts)
 }
 
-#[cfg(not(feature = "font"))]
+#[cfg(all(not(feature = "font"), not(feature = "run-qemu")))]
 fn make_fonts() -> Result<Fonts, RenderError> {
     Ok(Fonts::new())
 }
 
-#[cfg(feature = "image")]
+#[cfg(all(feature = "image", not(feature = "run-qemu")))]
 fn make_assets() -> Result<Assets, RenderError> {
     let mut assets = Assets::new();
     // The F15 bake-to-flash model: decode happened at build time
@@ -109,7 +126,7 @@ fn make_assets() -> Result<Assets, RenderError> {
     Ok(assets)
 }
 
-#[cfg(not(feature = "image"))]
+#[cfg(all(not(feature = "image"), not(feature = "run-qemu")))]
 fn make_assets() -> Result<Assets, RenderError> {
     Ok(Assets::new())
 }
@@ -117,6 +134,7 @@ fn make_assets() -> Result<Assets, RenderError> {
 /// Exercise the real render path once per enabled fixture, folding all
 /// output into one observable byte (what `_start` publishes to [`mcu::SINK`]
 /// and the host `main` prints).
+#[cfg(not(feature = "run-qemu"))]
 fn exercise() -> Result<u8, RenderError> {
     let mut fonts = make_fonts()?;
     let assets = make_assets()?;
@@ -148,7 +166,8 @@ fn exercise() -> Result<u8, RenderError> {
 
 /// Everything the none-target needs beyond [`exercise`]: a global allocator
 /// over a fixed static arena, a panic handler, and the `_start` link root.
-#[cfg(target_os = "none")]
+/// (The run-qemu config replaces all of this with [`m4`] — a REAL boot.)
+#[cfg(all(target_os = "none", not(feature = "run-qemu")))]
 mod mcu {
     use core::alloc::{GlobalAlloc, Layout};
     use core::cell::UnsafeCell;
@@ -237,12 +256,86 @@ mod mcu {
 }
 
 /// Host leg: run the exact stub the MCU ELF links, loudly.
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(feature = "run-qemu")))]
 fn main() {
     match exercise() {
         Ok(byte) => println!("vyr-size: exercise ok (sink byte {byte:#04x})"),
         Err(e) => {
             eprintln!("vyr-size: exercise FAILED: {e:?}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// run-qemu host leg: the SAME banded workload the M4 boots, under a
+/// counting allocator (vyr-cli's pattern) — prints the same structured
+/// lines, PLUS a band-vs-full-frame hash self-check the MCU cannot afford
+/// (the 567,424 B full-frame pixmap). Its `frame fnv1a=` line is the x86
+/// reference the qemu-m4 runner compares the M4's hash against.
+#[cfg(all(not(target_os = "none"), feature = "run-qemu"))]
+mod host_runq {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingAlloc;
+
+    static HEAP_LIVE: AtomicUsize = AtomicUsize::new(0);
+    static HEAP_PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { System.alloc(layout) };
+            if !p.is_null() {
+                let live = HEAP_LIVE.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+                HEAP_PEAK.fetch_max(live, Ordering::Relaxed);
+            }
+            p
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) };
+            HEAP_LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+        }
+    }
+
+    #[global_allocator]
+    static ALLOC: CountingAlloc = CountingAlloc;
+
+    pub fn heap_now() -> (usize, usize) {
+        (
+            HEAP_LIVE.load(Ordering::Relaxed),
+            HEAP_PEAK.load(Ordering::Relaxed),
+        )
+    }
+}
+
+#[cfg(all(not(target_os = "none"), feature = "run-qemu"))]
+fn main() {
+    let mut emit = |line: &str| println!("{line}");
+    let heap = || host_runq::heap_now();
+    // Heap-allocated on the host (vyr-cli's shape); the M4 leg places it in
+    // CCM instead — see workload::BAND_BYTES for why both are honest.
+    let mut band_buf = alloc::vec![0u8; workload::BAND_BYTES];
+    let banded = match workload::run(&mut emit, &heap, None, &mut band_buf) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("ERROR [vyr-size] host run-qemu workload FAILED: {e:?}");
+            std::process::exit(1);
+        }
+    };
+    // Band-equivalence self-check, host-only (full frame needs 567 KB):
+    match workload::full_frame_hash() {
+        Ok(full) if full == banded => {
+            println!("INFO  [vyr-size] full-frame fnv1a={full:#018x} == banded (band equivalence)");
+        }
+        Ok(full) => {
+            eprintln!(
+                "ERROR [vyr-size] full-frame fnv1a={full:#018x} != banded {banded:#018x} — \
+                 band equivalence BROKE"
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("ERROR [vyr-size] full-frame cross-check FAILED: {e:?}");
             std::process::exit(1);
         }
     }

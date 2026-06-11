@@ -20,6 +20,19 @@ font = []
 # Bake the 24x24 RGBA checker into .rodata + render the F6 image fixture
 # (the F15 bake-to-flash model: decode is a build step, the device blits).
 image = []
+# The F9 RUNNABLE M4 vehicle (#9 dynamic half): vector table + crt0 +
+# semihosting + a counted real heap (alloc AND dealloc — the bump arena
+# can't run a banded frame) + the banded 480x270 workload over the ASCII
+# subset font (assets/roboto-ascii.ttf). Build
+# `--no-default-features --features run-qemu` (./dev.py qemu-m4) — its own
+# config, never combined with font/image (those bake the size-matrix
+# fixtures). On hosts this feature runs the SAME workload under a counting
+# allocator and prints the same lines — the cross-ISA hash reference.
+run-qemu = ["dep:linked_list_allocator"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
+# Real alloc/dealloc heap for the runnable vehicle only (MIT OR Apache-2.0;
+# default features off: no spin lock — the M4 leg is single-threaded with no
+# heap-touching interrupts, vyr-size wraps it in its own unsafe cell).
+linked_list_allocator = { version = "0.10", optional = true, default-features = false }

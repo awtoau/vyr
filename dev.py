@@ -27,6 +27,7 @@ COMMANDS = {
     "bench": "perf gate: release vyr-bench check vs committed baseline + scaling-law assertion",
     "bench-record": "re-record vyr-bench/baseline.json (a reviewed act — commit it separately)",
     "size-mcu": "F9 static numbers: build the vyr-size matrix for thumbv7em + arm-none-eabi-size table",
+    "qemu-m4": "F9 dynamic half: boot vyr-size (run-qemu) on qemu-system-arm netduinoplus2 (M4), banded 480x270 + subset font; cross-ISA hash vs the host leg; icount virtual-time numbers",
     "anim": "F18 rig acceptance: 600-frame run @480 — per-frame incremental==full + committed hash chain + PNG seq + ffmpeg lossless video (--bless re-bless; --arm qemu cross-ISA rung; --size/--frames override; --no-video)",
     "ci": "THE single operation: gate + bench + size-mcu + anim(+ARM) + ladder + perf-history, run-all-collect-all, one summary (--quick: 60 frames, no video/ARM)",
     "ladder": "F18 resolution ladder 120→4K: ns/px full+incremental, 60fps headroom, dirty %; gates vs vyr-rig/baseline.json when present (--record re-records — commit separately)",
@@ -197,6 +198,135 @@ def cmd_size_mcu(_rest: list[str]) -> int:
         print(line)
         _log(line)
     return 0
+
+
+# --- F9 dynamic half: the runnable M4 vehicle under qemu-system-arm (#9) ---
+
+# Wall-clock guard for the emulated run. Reason: the guest renders 5 banded
+# 480x270 frames ≈ low-billions of guest insns; TCG with icount manages
+# >10^7 insn/s even on a slow host, so minutes suffice — on expiry the guest
+# is wedged (boot fault, semihosting misconfig) and is killed + FAILED.
+QEMU_M4_DEADLINE_S = 300
+QEMU_M4_MACHINE = "netduinoplus2"  # STM32F405: M4F + 192 KiB SRAM (the F427 budget)
+# icount shift=0 → the virtual clock advances exactly 1 ns per guest insn
+# (deterministic); sleep=off decouples it from host wall time. SYS_CLOCK
+# deltas are therefore insn counts: 1 cs = 10^7 insns.
+QEMU_M4_INSNS_PER_CS = 10_000_000
+QEMU_M4_TIMED_FRAMES = 4  # keep in sync with TIMED_FRAMES in vyr-size/src/workload.rs
+
+
+def cmd_qemu_m4(_rest: list[str]) -> int:
+    import re
+    import shutil
+
+    if shutil.which("qemu-system-arm") is None:
+        _log("ERROR: qemu-system-arm not on PATH (dnf install qemu-system-arm)")
+        return 1
+    log_path = TMP / "qemu-m4.log"
+    flags = ["--no-default-features", "--features", "run-qemu"]
+
+    # 1) Host reference leg: same workload, counting allocator — the x86
+    #    frame hash the M4 must reproduce (plus the band==full self-check).
+    rc = _run(["cargo", "build", "--release", "-p", "vyr-size", *flags])
+    if rc != 0:
+        return rc
+    host = subprocess.run(
+        [str(REPO / "target" / "release" / "vyr-size")],
+        capture_output=True, text=True, cwd=REPO, check=False,
+    )
+    _append_block(log_path, "host x86-64 leg", host.stdout + host.stderr)
+    if host.returncode != 0:
+        _log(f"ERROR: host run-qemu leg rc={host.returncode} (see {log_path})")
+        return 1
+    m = re.search(r"frame fnv1a=(0x[0-9a-f]{16})", host.stdout)
+    if not m:
+        _log("ERROR: host leg printed no frame hash")
+        return 1
+    host_hash = m.group(1)
+    host_peak = _re1(r"workload ok: heap peak=(\d+) B", host.stdout)
+
+    # 2) The bootable ELF (vector table + crt0 + semihosting, link-qemu.ld).
+    rc = _run(
+        ["cargo", "build", "-p", "vyr-size", "--target", SIZE_TARGET,
+         "--profile", "release-mcu", *flags]
+    )
+    if rc != 0:
+        return rc
+    elf = REPO / "target" / SIZE_TARGET / "release-mcu" / "vyr-size"
+
+    # 3) Boot it. Semihosting console on stdout; SYS_EXIT sets qemu's rc.
+    args = [
+        "qemu-system-arm", "-machine", QEMU_M4_MACHINE, "-nographic",
+        "-semihosting-config", "enable=on,target=native",
+        "-icount", "shift=0,sleep=off",
+        "-kernel", str(elf),
+    ]
+    _log("qemu exact command: " + " ".join(args))
+    t0 = time.monotonic()
+    try:
+        # Python-side hard wall-clock guard (never a shell timeout): run()
+        # polls the child and kills it when the deadline expires.
+        guest = subprocess.run(
+            args, capture_output=True, text=True, cwd=REPO, check=False,
+            timeout=QEMU_M4_DEADLINE_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        _append_block(log_path, "M4 guest (KILLED at deadline)", out)
+        _log(f"ERROR: qemu hit the {QEMU_M4_DEADLINE_S}s guard — guest wedged, killed (see {log_path})")
+        return 1
+    wall = time.monotonic() - t0
+    gout = guest.stdout + guest.stderr  # qemu emits the semihosting console on stderr
+    _append_block(log_path, "M4 guest", gout)
+    if guest.returncode != 0:
+        _log(f"ERROR: guest exited rc={guest.returncode} (SYS_EXIT error path; see {log_path})")
+        return 1
+
+    # 4) The result block — parsed from the guest's semihosting lines.
+    g_hash = _re1(r"frame fnv1a=(0x[0-9a-f]{16})", gout)
+    g_peak = _re1(r"workload ok: heap peak=(\d+) B", gout)
+    g_live = _re1(r"workload ok: heap peak=\d+ B live-end=(\d+) B", gout)
+    g_cs = _re1(r"timed: \d+ warmed frames in (\d+) cs virtual", gout)
+    lines = [
+        f"qemu-m4 result ({QEMU_M4_MACHINE}, icount shift=0, wall {wall:.1f}s):",
+        f"  frame hash   M4 {g_hash} vs x86-64 {host_hash} → "
+        + ("IDENTICAL (cross-ISA, banded==full)" if g_hash == host_hash else "MISMATCH"),
+        f"  heap peak    M4 {g_peak} B (live-end {g_live} B) vs x86-64 {host_peak} B",
+    ]
+    for ph in re.finditer(r"phase ([\w-]+): heap live=(\d+) B peak=(\d+) B", gout):
+        lines.append(f"  phase {ph.group(1):<11} live={ph.group(2):>7} B  peak={ph.group(3):>7} B")
+    if g_cs is not None:
+        insns = int(g_cs) * QEMU_M4_INSNS_PER_CS
+        per_frame = insns // QEMU_M4_TIMED_FRAMES
+        px = 480 * 270
+        est_ms = per_frame / 180e6 * 1e3
+        lines += [
+            f"  virtual time {g_cs} cs for {QEMU_M4_TIMED_FRAMES} warmed frames "
+            f"= {insns:,} insns ({per_frame:,}/frame, {per_frame / px:.0f} insn/px) — "
+            "DETERMINISTIC (icount), resolution 1 cs",
+            f"  @180 MHz     ~{est_ms:.0f} ms/frame ESTIMATE — assumes CPI=1.0; a real M4's "
+            "CPI, flash wait states and caches differ (calibrate on the F9 board half)",
+        ]
+    for line in lines:
+        print(line)
+        _log(line)
+    return 0 if g_hash == host_hash else 1
+
+
+def _re1(pattern: str, text: str):
+    import re
+
+    m = re.search(pattern, text)
+    return m.group(1) if m else None
+
+
+def _append_block(path: Path, title: str, body: str) -> None:
+    """Append a captured output block to the run log, timestamped."""
+    TMP.mkdir(exist_ok=True)
+    stamp = time.strftime("%H:%M:%S", time.gmtime()) + " UTC"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"--- {stamp} {title} ---\n{body}")
+    _log(f"{title}: output appended to {path}")
 
 
 # --- F18 rig: anim / ladder / perf-history (issue #18) ---------------------
@@ -551,6 +681,7 @@ HANDLERS = {
     "bench": cmd_bench,
     "bench-record": cmd_bench_record,
     "size-mcu": cmd_size_mcu,
+    "qemu-m4": cmd_qemu_m4,
     "anim": cmd_anim,
     "ladder": cmd_ladder,
     "perf-history": cmd_perf_history,

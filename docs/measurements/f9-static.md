@@ -5,6 +5,9 @@ This is the STATIC half of the F9 embedded spike: what the renderer costs in
 flash and link-time RAM on an STM32F427-class M4F. The DYNAMIC half
 (on-target ns/px, band size vs frame time, RGB565 convert cost, glyph-cache
 boot fill) stays open pending the board decision — see "What remains" below.
+**Update 2026-06-12:** the EMULATED dynamic half is now measured — the
+vehicle BOOTS on a qemu Cortex-M4 and renders banded frames; see
+"Dynamic-environment numbers (measured)" at the end of this doc.
 
 Reproduce: `./dev.py size-mcu` (the table below is its output); symbol
 ranking: `scripts/size-rank.py` on an unstripped build (instructions in the
@@ -160,3 +163,134 @@ font + image baked) and ~12 B static RAM leave generous headroom on a 2 MiB
 F427-class part — nothing in the static numbers argues against the
 embedded target. The open risks are speed (ns/px on a 180 MHz M4F) and the
 font-RAM API, both squarely the dynamic half's job.
+
+## Dynamic-environment numbers (measured) — 2026-06-12
+
+This section carries **MEASURED dynamic-environment numbers**, not models:
+the vehicle now RUNS. `vyr-size --features run-qemu` (`./dev.py qemu-m4`) is
+a bootable ARMv7-M program — vector table, crt0 (`.data` copy-up, `.bss`
+zero), FPU enable, semihosting I/O, and a COUNTED real alloc/dealloc heap —
+that renders a 480×270 text+image+widgets fixture as **480×16 horizontal
+bands** under `qemu-system-arm -machine netduinoplus2` (Cortex-M4F). Logs:
+`tmp/qemu-m4.log`; the cross-environment table is produced by awto-vyvanse's
+`scripts/memprofile-vyr-lvgl.py --vyr-repo <this repo>`.
+
+### The machine reality (boot lessons, measured the hard way)
+
+- **netduinoplus2 (STM32F405) in qemu ≥ 8 has 128 KiB SRAM @ 0x20000000 +
+  64 KiB CCM @ 0x10000000** — NOT the 192 KiB contiguous the original qemu
+  model had (first boot: stack writes just under 0x20030000 BusFault →
+  "Lockup: can't escalate 3 to HardFault"). That budget is strictly TIGHTER
+  than the F427's 192 KiB + 64 KiB CCM, so fitting here fits the F427 with
+  64 KiB to spare. Placement follows the classic F4 discipline (the CCM
+  decision the static doc deferred): **heap arena (120 KiB) in SRAM; stack +
+  the 23,040 B band buffer in CCM** (CPU-only memory — exactly the buffer
+  you'd never hand to DMA).
+- **The M4F's FPU is architecturally DISABLED at reset** and eabihf codegen
+  uses VFP freely: without a CPACR enable as the first instructions of
+  `reset`, the first FP instruction is a NOCP UsageFault escalating to a
+  boot lockup. (Second boot. The third one ran.)
+- The vehicle's bump allocator cannot run a banded frame (17 gutter pixmaps,
+  never freed, overflow any F4 SRAM) — the run-qemu config swaps in a real
+  first-fit heap (`linked_list_allocator`, counted with the same
+  live/peak semantics as vyr-cli's CountingAlloc).
+
+### The cut-down font (LVGL-style, #19 context)
+
+`vyr-size/assets/roboto-ascii.ttf`: printable-ASCII subset of
+`fonts/roboto.ttf`, hinting + all OpenType layout dropped (vyr renders
+unhinted and shapes by plain advances) — **8,084 B vs 162,876 B full
+(5.0%)**. Regenerate: `scripts/make-subset-font.py`; provenance + license:
+`vyr-size/assets/roboto-ascii.md`. The goldens' `fonts/roboto.ttf` is
+untouched.
+
+### The table (composition as rows, environments as columns)
+
+Same 480×270 fixture in every vyr column (the M4 workload scene); bytes are
+exact counting-allocator numbers, not sampled. x86-64 + ARM32 are vyr-cli
+full-frame renders; ARM32 = static armv7-musleabihf build under
+qemu-arm-static; m4-banded = the qemu-system run above.
+
+| metric | x86-full | x86-subset | arm32-full | arm32-subset | m4-banded | lvgl-runner |
+|---|--:|--:|--:|--:|--:|--:|
+| gutter pixmap | 567,424 | 567,424 | 567,424 | 567,424 | 63,488 | (pool) |
+| out buffer | 388,800 full | 388,800 full | 388,800 full | 388,800 full | 23,040 band¹ | (pool) |
+| font copy | 162,876 | 8,084 | 162,876 | 8,084 | 8,084 | (pool) |
+| glyph cache | 3,349 | 3,349 | 3,349 | 3,349 | 3,349 | (pool) |
+| parsed IR + misc² | 56,203 | 56,205 | 51,165 | 51,167 | 31,488 | (pool) |
+| TOTAL heap peak | 1,178,652 | 1,023,862 | 1,173,614 | 1,018,824 | 106,409 | 8,914,884³ |
+| Max RSS (KiB) | 4,568 | 4,608 | 9,488⁴ | 9,420⁴ | n/a (no OS) | 98,348 |
+
+¹ the M4's band buffer is a CCM **static**, deliberately outside its heap —
+still RAM, priced by its own row.
+² residual = peak − (font + pixmap + out-buffer-if-heap + glyph cache):
+parse tree, registries, transients.
+³ lvgl-runner (vyvanse-runner, measured 2026-06-11, rig frame 0 — same
+480×270, different scene, desktop context): massif peak that **excludes**
+its `LV_MEM_SIZE` 64 MiB internal pool (lv_malloc is invisible to massif)
+and rides a 96 MiB RSS of SDL/EGL driver noise — a desktop baseline, not an
+MCU number.
+⁴ qemu-arm-static EMULATOR process RSS, not a target number.
+
+### Cross-ISA determinism, now THREE ways
+
+The frame hash `0x6b0c51567a991741` (FNV-1a over all 388,800 RGB888 bytes)
+is identical for: the x86-64 banded render, the x86-64 FULL-frame render
+(band equivalence), and **the banded render on the emulated Cortex-M4
+itself** — plus x86 vs ARM32-user-mode PNGs byte-identical (full and subset
+fonts). Determinism holds across ISA, word size, and band decomposition.
+
+### Virtual-time numbers (icount — deterministic, and what they do NOT say)
+
+Under `-icount shift=0,sleep=off` the virtual clock advances exactly 1 ns
+per guest instruction, so semihosting SYS_CLOCK deltas are instruction
+counts (resolution 1 cs = 10⁷ insns):
+
+- **4 warmed frames (glyph cache full) in 30 cs ⇒ ~75.0 M insns/frame ≈
+  579 insn/px** — a deterministic regression metric (counts don't flake;
+  the ±1 cs quantization is the only wobble, and code changes between
+  builds legitimately move the count a couple of percent).
+- **@180 MHz that is ~417 ms/frame ESTIMATE** — labelled hard: it assumes
+  CPI = 1.0, which a real M4 does not have (flash wait states, write
+  buffers, dual-issue absent); calibration against real silicon is exactly
+  the remaining board half of F9. Even ±2× says: full-screen 60 fps full
+  redraws are NOT the M4 story — the incremental/dirty-rect path (measured
+  ~8× cheaper per step on the panel fixture, F3) plus band-limited updates
+  are, and a fixed-function painter tier remains on the table (the verdict
+  doc's existing option).
+
+Per-phase heap (M4, live/peak B): font-reg 8,186/8,186 → asset-reg
+10,864/10,864 → parse 17,429/17,429 → first-band 23,286/92,609 → frame
+23,286/106,409. Steady-state live between bands is just 23.3 KB; the peak
+is the in-band transient (gutter pixmap + painter scratch).
+
+### What are we missing — the deltas this table answers
+
+- **The font copy is THE lever**: −154,792 B everywhere (full → subset), and
+  on the M4 it is the difference between "cannot even start" (162,876 B copy
+  > the whole 128 KiB SRAM) and an 8 KB line item. #19 (borrow-from-flash
+  registration) stays open: even 8,084 B is a copy that should be 0, and
+  with it the FULL font becomes viable on-MCU (read in place from the 27%
+  flash config).
+- **32-bit shrinks the residual, not the surfaces**: ARM32 saves ~5,038 B vs
+  x86-64 (56,203 → 51,165 residual) — usize-sized overheads in the parse
+  tree/registries; pixmap, buffers, font and glyph bytes are identical.
+- **Banded vs full is the 9.5× heap difference**: 106,409 vs 1,018,824 B at
+  the same word size and font — the gutter pixmap + out buffer rows shrink
+  ~10× (63,488 + 23,040 vs 567,424 + 388,800), everything else carries over.
+- **M4 measured peak vs the F9 static model**: the model said "480×16-band
+  text UI ≈ 90–105 KiB"; measured is 106,409 B heap + 23,040 B CCM ≈
+  126 KiB working set — the extra is exactly what the model listed as
+  unpriced (the font heap copy 8,084 B, the image asset 2,304 B, a bigger
+  scene's parse tree ~10 KB, parser transients). **~66% of an F427's 192 KiB
+  SRAM**, and it RAN inside the strictly-smaller F405 budget.
+- **vyr vs LVGL context**: vyr's whole 480×270 frame on the M4 fits in a
+  heap smaller than 1/80th of the pool the desktop LVGL runner merely
+  RESERVES (64 MiB) — different contexts (see ³), but the scale gap is the
+  point of the row.
+
+Reproduce: `./dev.py qemu-m4` here; the table:
+`python3 scripts/memprofile-vyr-lvgl.py --vyr-repo <this repo>` in
+awto-vyvanse. Still open for the BOARD half: real-silicon CPI calibration of
+the insn counts, RGB565 convert cost, glyph-cache boot-fill wall time, and
+the #19 zero-copy font registration.
