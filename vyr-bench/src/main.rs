@@ -526,11 +526,36 @@ fn main() -> std::process::ExitCode {
             for (name, nspx) in &results {
                 match base.get(name) {
                     Some(b) if *nspx > b * REGRESSION_X => {
-                        failed = true;
-                        log(&format!(
-                            "REGRESSION {name}: {nspx:.2} ns/px vs baseline {b:.2} \
-                             (> {REGRESSION_X}x)"
-                        ));
+                        // RETRY-CONFIRM: a regression must REPRODUCE to fail.
+                        // Micro-benches with ~ms total windows can be poisoned
+                        // by a single scheduler/turbo blip even through the
+                        // median (observed: glyph_run 1.4→2.8 ns/px right
+                        // after a fresh compile, clean on re-run). One re-run
+                        // of just the offender keeps the gate honest without
+                        // making it flaky.
+                        let again = benches()
+                            .into_iter()
+                            .find(|c| c.name == name)
+                            .map(|c| (c.run)() / c.pixels);
+                        match again {
+                            Some(second) if second > b * REGRESSION_X => {
+                                failed = true;
+                                log(&format!(
+                                    "REGRESSION {name}: {nspx:.2} then {second:.2} ns/px \
+                                     vs baseline {b:.2} (> {REGRESSION_X}x, reproduced)"
+                                ));
+                            }
+                            Some(second) => {
+                                log(&format!(
+                                    "noise {name}: {nspx:.2} ns/px did not reproduce \
+                                     ({second:.2} on retry, baseline {b:.2}) — not a failure"
+                                ));
+                            }
+                            None => {
+                                failed = true;
+                                log(&format!("REGRESSION {name}: bench vanished on retry"));
+                            }
+                        }
                     }
                     Some(b) if *nspx * REGRESSION_X < *b => {
                         log(&format!(

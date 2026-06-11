@@ -89,16 +89,35 @@ pub struct Node {
     pub children: Vec<Node>,
 }
 
+/// IR schema versions vyr knows how to render. The machine contract with
+/// vyvanse (its `vyvanse/ir/model.py SCHEMA_VERSION`, coordinated on the
+/// awto-vyvanse#321 handoff board): the field is OPTIONAL on the wire (older
+/// senders omit it), but when present it must match — a mismatched version
+/// is a hard `BadIr` naming what vyr accepts, never a silent best-effort
+/// render of a vocabulary vyr may misread.
+pub const ACCEPTED_SCHEMA_VERSIONS: &[&str] = &["0.6-vyvanse"];
+
 #[derive(Debug, Deserialize)]
 pub struct Request {
     pub w: u32,
     pub h: u32,
     pub root: Node,
+    #[serde(default)]
+    pub schema_version: Option<String>,
 }
 
 impl Request {
     pub fn parse(ir_json: &str) -> Result<Request, RenderError> {
-        serde_json::from_str(ir_json).map_err(|e| RenderError::BadIr(format!("request parse: {e}")))
+        let req: Request = serde_json::from_str(ir_json)
+            .map_err(|e| RenderError::BadIr(format!("request parse: {e}")))?;
+        if let Some(v) = &req.schema_version
+            && !ACCEPTED_SCHEMA_VERSIONS.contains(&v.as_str())
+        {
+            return Err(RenderError::BadIr(format!(
+                "schema_version {v:?} not accepted (vyr renders {ACCEPTED_SCHEMA_VERSIONS:?})"
+            )));
+        }
+        Ok(req)
     }
 
     /// Render one band (`area`, world coords within the `w×h` screen) into
@@ -287,6 +306,27 @@ const NEEDS_STRUCTURE: &[&str] = &[
     "vy_chart",
 ];
 
+/// Band-culling safety margin, in pixels: a widget whose rect, inflated by
+/// this, misses the band gets its PAINT skipped (path building is the cost
+/// the F2 scaling table exposed — the per-band fixed cost). The margin
+/// covers everything a widget may paint outside its declared rect: centred
+/// border strokes (half a border width), AA, knob/ring overhang, glyph side
+/// bearings. VALIDATION never culls — a band that can't see a broken widget
+/// still errors on it, so banded and full-frame renders agree on errors —
+/// and the band-equivalence goldens enforce that culling never changes a
+/// delivered byte. 32 px is deliberately generous; tightening it is a
+/// measured change, not a guess.
+const CULL_MARGIN: i32 = 32;
+
+/// Does `r`, inflated by [`CULL_MARGIN`], intersect the band `area`?
+fn visible_in(r: Rect, area: Rect) -> bool {
+    let x0 = r.x - CULL_MARGIN;
+    let y0 = r.y - CULL_MARGIN;
+    let x1 = r.x + r.w as i32 + CULL_MARGIN;
+    let y1 = r.y + r.h as i32 + CULL_MARGIN;
+    x1 > area.x && x0 < area.x + area.w as i32 && y1 > area.y && y0 < area.y + area.h as i32
+}
+
 /// Walk one node: `parent` is the parent's ABSOLUTE rect (child x/y are
 /// relative to it; `align="center"` text centres within it), `ink` the
 /// inherited text colour (a `vy_button`'s `color` flows to its labels).
@@ -305,6 +345,10 @@ fn walk(
     let r = Rect { x, y, w, h };
     let name = n.name.as_str();
     let mut child_ink = ink;
+    // Band-bbox culling (the F2-recorded optimization): skip PAINT for
+    // widgets that cannot touch this band; never skip validation. Children
+    // still walk — they may lie outside the parent's rect.
+    let visible = visible_in(r, c.area());
 
     if NEEDS_STRUCTURE.contains(&name) {
         return Err(RenderError::Unimplemented(
@@ -313,6 +357,38 @@ fn walk(
     }
 
     match name {
+        _ if !visible => match name {
+            // Validation parity for invisible nodes: the same checks a
+            // visible render performs, minus the painting. Text still
+            // PREPARES (font/glyph errors + cache warmth are band-invariant
+            // state); images still resolve their src.
+            "vy_label" | "vy_lcd" => {
+                draw_text_prepare_only(n, ink, fonts)?;
+            }
+            "vy_button" => {
+                child_ink = n.color("color").or(ink);
+            }
+            "vy_image" | "vy_imagebutton" => {
+                let Some(src) = n.str_attr("src") else {
+                    return Err(RenderError::BadIr(format!(
+                        "{name} {:?} has no src attr (an image with nothing to show is junk IR)",
+                        n.str_attr("name").unwrap_or_default()
+                    )));
+                };
+                assets.get(&src)?;
+            }
+            "vy_video" | "vy_widget" | "vy_canvas" => {
+                return Err(RenderError::Unimplemented(
+                    "no primitive for this widget yet (placeholder lands with F4 captions)",
+                ));
+            }
+            _ if BOXES.contains(&name) => {}
+            "vy_circle" | "vy_ellipse" | "vy_line" | "vy_slider" | "vy_progress" | "vy_bar"
+            | "vy_toggle" | "vy_switch" | "vy_gauge" | "vy_arc" => {}
+            other => {
+                return Err(RenderError::UnknownWidget(other.to_string()));
+            }
+        },
         _ if BOXES.contains(&name) => paint_box(n, r, c),
         "vy_label" | "vy_lcd" => {
             // Box chrome only if the IR declared it (I5), then the run.
@@ -449,6 +525,26 @@ fn font_request(n: &Node) -> Result<(String, u32), RenderError> {
         return checked(ltf, DEFAULT_FONT_SIZE);
     }
     Ok((String::from(DEFAULT_FONT), DEFAULT_FONT_SIZE))
+}
+
+/// The validation-only half of [`draw_text`], for band-culled nodes: resolve
+/// the font request and PREPARE the run (font/glyph errors + cache warmth
+/// are band-invariant state) without placing or inking anything. Keeps
+/// banded and full-frame renders agreeing on every error.
+fn draw_text_prepare_only(
+    n: &Node,
+    _ink: Option<Rgb>,
+    fonts: &mut Fonts,
+) -> Result<(), RenderError> {
+    let Some(text) = n.str_attr("text") else {
+        return Ok(());
+    };
+    if text.is_empty() {
+        return Ok(());
+    }
+    let (family, size) = font_request(n)?;
+    fonts.prepare_run(&family, size, &text)?;
+    Ok(())
 }
 
 /// Ink a node's `text` run (F5). No `text` attr / empty text = nothing to

@@ -1,0 +1,4 @@
+[
+  {"file": "seed-box.json", "label": "seed-box", "expect": "render"},
+  {"file": "seed-structure-error.json", "label": "seed-structure-error", "expect": "error:Unimplemented"}
+]

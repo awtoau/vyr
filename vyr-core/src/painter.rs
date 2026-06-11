@@ -156,6 +156,12 @@ impl TinySkiaCanvas {
         })
     }
 
+    /// This band's world-space rectangle (what the canvas will deliver) —
+    /// the cull target for walk-level paint skipping.
+    pub fn area(&self) -> Rect {
+        self.area
+    }
+
     /// The exact-integer world → gutter-local offset.
     fn off(&self) -> (f32, f32) {
         (
