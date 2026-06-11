@@ -41,6 +41,33 @@
 //! reading). The `src` string is looked up in [`Assets`] VERBATIM — name
 //! resolution/decode is the shell's job (see `crate::assets` module docs).
 //!
+//! ## Clip model (F3 clip stack)
+//!
+//! **Containers clip their children** — the LVGL / TouchGFX / Qt default
+//! (LVGL: `LV_OBJ_FLAG_OVERFLOW_VISIBLE` is off by default; TGX/Qt clip
+//! children to the parent). Concretely:
+//!
+//! - A **BOXES-family node** (frame/container/scroll/stack/dialog/…) with
+//!   children pushes a clip of its own rect + `radius` before walking them,
+//!   pops after — radius-aware, so a child overflowing a rounded corner is
+//!   trimmed along the arc. `vy_scroll` therefore clips by construction.
+//! - **`vy_button` clips its children too** (LVGL clips; the centred label
+//!   chrome fits inside anyway, so this only shows when IR places an
+//!   oversized child in a button).
+//! - The **screen root never pushes** — the band IS the outermost clip by
+//!   construction (invariant I1); clipping composes with banding because
+//!   both are world-space region intersections.
+//! - Leaf and composite widgets (slider/switch/gauge/radio/…) don't clip:
+//!   they have no children in the v1 vocabulary. Revisit when composites
+//!   grow real child nodes.
+//!
+//! The push happens for culled (out-of-band) containers as well — a clip is
+//! world-space state, and a band that cannot see the container must still
+//! clip the container's children identically, or banded and full-frame
+//! renders would disagree (the band-equivalence contract).
+//! [`crate::dirty::dirty_rects`] shares the same `clips_children` predicate,
+//! so repaint regions and paint reality cannot drift apart.
+//!
 //! ## Text model (F5, deliberately minimal)
 //!
 //! Single-style single-line runs, integer pens (see [`crate::text`]). Font
@@ -52,8 +79,10 @@
 //! LVGL/TGX top-left convention and the #318 tight-box anchor);
 //! `align="center"` centres the run in the PARENT rect (the cases.py
 //! button-label contract). A label's `width`/`height` are box geometry only
-//! — runs are not clipped or wrapped (no clip stack yet; rich text is out of
-//! F5 scope).
+//! — runs are still never wrapped, and a label does NOT clip its own run to
+//! its rect, but runs are now **clipped by parent containers** (the F3 clip
+//! stack upgrade): a long label inside a frame trims at the frame edge
+//! instead of painting past it. Rich text stays out of scope.
 //!
 //! ## Chrome policy
 //!
@@ -236,11 +265,13 @@ impl Node {
             .unwrap_or(default)
     }
 
-    fn i32_attr(&self, key: &str, default: i32) -> i32 {
+    // i32/u32 attr views are pub(crate): the dirty-rect diff (crate::dirty)
+    // must resolve geometry with EXACTLY the walk's semantics.
+    pub(crate) fn i32_attr(&self, key: &str, default: i32) -> i32 {
         self.f32_attr(key, default as f32) as i32
     }
 
-    fn u32_attr(&self, key: &str, default: u32) -> u32 {
+    pub(crate) fn u32_attr(&self, key: &str, default: u32) -> u32 {
         self.f32_attr(key, default as f32).max(0.0) as u32
     }
 
@@ -265,7 +296,7 @@ impl Node {
     }
 
     /// Corner radius: semantic `radius` or already-lowered `style_radius`.
-    fn radius(&self) -> u32 {
+    pub(crate) fn radius(&self) -> u32 {
         self.u32_attr("radius", self.u32_attr("style_radius", 0))
     }
 
@@ -332,6 +363,15 @@ fn visible_in(r: Rect, area: Rect) -> bool {
     let x1 = r.x + r.w as i32 + CULL_MARGIN;
     let y1 = r.y + r.h as i32 + CULL_MARGIN;
     x1 > area.x && x0 < area.x + area.w as i32 && y1 > area.y && y0 < area.y + area.h as i32
+}
+
+/// Does this node clip its children? — the single source of truth, shared by
+/// the paint walk and [`crate::dirty`]'s diff (repaint regions and paint
+/// reality must agree). BOXES-family containers and `vy_button` clip when
+/// they HAVE children; the screen root is handled by the band itself (module
+/// docs, clip model).
+pub(crate) fn clips_children(n: &Node) -> bool {
+    !n.children.is_empty() && (BOXES.contains(&n.name.as_str()) || n.name == "vy_button")
 }
 
 /// Walk one node: `parent` is the parent's ABSOLUTE rect (child x/y are
@@ -502,10 +542,28 @@ fn walk(
         }
     }
 
-    for child in &n.children {
-        walk(child, r, c, fonts, assets, child_ink)?;
+    // Containers clip their children (module docs, clip model). The push is
+    // UNCONDITIONAL on band visibility: clips are world-space state, and a
+    // band that can't see the container must still clip the container's
+    // children identically (band equivalence). Own chrome above was painted
+    // unclipped — a node's own rounded fill/border IS the shape, not a
+    // clippee. A child error breaks out so the pop still pairs its push
+    // (the canvas may outlive a failed walk in direct-Canvas callers).
+    let clipping = clips_children(n);
+    if clipping {
+        c.push_clip(r, n.radius());
     }
-    Ok(())
+    let mut result = Ok(());
+    for child in &n.children {
+        result = walk(child, r, c, fonts, assets, child_ink);
+        if result.is_err() {
+            break;
+        }
+    }
+    if clipping {
+        c.pop_clip();
+    }
+    result
 }
 
 /// The font a node requests: `font_family` (+ `font_size`) first, else the

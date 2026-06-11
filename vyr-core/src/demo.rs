@@ -84,6 +84,143 @@ pub const IMAGE_IR: &str = r##"{
 /// The registry name [`IMAGE_IR`]'s `src` attrs reference.
 pub const IMAGE_ASSET: &str = "checker-24.png";
 
+/// The F3 clip fixture — children deliberately OVERFLOWING their containers,
+/// so every op class meets the clip stack:
+///
+/// - container 1 (radius 18): a nested rounded frame whose `vy_line` child
+///   overflows it on both sides (clip-stack depth 2 — mask intersection); a
+///   disc overflowing through the bottom-right corner ARC (the rounded-trim
+///   money shot); a label whose run crosses the right edge into the corner
+///   zone (masked glyph blits); an image poking through the top-right arc
+///   (masked image blits).
+/// - container 2 (radius 0): frame fill, image and label all overflowing a
+///   PURE-RECT clip — the exact integer span fast path.
+///
+/// Shared by `tests/clip_golden.rs` (hash + band equivalence) and
+/// `vyr-bench` (`scene/clip_full` — golden and baseline measure the SAME
+/// pixels). Needs `fonts/roboto.ttf` as "roboto" and the committed checker
+/// under [`IMAGE_ASSET`].
+pub const CLIP_IR: &str = r##"{
+  "schema_version": "0.6-vyvanse",
+  "w": 120, "h": 120,
+  "root": {"name": "view", "attrs": {"background": "#F0EEE8"}, "children": [
+    {"name": "vy_container", "attrs": {"x": "10", "y": "8", "width": "72", "height": "72",
+      "radius": "18", "background": "#DCE6F5", "border_width": "2", "border_color": "#1E5AA8"},
+      "children": [
+        {"name": "vy_frame", "attrs": {"x": "4", "y": "4", "width": "34", "height": "26",
+          "radius": "8", "background": "#FFFFFF", "border_width": "1", "border_color": "#1E5AA8"},
+          "children": [
+            {"name": "vy_line", "attrs": {"x": "-8", "y": "18", "width": "56", "height": "4",
+              "background": "#FF8C00"}}
+          ]},
+        {"name": "vy_circle", "attrs": {"x": "36", "y": "34", "width": "52", "height": "52",
+          "background": "#E0501E"}},
+        {"name": "vy_label", "attrs": {"x": "4", "y": "44", "width": "60", "height": "16",
+          "text": "clip me please", "color": "#222222"}},
+        {"name": "vy_image", "attrs": {"x": "56", "y": "-6", "width": "24", "height": "24",
+          "src": "checker-24.png"}}
+      ]},
+    {"name": "vy_container", "attrs": {"x": "10", "y": "88", "width": "64", "height": "24",
+      "background": "#FFFFFF", "border_width": "1", "border_color": "#888888"},
+      "children": [
+        {"name": "vy_frame", "attrs": {"x": "40", "y": "6", "width": "44", "height": "30",
+          "radius": "4", "background": "#2E8B57"}},
+        {"name": "vy_image", "attrs": {"x": "52", "y": "4", "width": "24", "height": "24",
+          "src": "checker-24.png"}},
+        {"name": "vy_label", "attrs": {"x": "4", "y": "2", "width": "56", "height": "16",
+          "text": "rect clipped", "color": "#1E5AA8"}}
+      ]}
+  ]}
+}"##;
+
+/// [`CLIP_IR`]'s widgets FLATTENED to root children at the same absolute
+/// positions — identical op mix, zero clip pushes (the root never pushes;
+/// children overflow freely). The bench pair `scene/clip_full` vs
+/// `scene/clip_flat` prices the clip stack: mask builds + masked draws +
+/// world-space fate checks are the entire delta.
+pub const CLIP_FLAT_IR: &str = r##"{
+  "schema_version": "0.6-vyvanse",
+  "w": 120, "h": 120,
+  "root": {"name": "view", "attrs": {"background": "#F0EEE8"}, "children": [
+    {"name": "vy_container", "attrs": {"x": "10", "y": "8", "width": "72", "height": "72",
+      "radius": "18", "background": "#DCE6F5", "border_width": "2", "border_color": "#1E5AA8"}},
+    {"name": "vy_frame", "attrs": {"x": "14", "y": "12", "width": "34", "height": "26",
+      "radius": "8", "background": "#FFFFFF", "border_width": "1", "border_color": "#1E5AA8"}},
+    {"name": "vy_line", "attrs": {"x": "6", "y": "30", "width": "56", "height": "4",
+      "background": "#FF8C00"}},
+    {"name": "vy_circle", "attrs": {"x": "46", "y": "42", "width": "52", "height": "52",
+      "background": "#E0501E"}},
+    {"name": "vy_label", "attrs": {"x": "14", "y": "52", "width": "60", "height": "16",
+      "text": "clip me please", "color": "#222222"}},
+    {"name": "vy_image", "attrs": {"x": "66", "y": "2", "width": "24", "height": "24",
+      "src": "checker-24.png"}},
+    {"name": "vy_container", "attrs": {"x": "10", "y": "88", "width": "64", "height": "24",
+      "background": "#FFFFFF", "border_width": "1", "border_color": "#888888"}},
+    {"name": "vy_frame", "attrs": {"x": "50", "y": "94", "width": "44", "height": "30",
+      "radius": "4", "background": "#2E8B57"}},
+    {"name": "vy_image", "attrs": {"x": "62", "y": "92", "width": "24", "height": "24",
+      "src": "checker-24.png"}},
+    {"name": "vy_label", "attrs": {"x": "14", "y": "90", "width": "56", "height": "16",
+      "text": "rect clipped", "color": "#1E5AA8"}}
+  ]}
+}"##;
+
+/// The two panel states differ ONLY in the toggle's `value` — one macro,
+/// one substitution, so the pair cannot drift apart.
+macro_rules! panel_ir {
+    ($toggle:literal) => {
+        concat!(
+            r##"{
+  "schema_version": "0.6-vyvanse",
+  "w": 480, "h": 320,
+  "root": {"name": "view", "attrs": {"background": "#22262B"}, "children": [
+    {"name": "vy_frame", "attrs": {"x": "12", "y": "12", "width": "456", "height": "48",
+      "background": "#2E3440", "radius": "8", "border_width": "1", "border_color": "#4C566A"}},
+    {"name": "vy_label", "attrs": {"x": "28", "y": "26", "width": "220", "height": "20",
+      "text": "Compressor 2 - line B", "color": "#ECEFF4"}},
+    {"name": "vy_gauge", "attrs": {"x": "24", "y": "84", "width": "120", "height": "120",
+      "value": "65", "color": "#88C0D0"}},
+    {"name": "vy_lcd", "attrs": {"x": "48", "y": "216", "width": "90", "height": "24",
+      "text": "1480", "color": "#A3BE8C", "style_text_font": "roboto_20"}},
+    {"name": "vy_slider", "attrs": {"x": "180", "y": "100", "width": "260", "height": "18",
+      "value": "62"}},
+    {"name": "vy_slider", "attrs": {"x": "180", "y": "140", "width": "260", "height": "18",
+      "value": "35"}},
+    {"name": "vy_progress", "attrs": {"x": "180", "y": "180", "width": "260", "height": "12",
+      "value": "80"}},
+    {"name": "vy_toggle", "attrs": {"x": "180", "y": "220", "width": "56", "height": "28",
+      "value": ""##,
+            $toggle,
+            r##""}},
+    {"name": "vy_label", "attrs": {"x": "248", "y": "226", "width": "120", "height": "18",
+      "text": "bypass", "color": "#D8DEE9"}},
+    {"name": "vy_line", "attrs": {"x": "12", "y": "282", "width": "456", "height": "2",
+      "background": "#4C566A"}},
+    {"name": "vy_label", "attrs": {"x": "16", "y": "294", "width": "200", "height": "16",
+      "text": "awto / vyr runtime", "color": "#7A869A"}}
+  ]}
+}"##
+        )
+    };
+}
+
+/// The F3 dirty-rect bench pair, PREV half — a representative 480×320
+/// instrument panel (the embedded-panel resolution class the runtime story
+/// is about): header frame + title, gauge, lcd readout, two sliders, a
+/// progress bar, a toggle with caption, footer rule + credit. Needs
+/// `fonts/roboto.ttf` as "roboto"; image-free.
+///
+/// [`PANEL_NEXT_IR`] differs in exactly ONE attr (the bypass toggle flips
+/// on) — the retained-mode frame step. `vyr-bench` renders PREV once, then
+/// measures `render_incremental(NEXT)` against a full NEXT render:
+/// `scene/panel_dirty_incr` vs `scene/panel_full` is the headline
+/// incremental win. `tests/dirty_rects.rs` proves the same pair
+/// byte-identical to the full render.
+pub const PANEL_PREV_IR: &str = panel_ir!("0");
+
+/// [`PANEL_PREV_IR`] with the bypass toggle ON — see there.
+pub const PANEL_NEXT_IR: &str = panel_ir!("1");
+
 /// Draw the demo scene. The first op paints the backdrop — the render tree's
 /// screen-background discipline, mirrored here.
 pub fn demo_scene(c: &mut dyn Canvas) {

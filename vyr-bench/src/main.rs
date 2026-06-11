@@ -28,8 +28,11 @@
 
 use std::time::Instant;
 
-use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, IMAGE_ASSET, IMAGE_IR, TEXT_IR, demo_scene};
-use vyr_core::{Assets, Canvas, Fonts, Rect, Rgb, RgbaImage, TinySkiaCanvas};
+use vyr_core::demo::{
+    CLIP_FLAT_IR, CLIP_IR, DEMO_H, DEMO_IR, DEMO_W, IMAGE_ASSET, IMAGE_IR, PANEL_NEXT_IR,
+    PANEL_PREV_IR, TEXT_IR, demo_scene,
+};
+use vyr_core::{Assets, Canvas, Fonts, Rect, Rgb, RgbaImage, TinySkiaCanvas, dirty_rects};
 
 /// A check fails when a bench exceeds baseline × this. 1.5 = real regressions
 /// fire, day-to-day desktop noise (a few %) does not.
@@ -323,6 +326,110 @@ fn bench_image_scene() -> f64 {
     })
 }
 
+// --- F3 clip + dirty benches -------------------------------------------------
+
+/// Render one of the clip-pair scenes full-frame (fonts + checker assets —
+/// the same inputs the clip golden uses).
+fn clip_scene_ns(ir: &'static str) -> f64 {
+    let mut fonts = bench_fonts();
+    let assets = bench_assets();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with(
+            ir,
+            &mut fonts,
+            &assets,
+            Rect {
+                x: 0,
+                y: 0,
+                w: DEMO_W,
+                h: DEMO_H,
+            },
+            &mut buf,
+            (DEMO_W * 3) as usize,
+        )
+        .expect("clip scene renders");
+    })
+}
+
+/// Clipped containers with overflowing children: mask builds, masked draws
+/// and fate checks included. `scene/clip_flat` is the same op mix with zero
+/// clip pushes — the delta IS the clip stack's price.
+fn bench_clip_scene() -> f64 {
+    clip_scene_ns(CLIP_IR)
+}
+
+fn bench_clip_flat() -> f64 {
+    clip_scene_ns(CLIP_FLAT_IR)
+}
+
+const PANEL_W: u32 = 480;
+const PANEL_H: u32 = 320;
+
+/// Full render of the 480×320 panel (NEXT state) — the dirty bench's
+/// full-frame reference.
+fn bench_panel_full() -> f64 {
+    let mut fonts = bench_fonts();
+    let mut buf = vec![0u8; (PANEL_W * PANEL_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with_fonts(
+            PANEL_NEXT_IR,
+            &mut fonts,
+            Rect {
+                x: 0,
+                y: 0,
+                w: PANEL_W,
+                h: PANEL_H,
+            },
+            &mut buf,
+            (PANEL_W * 3) as usize,
+        )
+        .expect("panel renders");
+    })
+}
+
+/// The headline incremental win: one toggle flips on the panel; repaint only
+/// the dirty regions onto the previous frame. Iterations after the first
+/// repaint identical regions over identical pixels (B over B) — same ops,
+/// same cost, deterministic timing. `tests/dirty_rects.rs` proves this very
+/// pair byte-identical to the full render.
+fn bench_panel_dirty_incr() -> f64 {
+    let mut fonts = bench_fonts();
+    let prev = vyr_core::ir::Request::parse(PANEL_PREV_IR).expect("prev parses");
+    let next = vyr_core::ir::Request::parse(PANEL_NEXT_IR).expect("next parses");
+    let assets = Assets::new();
+    let stride = (PANEL_W * 3) as usize;
+    let mut frame = vec![0u8; stride * PANEL_H as usize];
+    prev.render_with(
+        &mut fonts,
+        &assets,
+        Rect {
+            x: 0,
+            y: 0,
+            w: PANEL_W,
+            h: PANEL_H,
+        },
+        &mut frame,
+        stride,
+    )
+    .expect("prev frame renders");
+    measure(|| {
+        next.render_incremental(&prev, &mut fonts, &assets, &mut frame, stride)
+            .expect("incremental renders");
+    })
+}
+
+/// ns/px normalizer for the incremental bench: the merged dirty area (what
+/// one iteration actually repaints — diff cost rides on those pixels).
+fn panel_dirty_pixels() -> f64 {
+    let prev = vyr_core::ir::Request::parse(PANEL_PREV_IR).expect("prev parses");
+    let next = vyr_core::ir::Request::parse(PANEL_NEXT_IR).expect("next parses");
+    dirty_rects(&prev, &next)
+        .iter()
+        .map(|r| r.w as f64 * r.h as f64)
+        .sum()
+}
+
 fn bench_demo_scene() -> f64 {
     let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
     measure(|| {
@@ -418,6 +525,26 @@ fn benches() -> Vec<Bench> {
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_image_scene,
         },
+        Bench {
+            name: "scene/clip_full",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_clip_scene,
+        },
+        Bench {
+            name: "scene/clip_flat",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_clip_flat,
+        },
+        Bench {
+            name: "scene/panel_full",
+            pixels: (PANEL_W * PANEL_H) as f64,
+            run: bench_panel_full,
+        },
+        Bench {
+            name: "scene/panel_dirty_incr",
+            pixels: panel_dirty_pixels(),
+            run: bench_panel_dirty_incr,
+        },
     ]
 }
 
@@ -483,13 +610,40 @@ fn main() -> std::process::ExitCode {
     ));
 
     let mut results = std::collections::BTreeMap::new();
+    let mut raw_ns = std::collections::BTreeMap::new();
     for b in benches() {
         let ns = (b.run)();
         let nspx = ns / b.pixels;
         results.insert(b.name.to_string(), nspx);
+        raw_ns.insert(b.name.to_string(), ns);
         log(&format!(
             "{:24} {:9.1} ns/iter  {:6.2} ns/px",
             b.name, ns, nspx
+        ));
+    }
+
+    // The runtime-story headlines, spelled out (raw per-frame ns — the
+    // ns/px rows above normalize differently per bench).
+    if let (Some(full), Some(incr)) = (
+        raw_ns.get("scene/panel_full"),
+        raw_ns.get("scene/panel_dirty_incr"),
+    ) {
+        log(&format!(
+            "dirty-rect incremental win: panel full {:.0} ns vs dirty {:.0} ns = {:.1}x \
+             (480x320, one toggle flips, diff included)",
+            full,
+            incr,
+            full / incr
+        ));
+    }
+    if let (Some(clip), Some(flat)) = (raw_ns.get("scene/clip_full"), raw_ns.get("scene/clip_flat"))
+    {
+        log(&format!(
+            "clip-stack overhead: clipped {:.0} ns vs flat {:.0} ns = {:+.1}% \
+             (same op mix; masks + fate checks are the delta)",
+            clip,
+            flat,
+            (clip / flat - 1.0) * 100.0
         ));
     }
 
