@@ -114,6 +114,32 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<div class="stage">
+  <div class="imgs"><img src="f18-rig-frame.png" alt="F18 rig animation frame 222"
+       style="width:480px;height:270px"></div>
+  <div>
+    <h2>F18 — the rig: animation, ladder to 4K, cross-ISA <span class="meta">2026-06-11 · (see git)</span></h2>
+    <p>Frame 222 of the 600-frame acceptance run (10&nbsp;s @ logical 60&nbsp;fps,
+    480×270): a frame-INDEX-driven parametric scene — slider sweeping every
+    frame, toggle blinking at a 30-frame period, progress sawtooth, a disc
+    crossing its container's rounded CLIP edges, a digits-only frame counter,
+    the checker translating OVER the mover (z-order restack, live). Every
+    frame renders BOTH ways — full, and incrementally from the previous frame
+    via dirty rects — <strong>byte-identical on all 600 frames</strong>
+    (~14.6% dirty per step); per-frame FNV-1a hashes chain into the committed
+    golden (<code>vyr-rig/hashchain.json</code>), so lossless-video regression
+    costs kilobytes — the FFV1 video itself stays a <code>./tmp</code>
+    artifact (<code>./dev.py anim</code>). <strong>Cross-ISA:</strong> the
+    same binary, cross-built static for ARMv7-musl and replayed under
+    <code>qemu-arm-static</code>, produced byte-identical hashes on all 600
+    frames — F1's "byte-identical on two machines" box closed across an
+    entire ISA. The resolution ladder (120×68 → 3840×2160) joined the perf
+    gates: full-frame 4K is <em>marginal</em> against the 16.67&nbsp;ms budget
+    (15.5&nbsp;ms); the incremental path runs it at 14×&nbsp;headroom —
+    trends published at <a href="../perf/index.html">docs/perf</a>.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
 <p class="lede">The places where vyr does something non-obvious, with the
 evidence images.</p>

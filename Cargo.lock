@@ -313,6 +313,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vyr-rig"
+version = "0.0.1"
+dependencies = [
+ "png",
+ "serde",
+ "serde_json",
+ "vyr-core",
+]
+
+[[package]]
 name = "vyr-size"
 version = "0.0.1"
 dependencies = [

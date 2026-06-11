@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vyr perf history — the F18 rig ledger</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 880px;
+         margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
+  p.lede { opacity: .8; }
+  table { border-collapse: collapse; font-size: .85rem; }
+  th, td { border: 1px solid #8884; padding: .25rem .5rem; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  img { max-width: 100%; border: 1px solid #8884; background: #fff; }
+  code { font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>vyr perf history — the rig ledger</h1>
+<p class="lede">The F18 rig (<a href="https://github.com/awtoau/vyr/issues/18">#18</a>)
+drives a frame-indexed parametric scene — slider sweep, toggle blink, a disc
+crossing clip boundaries, a digits-only frame counter, the checker asset
+translating — rendering every frame BOTH ways (full, and incrementally via
+dirty rects) with per-frame byte-equality asserted, at six resolutions from
+120×68 to 4K (3840×2160). Numbers are medians (vyr-bench methodology);
+the committed regression goldens are the FNV-1a frame-hash chain
+(<code>vyr-rig/hashchain.json</code>) and the ns/px baselines
+(<code>vyr-rig/baseline.json</code>). This page regenerates from the
+append-only <a href="history.jsonl"><code>history.jsonl</code></a> via
+<code>./dev.py perf-history</code>.</p>
+
+<h2>Latest run — <code>21427f2</code> · 2026-06-11T11:03:51Z</h2>
+<table>
+<tr><th>rung</th><th>full ms</th><th>ns/px</th><th>×60fps</th>
+<th>incr ms</th><th>ns/dirty-px</th><th>×60fps</th><th>dirty</th><th>speedup</th></tr>
+<tr><td>120x68</td><td>0.062</td><td>7.59</td><td>269.00×</td><td>0.088</td><td>27.48</td><td>189.21×</td><td>39.3%</td><td>0.7×</td></tr>
+<tr><td>240x135</td><td>0.110</td><td>3.39</td><td>151.94×</td><td>0.131</td><td>16.72</td><td>126.75×</td><td>24.3%</td><td>0.8×</td></tr>
+<tr><td>480x270</td><td>0.231</td><td>1.78</td><td>72.13×</td><td>0.137</td><td>7.17</td><td>121.64×</td><td>14.8%</td><td>1.7×</td></tr>
+<tr><td>960x540</td><td>0.648</td><td>1.25</td><td>25.71×</td><td>0.215</td><td>3.28</td><td>77.53×</td><td>12.6%</td><td>3.0×</td></tr>
+<tr><td>1920x1080</td><td>2.051</td><td>0.99</td><td>8.13×</td><td>0.447</td><td>1.82</td><td>37.26×</td><td>11.8%</td><td>4.6×</td></tr>
+<tr><td>3840x2160</td><td>15.352</td><td>1.85</td><td>1.09×</td><td>1.179</td><td>1.24</td><td>14.14×</td><td>11.5%</td><td>13.0×</td></tr>
+</table>
+<p class="lede">×60fps = headroom vs the 16.67 ms budget (&gt;1 fits).
+The 4K story the ladder exists to tell: the incremental path is where
+60 fps @ 4K lives.</p>
+<p>Latest anim acceptance: <b>60 frames @ 480×270</b>, run hash <code>0xd16437995770c20b</code>, dirty 14.2%/step, 0.81 ms/frame (full + incremental + byte-verify + PNG dump, host wall clock).</p><p>Cross-ISA rung (qemu-arm-static, ARMv7 musl static build): <b>✅ byte-identical</b> across 600 frames; TCG plugins unavailable on this host (no insn counts — emulated wall time is NON-target-indicative).</p>
+
+<h2>Trends over history</h2>
+<p><img src="ladder-full-ns-px.svg" alt="full-frame ns/px per rung over history"></p>
+<p><img src="ladder-incr-ns-px.svg" alt="incremental ns/dirty-px per rung over history"></p>
+<p><img src="ladder-incr-speedup.svg" alt="incremental speedup per rung over history"></p>
+
+
+<h2>Runs</h2>
+<ol start="0">
+<li><code>2026-06-11T10:58:19Z</code> · <code>21427f2</code> · selwyn (x86_64)</li>
+<li><code>2026-06-11T11:03:51Z</code> · <code>21427f2</code> · selwyn (x86_64)</li>
+</ol>
+<p class="lede">Host wall-clock numbers are desktop-host numbers; the
+embedded story is measured separately (F9). Anything emulated is labelled
+NON-target-indicative — QEMU measures the host, never the F427.</p>
+</body>
+</html>

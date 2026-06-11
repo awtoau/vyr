@@ -14,16 +14,22 @@ widget vocabulary. It is being built in three stages:
 3. **Embedded GUI toolkit** — the endgame: hand it an existing LVGL or
    TouchGFX project (imported to IR) and it runs, on-device, on one runtime.
 
-**Status: painting.** F1 (polygon-only tiny-skia painter, byte-exact band
-equivalence), F2 (ns/px perf gate + scaling-law assertion), F3-lite (IR
-rendered natively from the `vy_` vocabulary), F5 (TTF text via skrifa +
-rasterize-once glyph cache — the FULL text path is `no_std`), F6 (PNG assets:
-decode in the cli, deterministic integer blits in core) are landed, and
-vyr runs live as the fifth backend in the awto-vyvanse render farm. See the
+**Status: animating.** F1 (polygon-only tiny-skia painter, byte-exact band
+equivalence), F2 (ns/px perf gate + scaling-law assertion), F3 (IR rendered
+natively from the `vy_` vocabulary; clip stack; dirty rects +
+`render_incremental`), F5 (TTF text via skrifa + rasterize-once glyph cache —
+the FULL text path is `no_std`), F6 (PNG assets: decode in the cli,
+deterministic integer blits in core) are landed, vyr runs live as the fifth
+backend in the awto-vyvanse render farm, and F18 — the rig — drives a
+600-frame deterministic animation with incremental==full proven byte-exact
+EVERY frame, a resolution ladder to 4K (incremental repaint runs 4K at 14×
+the 60 fps budget), and cross-ISA goldens: the same run replayed on emulated
+ARMv7 is hash-identical on all 600 frames. See the
 **[milestone gallery](docs/milestones/README.md)** — the renderer's history
-in its own golden pixels. The full plan — architecture, day-1 invariants
-I1–I8, feature tracks F1–F15, milestones — is [`docs/plan.md`](docs/plan.md).
-Work is tracked as GitHub issues, one per feature track.
+in its own golden pixels — and the **[perf history](docs/perf/index.html)**.
+The full plan — architecture, day-1 invariants I1–I8, the feature tracks —
+is [`docs/plan.md`](docs/plan.md). Work is tracked as GitHub issues, one per
+feature track. Everything runs as ONE operation: `./dev.py ci`.
 
 ## Design pillars
 
@@ -45,9 +51,11 @@ Work is tracked as GitHub issues, one per feature track.
 
 | Crate | What |
 |---|---|
-| `vyr-core` | `no_std + alloc`: IR model, render tree, layout, `Canvas` trait, painter, counters |
-| `vyr-cli` | std shell: IR JSON in → PNG out (render-farm contract); decode/encode lives here |
-| `vyr-bench` | criterion benches, ns/px baselines, the scaling-law assertion |
+| `vyr-core` | `no_std + alloc`: IR model, render tree, layout, clip stack, dirty rects, `Canvas` trait, painter, text/asset registries, counters |
+| `vyr-cli` | std shell: IR JSON in → PNG out (render-farm contract), text measure; decode/encode lives here |
+| `vyr-bench` | deterministic ns/px benches, committed baseline, the scaling-law assertion (run\|record\|check) |
+| `vyr-size` | the F9 measurement vehicle: real linked ELFs on the STM32F427 memory map (`./dev.py size-mcu`) |
+| `vyr-rig` | the F18 rig: deterministic 60 fps animation (hash-chain golden), resolution ladder to 4K, cross-ISA replay (`./dev.py anim` / `ladder` / `perf-history`) |
 
 ## License
 

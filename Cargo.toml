@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["vyr-core", "vyr-cli", "vyr-bench", "vyr-size"]
+members = ["vyr-core", "vyr-cli", "vyr-bench", "vyr-size", "vyr-rig"]
 
 [workspace.package]
 version = "0.0.1"
