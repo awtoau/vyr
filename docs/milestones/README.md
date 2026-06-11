@@ -61,6 +61,79 @@ pure integer math). 4× zoom of the F5 button:
 
 ![text zoom](eng-text-zoom.png)
 
+### Plain words for embedded folk — gutter, dirty, layers
+
+GUI-renderer jargon, decoded. (Embedded people are not GUI designers; this
+section exists so the discipline above is understandable, not just citable.)
+
+**What is the gutter?** When vyr renders a band, it actually rasterizes a
+slightly BIGGER area — 8 px extra on every side — and throws the margin away,
+keeping only the band's own pixels. Print shops call the same trick *bleed*:
+print past the trim line, then cut, so the cut never shows. The point: the
+renderer must clip *somewhere*, and antialiasing near a clip edge is where
+rasterizers get twitchy — so we put the clip edge in pixels nobody will ever
+see. Cost: a 120×30 band rasterizes 136×46.
+
+![gutter diagram](eng-diagram-gutter.png)
+
+**"If I move this widget, how does the system know what to redraw?"** Dirty
+rectangles — no layers required. When a widget moves (or changes), two
+regions become *dirty* (invalid): where it WAS (the background there must be
+repainted) and where it NOW is. Next frame, the renderer walks the widget
+tree, **skips** every drawing op whose bounding box misses the dirty regions,
+and repaints only inside them — through the same `render(tree, area, buf,
+stride)` banding path, so a tall dirty region just becomes a few bands
+through the small working buffer. Tree order is z-order, so whatever overlaps
+the dirty region repaints in the right stacking order automatically. Nothing
+else on screen is touched. (This tracking is F3's remaining open item —
+today's oracle renders full frames; on device, dirty-rect mode IS the normal
+mode, and the F10 partial-buffer visualiser exists to let you literally watch
+it.)
+
+![dirty diagram](eng-diagram-dirty.png)
+
+**So what are layers, and why doesn't vyr use them?** Layers are the OTHER
+answer to "what do I redraw": keep each widget subtree pre-rendered in its
+own off-screen buffer (a texture), and when something moves, don't repaint —
+just re-COMPOSITE the buffers in order. That's Flutter/desktop-GPU territory:
+cheap on a GPU, but each layer costs a full bitmap of RAM (one 120×120 RGB565
+layer = 28 KB; an F427 has 256 KB of SRAM total). On small targets you cannot
+afford a bitmap per widget — which is why LVGL, TouchGFX and vyr all repaint
+dirty regions instead of compositing layers. Flutter's layer machinery is
+the part of its architecture we deliberately did NOT copy; *repaint
+boundaries* (caching one expensive subtree as a layer, by choice) may arrive
+much later as an optimization, but dirty rectangles are the foundation.
+
+### Why byte-exact, and where the speed knobs fit (the F16 discussion)
+
+Recorded here because it is history, not just an issue thread. The question
+was fair: byte-exact band equivalence is invisible to the eye — is it worth
+anything outside 1:1 oracle checks, when on-device we want speed above all?
+
+Three answers, and a feature:
+
+1. **The exactness was (nearly) free.** Fixed-step flattening is *cheaper*
+   than the adaptive flattening + stroker path it replaced; quantization is a
+   few float ops per vertex. The only real cost in the discipline is the
+   gutter's overscan — priced in the F2 scaling table.
+2. **It IS visible — in motion.** With dirty-rect partial redraw, a widget
+   straddling a redraw boundary gets repainted in pieces across frames. If
+   banded output didn't match full-frame output, the seam would *shimmer* as
+   regions update at different times — a classic embedded-GUI artifact.
+   Byte-exactness is what makes partial updates invisible.
+3. **The oracle needs it regardless**: goldens, cross-machine CI, and the
+   conformance flip all stand on deterministic pixels.
+
+And the feature: **quality tiers (F16)** — deliberate, exposed
+speed-for-quality knobs, the thing TouchGFX never had and the thing video
+makes essential. The design rule that keeps both worlds: quality is a small
+discrete enum (`Exact | Fast | Draft`), and **every tier is individually
+deterministic** — the oracle pins `Exact`; the runtime spends headroom by
+dropping AA, halving flattening density, skipping the gutter, using 1-bpp
+glyphs — each knob priced by its bench, the active tier shown in the perf
+HUD, and (with F11) a frame-budget governor that drops a tier when the
+budget blows and recovers when headroom returns.
+
 ### The other special bits (no picture, but load-bearing)
 
 - **Honest failure**: an unrenderable widget exits with a NAMED error before

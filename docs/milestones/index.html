@@ -122,5 +122,73 @@ evidence images.</p>
   </div>
 </div>
 
+<h1 style="margin-top:3rem">Plain words for embedded folk</h1>
+<p class="lede">GUI-renderer jargon, decoded — gutter, dirty rectangles,
+layers — so the discipline above is understandable, not just citable.</p>
+
+<div class="stage">
+  <div class="imgs"><img src="eng-diagram-gutter.png" alt="gutter diagram" style="width:520px;height:360px;image-rendering:auto"></div>
+  <div>
+    <h2>What is the gutter?</h2>
+    <p>When vyr renders a band it rasterizes a slightly BIGGER area — 8&nbsp;px
+    extra on every side — and throws the margin away. Print shops call the
+    same trick <em>bleed</em>: print past the trim line, then cut, so the cut
+    never shows. The renderer must clip <em>somewhere</em>, and antialiasing
+    near a clip edge is where rasterizers get twitchy — so the clip edge
+    lives in pixels nobody will ever see. Cost: a 120×30 band rasterizes
+    136×46 (priced in the F2 scaling table; a Fast/Draft tier can drop it).</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="eng-diagram-dirty.png" alt="dirty rect diagram" style="width:520px;height:400px;image-rendering:auto"></div>
+  <div>
+    <h2>"If I move a widget, what repaints?" — dirty rectangles, not layers</h2>
+    <p>When a widget moves, two regions become <em>dirty</em>: where it WAS
+    (repaint the background there) and where it NOW is. Next frame the
+    renderer walks the widget tree, <strong>skips</strong> every op whose
+    bbox misses the dirty regions, and repaints only inside them — through
+    the same <code>render(tree, area, buf, stride)</code> banding path, in
+    z-order (tree order), touching nothing else.</p>
+    <p><strong>Layers</strong> are the other answer: keep each widget subtree
+    pre-rendered in its own off-screen bitmap and re-composite instead of
+    repainting. Cheap on a desktop GPU; ruinous on an MCU — one 120×120
+    RGB565 layer costs 28&nbsp;KB and an F427 has 256&nbsp;KB of SRAM total.
+    That is why LVGL, TouchGFX and vyr all repaint dirty regions instead of
+    compositing layers — Flutter's layer machinery is the one part of its
+    architecture vyr deliberately did NOT copy. (Optional per-subtree caching
+    — "repaint boundaries" — may arrive much later; dirty rects are the
+    foundation.)</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div></div>
+  <div>
+    <h2>Why byte-exact, and where the speed knobs fit (the F16 discussion)</h2>
+    <p>Recorded here because it is history, not just an issue thread. The
+    fair question: byte-exact band equivalence is invisible to the eye — is
+    it worth anything outside 1:1 oracle checks, when on-device we want
+    speed above all?</p>
+    <p>Three answers and a feature. (1)&nbsp;The exactness was nearly free:
+    fixed-step flattening is <em>cheaper</em> than the adaptive+stroker path
+    it replaced; the gutter's overscan is the only real cost. (2)&nbsp;It IS
+    visible — in motion: with dirty-rect partial redraw, mismatched band
+    output would <em>shimmer</em> at redraw seams as regions update across
+    frames; byte-exactness is what makes partial updates invisible.
+    (3)&nbsp;The oracle stands on deterministic pixels regardless.</p>
+    <p>The feature: <strong>quality tiers (F16)</strong> — deliberate,
+    exposed speed-for-quality knobs, the thing TouchGFX never had and the
+    thing video makes essential. Quality is a small discrete enum
+    (<code>Exact&nbsp;|&nbsp;Fast&nbsp;|&nbsp;Draft</code>) and every tier is
+    individually deterministic: the oracle pins <code>Exact</code>; the
+    runtime spends headroom by dropping AA, halving flattening density,
+    skipping the gutter, using 1-bpp glyphs — each knob priced by its bench,
+    the active tier shown in the perf HUD, and (with F11) a frame-budget
+    governor that drops a tier when the budget blows and recovers when
+    headroom returns.</p>
+  </div>
+</div>
+
 </body>
 </html>

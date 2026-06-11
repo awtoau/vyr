@@ -61,8 +61,85 @@ def zoom(src: Path, box: tuple[int, int, int, int], factor: int, dst: Path) -> N
     log(f"{dst.name}: {src.name} crop {box} x{factor} -> {big.size[0]}x{big.size[1]}")
 
 
+def diagram_gutter(dst: Path) -> None:
+    """Band + gutter explainer: the delivered band, the overscan margin, and
+    where the renderer's clip edge actually sits."""
+    from PIL import ImageDraw
+
+    W, H, S = 520, 360, 2  # canvas + screen scale (1 IR px = 2 diagram px)
+    sx, sy = 40, 50        # screen origin on the canvas
+    img = Image.new("RGB", (W, H), (250, 250, 250))
+    d = ImageDraw.Draw(img)
+
+    def srect(x0, y0, x1, y1):  # screen coords -> canvas box
+        return (sx + x0 * S, sy + y0 * S, sx + x1 * S, sy + y1 * S)
+
+    # The 120x120 screen.
+    d.rectangle(srect(0, 0, 120, 120), outline=(120, 120, 120), width=2)
+    d.text((sx, sy - 28), "screen 120x120", fill=(60, 60, 60))
+    # The gutter region (band grown by 8px on every side) — orange, BEHIND the band.
+    d.rectangle(srect(-8, 52, 128, 98), fill=(255, 224, 178),
+                outline=(230, 130, 0), width=2)
+    # The delivered band (rows 60..90, full width) — blue, on top.
+    d.rectangle(srect(0, 60, 120, 90), fill=(220, 230, 245),
+                outline=(30, 90, 168), width=2)
+    d.text((sx + 6, sy + 70 * S - 6), "band 120x30 - the pixels we DELIVER",
+           fill=(30, 90, 168))
+    d.text((sx + 132 * S, sy + 50 * S),
+           "+8 px gutter on every side:\nrasterized, then thrown away.\n"
+           "The renderer's CLIP EDGE lives\non the orange line - never next\n"
+           "to a delivered pixel.",
+           fill=(150, 80, 0))
+    d.text((sx, sy + 124 * S),
+           "cost: (120+16) x (30+16) rasterized for a 120x30 band - the overscan\n"
+           "the F2 scaling table prices, and the thing a Fast/Draft tier can drop.",
+           fill=(90, 90, 90))
+    img.save(dst)
+    log(f"{dst.name}: gutter diagram")
+
+
+def diagram_dirty(dst: Path) -> None:
+    """Dirty-rectangle explainer: a widget moves; what repaints."""
+    from PIL import ImageDraw
+
+    W, H, S = 520, 400, 2
+    sx, sy = 40, 50
+    img = Image.new("RGB", (W, H), (250, 250, 250))
+    d = ImageDraw.Draw(img)
+
+    def srect(x0, y0, x1, y1):
+        return (sx + x0 * S, sy + y0 * S, sx + x1 * S, sy + y1 * S)
+
+    d.rectangle(srect(0, 0, 120, 120), outline=(120, 120, 120), width=2)
+    d.text((sx, sy - 28), "screen 120x120 - a widget moved this frame",
+           fill=(60, 60, 60))
+    # Dirty regions: WAS (must repaint the background) + NOW (paint the widget).
+    d.rectangle(srect(14, 20, 58, 48), fill=(252, 228, 228),
+                outline=(200, 60, 60), width=2)
+    d.text((sx + 16 * S, sy + 22 * S), "WAS\n(repaint what's\nunderneath)",
+           fill=(160, 40, 40))
+    d.rectangle(srect(62, 64, 106, 92), fill=(220, 230, 245),
+                outline=(30, 90, 168), width=2)
+    d.text((sx + 64 * S, sy + 66 * S), "NOW\n(paint the widget\nhere)",
+           fill=(30, 90, 168))
+    # Everything else untouched.
+    d.text((sx + 6 * S, sy + 104 * S),
+           "everything else: NOT touched this frame", fill=(120, 120, 120))
+    d.text((sx, sy + 128 * S),
+           "dirty = WAS + NOW. Next frame the renderer walks the widget tree,\n"
+           "SKIPS every op whose bbox misses the dirty rects, and repaints only\n"
+           "inside them - banded through the small working buffer if they are\n"
+           "tall. Tree order = z-order, so overlapping widgets repaint correctly.",
+           fill=(90, 90, 90))
+    img.save(dst)
+    log(f"{dst.name}: dirty-rect diagram")
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
+
+    diagram_gutter(OUT / "eng-diagram-gutter.png")
+    diagram_dirty(OUT / "eng-diagram-dirty.png")
 
     full_p = TMP / "band-fail-full-30.png"
     band_p = TMP / "band-fail-banded-30.png"
