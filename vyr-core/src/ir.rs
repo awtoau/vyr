@@ -293,18 +293,25 @@ const BOXES: &[&str] = &[
     "vy_list",
     "vy_roller",
 ];
-/// Widgets that need MARKS or STRUCTURE beyond a single text run (check /
-/// radio marks, option lists, row/column layout, plot geometry): still hard
-/// errors after F5 — they are F4 composite/placeholder territory, and a
-/// text-only rendering of them would be a lie, not a widget (I6).
-const NEEDS_STRUCTURE: &[&str] = &[
-    "vy_toggle_label",
-    "vy_radio",
-    "vy_checkbox",
-    "vy_dropdown",
-    "vy_table",
-    "vy_chart",
-];
+/// Widgets that need STRUCTURE beyond marks + a text run (option lists,
+/// row/column layout, plot geometry): still hard errors — F4's
+/// labelled-placeholder wave covers them (coordinated on awto-vyvanse#321,
+/// because flipping error→placeholder changes the farm contract the fixture
+/// generator and smoke encode). `vy_radio`/`vy_checkbox` graduated to real
+/// composites in F4 wave 1.
+const NEEDS_STRUCTURE: &[&str] = &["vy_toggle_label", "vy_dropdown", "vy_table", "vy_chart"];
+
+// F4 wave-1 mark palette — matches vyvanse's #313 primitive composites
+// (cases.py `_RADIO_RING`/`_RADIO_DOT`), NOT vyr's LVGL-flavoured widget
+// accent: the #313 premise is cross-backend consistency, and the four
+// backends already render this exact ring+dot at 1.000 SSIM. Using the same
+// ink means vyr's NATIVE vy_radio agrees with the lowered composite the
+// other backends draw.
+const MARK_ACCENT: Rgb = Rgb {
+    r: 0x1E,
+    g: 0x5A,
+    b: 0xA8,
+};
 
 /// Band-culling safety margin, in pixels: a widget whose rect, inflated by
 /// this, misses the band gets its PAINT skipped (path building is the cost
@@ -362,7 +369,7 @@ fn walk(
             // visible render performs, minus the painting. Text still
             // PREPARES (font/glyph errors + cache warmth are band-invariant
             // state); images still resolve their src.
-            "vy_label" | "vy_lcd" => {
+            "vy_label" | "vy_lcd" | "vy_radio" | "vy_checkbox" => {
                 draw_text_prepare_only(n, ink, fonts)?;
             }
             "vy_button" => {
@@ -447,6 +454,9 @@ fn walk(
             c.disc(kx, y + rad as i32, kr, KNOB, 0xFF);
             c.ring(kx, y + rad as i32, kr, 1, KNOB_RING, 0xFF);
         }
+        "vy_radio" | "vy_checkbox" => {
+            draw_mark_widget(n, r, name == "vy_radio", ink, c, fonts)?;
+        }
         "vy_gauge" | "vy_arc" => {
             // Full ring: the circular track (the TGX gauge shape). Sweep arcs
             // need an arc primitive — F4. IR `color` wins over the track grey.
@@ -525,6 +535,79 @@ fn font_request(n: &Node) -> Result<(String, u32), RenderError> {
         return checked(ltf, DEFAULT_FONT_SIZE);
     }
     Ok((String::from(DEFAULT_FONT), DEFAULT_FONT_SIZE))
+}
+
+/// F4 wave 1: `vy_radio` / `vy_checkbox` as native composites — a square MARK
+/// the widget's height on the left, the `text` label to its right,
+/// vertically centred. Geometry + ink match vyvanse's #313
+/// primitive-composite lowering (cases.py `_radio_composite`: ring border
+/// `max(2, d/10)`, selected dot 44% of the ring diameter, accent `#1E5AA8`)
+/// so vyr's native rendering and the other backends' lowered composites
+/// agree by construction. `value`/`checked` (either attr) drives the mark.
+fn draw_mark_widget(
+    n: &Node,
+    r: Rect,
+    radio: bool,
+    ink: Option<Rgb>,
+    c: &mut TinySkiaCanvas,
+    fonts: &mut Fonts,
+) -> Result<(), RenderError> {
+    let d = r.h.min(r.w);
+    let on = n.f32_attr("value", n.f32_attr("checked", 0.0)) != 0.0;
+    let (mx, my) = (r.x, r.y + (r.h as i32 - d as i32) / 2);
+    if radio {
+        // Outline ring at full mark size; painter strokes centred on the
+        // radius, so radius = (d - bw) / 2 keeps the outer edge inside d.
+        let bw = (d / 10).max(2);
+        let (cx, cy) = (mx + d as i32 / 2, my + d as i32 / 2);
+        c.ring(cx, cy, (d - bw) / 2, bw, MARK_ACCENT, 0xFF);
+        if on {
+            // The #313 dot: 44% of the ring diameter, concentric.
+            let dot_d = (d * 44 / 100).max(4);
+            c.disc(cx, cy, dot_d / 2, MARK_ACCENT, 0xFF);
+        }
+    } else {
+        let mark = Rect {
+            x: mx,
+            y: my,
+            w: d,
+            h: d,
+        };
+        let rad = (d / 8).max(2);
+        if on {
+            c.fill_rrect(mark, rad, MARK_ACCENT, 0xFF);
+            // The check: two strokes through the box's tick anchor points.
+            let lw = (d / 8).max(2);
+            let p = |fx: u32, fy: u32| (mx + (d * fx / 100) as i32, my + (d * fy / 100) as i32);
+            let (ax, ay) = p(24, 52);
+            let (bx, by) = p(42, 70);
+            let (ex, ey) = p(76, 30);
+            let white = Rgb {
+                r: 0xFF,
+                g: 0xFF,
+                b: 0xFF,
+            };
+            c.line(ax, ay, bx, by, lw, white, 0xFF);
+            c.line(bx, by, ex, ey, lw, white, 0xFF);
+        } else {
+            // Unchecked: outline only — the same accent border weight as the
+            // radio ring, interior transparent (the #313 outline primitive).
+            c.stroke_rrect(mark, rad, (d / 10).max(2), MARK_ACCENT, 0xFF);
+        }
+    }
+    // Label: `text` to the right of the mark, vertically centred via the
+    // measurement API (gap = 6 px, the LVGL checkbox text gap).
+    if let Some(text) = n.str_attr("text")
+        && !text.is_empty()
+    {
+        let color = n.color("color").or(ink).unwrap_or(INK);
+        let (family, size) = font_request(n)?;
+        let m = fonts.prepare_run(&family, size, &text)?;
+        let baseline = r.y + (r.h as i32 - m.height()) / 2 + m.ascent;
+        let placed = fonts.placed_run(&family, size, &text, r.x + d as i32 + 6, baseline)?;
+        let _ = c.glyph_run(&placed, color, 0xFF);
+    }
+    Ok(())
 }
 
 /// The validation-only half of [`draw_text`], for band-culled nodes: resolve

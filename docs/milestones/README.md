@@ -18,6 +18,8 @@ static server). On GitHub this README renders inline below.
 | **F7 — the farm speaks vyr** | 2026-06-11 | vyvanse `84a612d` / `2fac0e9` | ![frame](f7-farm-frame.png) ![slider](f7-farm-slider.png) ![label](f7-farm-label.png) | The same widgets rendered THROUGH the vyvanse render farm (`render(thing, "vyr")` → vyr_server → one-shot vyr-cli), ~2 ms each — vyr live as the fifth backend beside Qt/LVGL/TGX/Flutter. |
 | **F6 — images** | 2026-06-11 | `28ea911` | ![F6](f6-image.png) | The committed 24×24 RGBA checker blitted from the caller-owned `Assets` registry (decode in cli, core blits — I7): natural size inside a bigger widget, CLIPPED by a smaller one, over a frame, via `vy_imagebutton`. The semi-transparent quadrant blends by exact integer source-over (spot-asserted to the byte); the transparent hole skips. `IMAGE_GOLDEN_FNV1A`; band-exact (integer blits — the glyph argument). |
 
+| **F4 wave 1 — radio + checkbox** | 2026-06-11 | (see git) | ![F4](f4-radio-checkbox.png) | Native `vy_radio`/`vy_checkbox` composites with the #313 mark geometry (ring `max(2,d/10)`, 44% dot, accent `#1E5AA8`) so vyr's native rendering agrees with the lowered composites the other backends draw; labels vertically centred via the measurement API. `STRUCTURE_GOLDEN_FNV1A`; band-exact. The last of the interactive vocabulary — what remains is long-tail placeholders + spec-driven refinement. |
+
 ## Engineering gallery — the special bits
 
 The places where vyr does something non-obvious, with the evidence.
