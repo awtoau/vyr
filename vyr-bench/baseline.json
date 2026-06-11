@@ -1,12 +1,14 @@
 {
-  "prim/disc_r24": 3.685034722222222,
-  "prim/fill_rrect_64": 1.3684326171875,
-  "prim/gradient_64": 6.8373876953125,
-  "prim/line_diag_w3": 32.461444444444446,
-  "prim/ring_r24w4": 5.244878826530612,
-  "prim/stroke_rrect_64": 2.6127197265625,
-  "scene/demo_full": 4.754527777777778,
-  "scene/ir_full": 5.905347222222222,
-  "scene/text_full": 1.859048611111111,
-  "text/glyph_run": 1.3749547998278089
+  "prim/blit_image_64": 2.3281201171875,
+  "prim/disc_r24": 3.74609375,
+  "prim/fill_rrect_64": 1.398818359375,
+  "prim/gradient_64": 6.9583642578125,
+  "prim/line_diag_w3": 33.54072222222222,
+  "prim/ring_r24w4": 5.569732142857143,
+  "prim/stroke_rrect_64": 2.636611328125,
+  "scene/demo_full": 4.908675,
+  "scene/image_full": 1.6642263888888889,
+  "scene/ir_full": 5.993256944444444,
+  "scene/text_full": 1.9675111111111112,
+  "text/glyph_run": 1.4447696943607404
 }
