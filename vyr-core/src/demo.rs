@@ -12,6 +12,28 @@ pub const DEMO_W: u32 = 120;
 /// Canonical demo frame size.
 pub const DEMO_H: u32 = 120;
 
+/// The F3 IR fixture — one of each F3-lite widget, geometry crossing the
+/// 30/60/90 band seams. Shared by `tests/ir_golden.rs` (hash + band
+/// equivalence) and `vyr-bench` (the scene-level ns/px benches) so the golden
+/// and the perf baseline measure the SAME pixels.
+pub const DEMO_IR: &str = r##"{
+  "w": 120, "h": 120,
+  "root": {"name": "view", "children": [
+    {"name": "vy_frame", "attrs": {"x": "6", "y": "6", "width": "52", "height": "40",
+      "background": "#DCE6F5", "border_width": "2", "border_color": "#1E5AA8", "radius": "6"}},
+    {"name": "vy_circle", "attrs": {"x": "66", "y": "8", "width": "36", "height": "36",
+      "background": "#1E5AA8"}},
+    {"name": "vy_slider", "attrs": {"x": "8", "y": "56", "width": "104", "height": "18",
+      "value": "60", "min": "0", "max": "100"}},
+    {"name": "vy_toggle", "attrs": {"x": "8", "y": "80", "width": "44", "height": "22",
+      "value": "1"}},
+    {"name": "vy_gauge", "attrs": {"x": "62", "y": "76", "width": "40", "height": "40",
+      "value": "65", "min": "0", "max": "100"}},
+    {"name": "vy_line", "attrs": {"x": "8", "y": "110", "width": "104", "height": "3",
+      "background": "#FF8C00"}}
+  ]}
+}"##;
+
 /// Draw the demo scene. The first op paints the backdrop — the render tree's
 /// screen-background discipline, mirrored here.
 pub fn demo_scene(c: &mut dyn Canvas) {

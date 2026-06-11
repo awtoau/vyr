@@ -9,24 +9,8 @@ const H: u32 = 120;
 /// Committed golden (FNV-1a 64). Re-bless: ./dev.py test --bless.
 const IR_GOLDEN_FNV1A: u64 = 0xFDBF_1D98_1927_E3BB;
 
-/// One of each F3-lite widget, geometry crossing the band seams.
-const FIXTURE: &str = r##"{
-  "w": 120, "h": 120,
-  "root": {"name": "view", "children": [
-    {"name": "vy_frame", "attrs": {"x": "6", "y": "6", "width": "52", "height": "40",
-      "background": "#DCE6F5", "border_width": "2", "border_color": "#1E5AA8", "radius": "6"}},
-    {"name": "vy_circle", "attrs": {"x": "66", "y": "8", "width": "36", "height": "36",
-      "background": "#1E5AA8"}},
-    {"name": "vy_slider", "attrs": {"x": "8", "y": "56", "width": "104", "height": "18",
-      "value": "60", "min": "0", "max": "100"}},
-    {"name": "vy_toggle", "attrs": {"x": "8", "y": "80", "width": "44", "height": "22",
-      "value": "1"}},
-    {"name": "vy_gauge", "attrs": {"x": "62", "y": "76", "width": "40", "height": "40",
-      "value": "65", "min": "0", "max": "100"}},
-    {"name": "vy_line", "attrs": {"x": "8", "y": "110", "width": "104", "height": "3",
-      "background": "#FF8C00"}}
-  ]}
-}"##;
+/// One of each F3-lite widget (shared with vyr-bench — see demo::DEMO_IR).
+const FIXTURE: &str = vyr_core::demo::DEMO_IR;
 
 fn fnv1a(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

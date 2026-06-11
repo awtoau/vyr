@@ -1,0 +1,10 @@
+{
+  "prim/disc_r24": 3.6776822916666663,
+  "prim/fill_rrect_64": 1.32970703125,
+  "prim/gradient_64": 6.98001953125,
+  "prim/line_diag_w3": 32.998777777777775,
+  "prim/ring_r24w4": 5.464119897959184,
+  "prim/stroke_rrect_64": 2.567138671875,
+  "scene/demo_full": 4.8840055555555555,
+  "scene/ir_full": 5.899993055555555
+}

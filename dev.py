@@ -24,6 +24,8 @@ COMMANDS = {
     "clippy": "cargo clippy --workspace --all-targets",
     "fmt-check": "cargo fmt --check",
     "selftest": "render the demo scene to ./tmp/selftest.png via vyr-cli (logs ns/px + counters)",
+    "bench": "perf gate: release vyr-bench check vs committed baseline + scaling-law assertion",
+    "bench-record": "re-record vyr-bench/baseline.json (a reviewed act — commit it separately)",
     "gate": "the full pre-commit gate: fmt-check + clippy + test + check-mcu",
 }
 
@@ -96,6 +98,15 @@ def cmd_selftest(rest: list[str]) -> int:
     return _run(["cargo", "run", "-p", "vyr-cli", "--", "selftest-png", out, *rest])
 
 
+def cmd_bench(rest: list[str]) -> int:
+    # Release ALWAYS: debug timings are not baselines.
+    return _run(["cargo", "run", "--release", "-p", "vyr-bench", "--", "check", *rest])
+
+
+def cmd_bench_record(rest: list[str]) -> int:
+    return _run(["cargo", "run", "--release", "-p", "vyr-bench", "--", "record", *rest])
+
+
 def cmd_gate(_rest: list[str]) -> int:
     for step in (cmd_fmt_check, cmd_clippy, cmd_test, cmd_check_mcu):
         rc = step([])
@@ -114,6 +125,8 @@ HANDLERS = {
     "clippy": cmd_clippy,
     "fmt-check": cmd_fmt_check,
     "selftest": cmd_selftest,
+    "bench": cmd_bench,
+    "bench-record": cmd_bench_record,
     "gate": cmd_gate,
 }
 
