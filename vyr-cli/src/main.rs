@@ -27,13 +27,54 @@
 //! Logging (awto convention): every line timestamped, mirrored to BOTH
 //! stderr (live) and ./tmp/vyr-cli.log (retroactive review, append). Format:
 //! `HH:MM:SS.ffffff UTC  LEVEL [vyr-cli] message`.
+//!
+//! Heap accounting (Dan's memory-profile ask): a counting global allocator
+//! wraps the system one — exact bytes, exact peak, zero sampling — and every
+//! render logs `heap peak` + fills `RenderStats.peak_alloc_bytes`, so the
+//! memory story is MEASURED on every run, not modelled. (`unsafe` lives in
+//! this shell only — vyr-core stays `forbid(unsafe_code)`.)
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::Write as _;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vyr_core::demo::{DEMO_H, DEMO_W, TEXT_IR, demo_scene};
 use vyr_core::{Assets, Fonts, Rect, RgbaImage, TinySkiaCanvas};
+
+/// Counting allocator: tracks live bytes + high-water mark around the system
+/// allocator. Relaxed ordering is fine — the counters are statistics, and
+/// the render path is single-threaded.
+struct CountingAlloc;
+
+static HEAP_LIVE: AtomicUsize = AtomicUsize::new(0);
+static HEAP_PEAK: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let p = unsafe { System.alloc(layout) };
+        if !p.is_null() {
+            let live = HEAP_LIVE.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+            HEAP_PEAK.fetch_max(live, Ordering::Relaxed);
+        }
+        p
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) };
+        HEAP_LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+    }
+}
+
+#[global_allocator]
+static ALLOC: CountingAlloc = CountingAlloc;
+
+fn heap_now() -> (usize, usize) {
+    (
+        HEAP_LIVE.load(Ordering::Relaxed),
+        HEAP_PEAK.load(Ordering::Relaxed),
+    )
+}
 
 /// The baked default fonts dir: the repo this binary was built from. Works
 /// unmoved for both the standalone repo and the vyvanse submodule checkout;
@@ -315,8 +356,19 @@ fn render(ir_path: &str, out: &str) -> ExitCode {
         &mut buf,
         (w * 3) as usize,
     ) {
-        Ok(stats) => {
+        Ok(mut stats) => {
+            let (live, peak) = heap_now();
+            stats.peak_alloc_bytes = peak as u64;
             log("INFO", &format!("stats: {stats:?}"));
+            log(
+                "INFO",
+                &format!(
+                    "heap: peak {peak} B ({:.1} KiB), live-after-render {live} B — \
+                     measured by the counting allocator, includes font/asset \
+                     registries + parsed IR + the gutter pixmap",
+                    peak as f64 / 1024.0
+                ),
+            );
             if let Err(e) = write_png(out, w, h, &buf) {
                 log("ERROR", &e);
                 return ExitCode::FAILURE;
