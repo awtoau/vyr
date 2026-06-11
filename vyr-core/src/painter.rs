@@ -414,11 +414,14 @@ impl Canvas for TinySkiaCanvas {
         self.count(Self::class_for(alpha), r);
     }
 
-    fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8) {
+    fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8) -> Option<Rect> {
         // Manual deterministic source-over of A8 masks into the premultiplied
         // band pixmap (see module docs — glyph blits sit outside the polygon
         // rule). Integer world → gutter-local translation, per-pixel integer
         // blend with d255 rounding: bit-identical in every band.
+        // The returned ink bbox is pure GEOMETRY (world coords, no band
+        // clamp) — identical in every band, per the trait contract.
+        let mut ink: Option<(i32, i32, i32, i32)> = None;
         let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
         let pm_w = self.pixmap.width() as i32;
         let pm_h = self.pixmap.height() as i32;
@@ -472,7 +475,18 @@ impl Canvas for TinySkiaCanvas {
                     h: m.h,
                 },
             );
+            let (x1, y1) = (g.x + m.w as i32, g.y + m.h as i32);
+            ink = Some(match ink {
+                None => (g.x, g.y, x1, y1),
+                Some((a, b, c, d)) => (a.min(g.x), b.min(g.y), c.max(x1), d.max(y1)),
+            });
         }
+        ink.map(|(x0, y0, x1, y1)| Rect {
+            x: x0,
+            y: y0,
+            w: (x1 - x0) as u32,
+            h: (y1 - y0) as u32,
+        })
     }
 
     fn blit_image(&mut self, x: i32, y: i32, image: &RgbaImage, clip: Rect) {

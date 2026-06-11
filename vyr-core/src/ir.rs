@@ -482,7 +482,10 @@ fn draw_text(
         (r.x, r.y + m.ascent)
     };
     let placed = fonts.placed_run(&family, size, &text, origin_x, baseline_y)?;
-    c.glyph_run(&placed, ink, 0xFF);
+    // The returned ink bbox serves direct-Canvas callers (editor caret /
+    // selection / autosize); the IR walk has nowhere to put it yet — a
+    // per-widget report can ride RenderStats later if a caller needs it.
+    let _ = c.glyph_run(&placed, ink, 0xFF);
     Ok(())
 }
 

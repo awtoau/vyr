@@ -333,14 +333,54 @@ fn render(ir_path: &str, out: &str) -> ExitCode {
     }
 }
 
+/// `vyr-cli measure <font> <size_px> <text>` — text measurement as JSON on
+/// stdout (the one machine-readable line; logs stay on stderr/file). Gives a
+/// caller BOTH boxes before rendering anything: the layout box
+/// (advance × ascent..descent) and the ink box (where paint would land,
+/// relative to pen origin/baseline). Measuring warms the glyph cache.
+fn measure(font: &str, size_s: &str, text: &str) -> ExitCode {
+    let Ok(size) = size_s.parse::<u32>() else {
+        log("ERROR", &format!("size {size_s:?} is not a u32"));
+        return ExitCode::from(2);
+    };
+    let mut fonts = load_fonts();
+    match fonts.measure(font, size, text) {
+        Ok(m) => {
+            let ink = match m.ink {
+                Some(r) => format!(
+                    "{{\"x\":{},\"y\":{},\"w\":{},\"h\":{}}}",
+                    r.x, r.y, r.w, r.h
+                ),
+                None => "null".to_string(),
+            };
+            println!(
+                "{{\"font\":{font:?},\"size_px\":{size},\"text\":{text:?},\
+                 \"advance\":{},\"ascent\":{},\"descent\":{},\"line_height\":{},\
+                 \"ink\":{ink}}}",
+                m.advance,
+                m.ascent,
+                m.descent,
+                m.height()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            log("ERROR", &format!("measure failed: {e:?}"));
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, out] if cmd == "selftest-png" => selftest_png(out),
         [cmd, ir, out] if cmd == "render" => render(ir, out),
+        [cmd, font, size, text] if cmd == "measure" => measure(font, size, text),
         _ => {
             eprintln!("usage: vyr-cli selftest-png <out.png>");
             eprintln!("       vyr-cli render <ir.json> <out.png>   (env: VYR_FONTS=<dir>)");
+            eprintln!("       vyr-cli measure <font> <size_px> <text>   → JSON on stdout");
             ExitCode::from(2)
         }
     }

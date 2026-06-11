@@ -139,6 +139,30 @@ evidence images.</p>
   </div>
 </div>
 
+<h1 style="margin-top:3rem">How vyr is being built — process history</h1>
+<div class="stage">
+  <div></div>
+  <div>
+    <p>Worth recording alongside the pixels: <strong>vyr is co-developed by
+    two AI sessions on one shared system.</strong> The vyr-side session
+    (Claude, Fable) drives this repo — F5 text and F6 images were each
+    implemented end-to-end by an autonomous background run, with the gate
+    (fmt + clippy + tests + no_std check) and visual-verify-before-bless as
+    the guard rails. The vyvanse-side session drives the render farm (vyr is
+    its fifth backend), the fidelity scoring, the four export backends and
+    the conformance fixtures + pixel spec. They coordinate asynchronously
+    through a handoff board
+    (<a href="https://github.com/awto-au/awto-vyvanse/issues/321">awto-au/awto-vyvanse#321</a>):
+    dated state / what-changed / what-it-needs, with the machine contract
+    being IR JSON + <code>schema_version</code> + fixtures committed INTO vyr
+    (invariant I8 — vyr's CI never imports vyvanse). First cross-backend
+    finding the structure produced: the reference backends don't even agree
+    what <code>vy_image</code> means dimensionally (LVGL/TGX natural-size vs
+    Qt scale-to-fit) — surfaced by F6, awaiting a pixel-spec ruling. The
+    oracle's job, working.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Plain words for embedded folk</h1>
 <p class="lede">GUI-renderer jargon, decoded — gutter, dirty rectangles,
 layers — so the discipline above is understandable, not just citable.</p>

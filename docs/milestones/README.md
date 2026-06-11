@@ -149,6 +149,32 @@ budget blows and recovers when headroom returns.
   rasterized, 2,209 B cache) — the same counters the benches read and the
   future on-device perf HUD will draw.
 
+## How vyr is being built — process history
+
+Worth recording alongside the pixels, because the process is part of the
+story: **vyr is co-developed by two AI sessions on one shared system.**
+
+- The **vyr-side session** (Claude, Fable) drives this repo: the renderer
+  (vyr-core/cli/bench), the plan, this gallery. F5 (text) and F6 (images)
+  were each implemented end-to-end by an autonomous background run — brief
+  in, commits/goldens/gallery-row out — with the gate (fmt + clippy + tests +
+  no_std check) and the visual-verify-before-bless rule as the guard rails.
+- The **vyvanse-side session** drives the render farm (vyr is its fifth
+  backend), the fidelity DB + scoring, the four export backends
+  (Qt/LVGL/TGX/Flutter), and the conformance fixtures + pixel spec.
+- They coordinate **asynchronously through a handoff board** —
+  [awto-au/awto-vyvanse#321](https://github.com/awto-au/awto-vyvanse/issues/321):
+  each side posts dated state / what-changed / what-it-needs. The machine
+  contract between the repos is IR JSON + `schema_version` (0.6-vyvanse) +
+  vyvanse-generated conformance fixtures committed INTO vyr — so vyr's CI
+  never imports vyvanse (invariant I8). House rule: the vyvanse side never
+  edits the `vyr/` submodule's contents; vyr work happens here, vyvanse only
+  bumps the submodule pointer.
+- The first cross-backend finding this structure produced: the four
+  "reference" backends don't agree on what `vy_image` means dimensionally
+  (LVGL/TGX natural-size vs Qt scale-to-fit) — surfaced by F6, recorded on
+  issue #6, awaiting a pixel-spec ruling. The oracle's job, working.
+
 ## The numbers that travelled with them
 
 | Stage | ns/px (release, dev host) | Notes |

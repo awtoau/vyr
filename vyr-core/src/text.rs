@@ -55,7 +55,7 @@ use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, MetadataProvider};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
 
-use crate::RenderError;
+use crate::{Rect, RenderError};
 
 /// One cached, rasterized glyph: an A8 coverage mask plus integer placement
 /// metrics. `left`/`top` position the mask relative to the pen point on the
@@ -79,6 +79,29 @@ pub struct PlacedGlyph<'a> {
     pub x: i32,
     pub y: i32,
     pub mask: &'a GlyphMask,
+}
+
+/// What [`Fonts::measure`] returns: the layout box AND the ink box of a text
+/// run, both in whole pixels, both relative to the pen origin / baseline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextMeasure {
+    /// Layout width: the pen advance (trailing spaces included).
+    pub advance: i32,
+    /// Above the baseline, positive.
+    pub ascent: i32,
+    /// Below the baseline, NEGATIVE (font convention).
+    pub descent: i32,
+    /// Where paint actually lands, relative to (pen origin, baseline) —
+    /// `x`/`y` may be negative (left side bearing / above baseline). `None`
+    /// when nothing inks.
+    pub ink: Option<Rect>,
+}
+
+impl TextMeasure {
+    /// Layout line height: ascent to descent (no leading — single-line runs).
+    pub fn height(&self) -> i32 {
+        self.ascent - self.descent
+    }
 }
 
 /// Whole-pixel metrics of a prepared run: `width` = sum of advances;
@@ -247,6 +270,48 @@ impl Fonts {
             width: width as i32,
             ascent: libm::roundf(metrics.ascent) as i32,
             descent: libm::roundf(metrics.descent) as i32,
+        })
+    }
+
+    /// Measure `text` WITHOUT rendering: the caller-facing sizing API.
+    ///
+    /// Returns both boxes a caller needs:
+    /// - the **layout box** (`advance` × `ascent`..`descent`) — what you
+    ///   reserve / centre on; trailing spaces count, overhangs don't;
+    /// - the **ink box** (`ink`) — where paint would actually land,
+    ///   relative to the pen origin (x) and the BASELINE (y, so `ink.y` is
+    ///   typically negative). `None` when nothing inks (empty / all-space).
+    ///
+    /// Measuring warms the glyph cache, so a subsequent render of the same
+    /// text rasterizes nothing new — measure-then-render is the intended
+    /// cheap pattern.
+    pub fn measure(
+        &mut self,
+        family: &str,
+        size_px: u32,
+        text: &str,
+    ) -> Result<TextMeasure, RenderError> {
+        let m = self.prepare_run(family, size_px, text)?;
+        let placed = self.placed_run(family, size_px, text, 0, 0)?;
+        let mut ink: Option<(i32, i32, i32, i32)> = None;
+        for g in &placed {
+            let (x0, y0) = (g.x, g.y);
+            let (x1, y1) = (g.x + g.mask.w as i32, g.y + g.mask.h as i32);
+            ink = Some(match ink {
+                None => (x0, y0, x1, y1),
+                Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+            });
+        }
+        Ok(TextMeasure {
+            advance: m.width,
+            ascent: m.ascent,
+            descent: m.descent,
+            ink: ink.map(|(x0, y0, x1, y1)| Rect {
+                x: x0,
+                y: y0,
+                w: (x1 - x0) as u32,
+                h: (y1 - y0) as u32,
+            }),
         })
     }
 

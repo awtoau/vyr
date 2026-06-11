@@ -127,7 +127,12 @@ pub trait Canvas {
     /// INTEGER world positions (whole-pixel pens — the band-equivalence
     /// contract; see `text` module docs); blending must be deterministic
     /// integer math, counted into [`OpClass::Glyph`].
-    fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8);
+    ///
+    /// Returns the run's INK bounding box in WORLD coordinates (`None` if
+    /// nothing inked) — "you rendered text, here is exactly where it
+    /// landed". Computed from glyph GEOMETRY, never from band clipping, so
+    /// the same run reports the same box in every band.
+    fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8) -> Option<Rect>;
     /// Blit a caller-registered RGBA image (F6) at its NATURAL size, top-left
     /// anchored at INTEGER world `(x, y)`, limited to the world-space `clip`
     /// rect (the widget rect — no scaling in v1; see `ir` module docs).
