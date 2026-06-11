@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vyr milestones — the renderer's history in its own pixels</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 980px;
+         margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2.2rem; }
+  p.lede { opacity: .8; }
+  .stage { display: grid; grid-template-columns: auto 1fr; gap: 1rem 1.5rem;
+           align-items: start; padding: 1rem 0; border-top: 1px solid #8884; }
+  .imgs { display: flex; gap: .6rem; flex-wrap: wrap; }
+  /* 120px goldens shown 2x, nearest-neighbour — inspect the actual pixels */
+  .imgs img { width: 240px; height: 240px; image-rendering: pixelated;
+              border: 1px solid #8886; background: #fff; }
+  .meta { font-size: .85rem; opacity: .7; }
+  code { font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>vyr milestones</h1>
+<p class="lede">Every feature track that changes what vyr can paint appends its
+evidence render here — the <em>golden pixels</em> the committed hashes pin.
+Rows are appended, never replaced: this page is the visual changelog of the
+executable spec. (Images are 120×120 goldens shown 2× with nearest-neighbour
+scaling so the actual pixels are inspectable.)</p>
+
+<div class="stage">
+  <div class="imgs"><img src="f1-primitives.png" alt="F1 primitives"></div>
+  <div>
+    <h2>F1 — primitives <span class="meta">2026-06-11 · <code>b4f441a</code></span></h2>
+    <p>The polygon-only tiny-skia painter: rounded fill, stroked outline,
+    alpha-blended disc, ring, diagonal rule, linear gradient. Byte-identical
+    when rendered as 30-row or 17-row stitched bands — the invariant that
+    forced the painter to flatten every curve itself.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="f3-ir-widgets.png" alt="F3 IR widgets"></div>
+  <div>
+    <h2>F3-lite — IR widgets <span class="meta">2026-06-11 · <code>83a7c09</code></span></h2>
+    <p>The <code>vy_</code> vocabulary rendered natively from IR JSON, no
+    lowering: bordered frame, disc, 60% slider with knob, toggle ON, gauge
+    ring, rule. Text and images hard-error honestly until their tracks.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="f5-text.png" alt="F5 text"></div>
+  <div>
+    <h2>F5 — text <span class="meta">2026-06-11 · <code>834ed5e</code></span></h2>
+    <p>skrifa-parsed Roboto through the rasterize-once A8 glyph cache: 14&nbsp;px
+    label, button with centred ink-inherited label, 20&nbsp;px <code>vy_lcd</code>.
+    Glyph curves never meet band clipping, so text stays band-exact. The full
+    text path is <code>no_std</code> — it compiles for the STM32F4's target
+    triple. Cached glyph blits cost 1.37&nbsp;ns/px; 19 masks = 2,209 bytes.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs">
+    <img src="f7-farm-frame.png" alt="F7 farm frame">
+    <img src="f7-farm-slider.png" alt="F7 farm slider">
+    <img src="f7-farm-label.png" alt="F7 farm label">
+  </div>
+  <div>
+    <h2>F7 — the farm speaks vyr <span class="meta">2026-06-11 · vyvanse <code>84a612d</code>/<code>2fac0e9</code></span></h2>
+    <p>The same widgets rendered <em>through</em> the vyvanse render farm
+    (<code>render(thing,&nbsp;"vyr")</code> → vyr_server → one-shot vyr-cli),
+    ~2&nbsp;ms each — vyr live as the fifth backend beside Qt, LVGL, TouchGFX
+    and Flutter.</p>
+  </div>
+</div>
+
+</body>
+</html>

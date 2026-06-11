@@ -14,12 +14,15 @@ widget vocabulary. It is being built in three stages:
 3. **Embedded GUI toolkit** — the endgame: hand it an existing LVGL or
    TouchGFX project (imported to IR) and it runs, on-device, on one runtime.
 
-**Status: pre-F1 skeleton.** The crate layout and the two day-one contracts
-are real (`render(tree, area, buf, stride)` partial-framebuffer entry point;
-always-compiled counters); nothing paints yet. The full plan — architecture,
-day-1 invariants I1–I8, feature tracks F1–F14, milestones — is
-[`docs/plan.md`](docs/plan.md). Work is tracked as GitHub issues, one per
-feature track.
+**Status: painting.** F1 (polygon-only tiny-skia painter, byte-exact band
+equivalence), F2 (ns/px perf gate + scaling-law assertion), F3-lite (IR
+rendered natively from the `vy_` vocabulary), F5 (TTF text via skrifa +
+rasterize-once glyph cache — the FULL text path is `no_std`) are landed, and
+vyr runs live as the fifth backend in the awto-vyvanse render farm. See the
+**[milestone gallery](docs/milestones/README.md)** — the renderer's history
+in its own golden pixels. The full plan — architecture, day-1 invariants
+I1–I8, feature tracks F1–F15, milestones — is [`docs/plan.md`](docs/plan.md).
+Work is tracked as GitHub issues, one per feature track.
 
 ## Design pillars
 
