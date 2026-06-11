@@ -75,5 +75,52 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
+<p class="lede">The places where vyr does something non-obvious, with the
+evidence images.</p>
+
+<div class="stage">
+  <div class="imgs">
+    <img src="eng-band-clip-full.png" alt="full frame">
+    <img src="eng-band-clip-banded.png" alt="stitched bands">
+    <img src="eng-band-clip-diff.png" alt="differing pixels marked red">
+  </div>
+  <div>
+    <h2>The tiny-skia clip discovery</h2>
+    <p>The band-equivalence golden's first run FAILED: full frame (left) vs
+    30-row stitched bands (middle) differ — by a handful of bytes, all on the
+    ring (right: differing pixels dilated red). tiny-skia clips path geometry
+    at the pixmap edge, and clipping <em>subdivides curves</em>, perturbing
+    flattening along the whole remaining arc — unboundable by any overscan
+    gutter. The permanent fix: <strong>the painter never hands tiny-skia a
+    curve or a stroke</strong>. Fixed-step flattening in vyr, 1/64-px
+    world-space vertex quantization, exact integer band translation, strokes
+    as outer+inner polygon contours. Bands became byte-identical (even and
+    uneven splits), enforced by the golden forever.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="eng-ring-zoom.png" alt="ring at 6x" style="width:216px;height:216px"></div>
+  <div>
+    <h2>The polygon discipline, up close</h2>
+    <p>6× nearest-neighbour zoom of the F1 ring: fixed-step flattening +
+    quantization with AA by scanline coverage — no visible faceting at
+    ~0.09&nbsp;px max sagitta error.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="eng-text-zoom.png" alt="button text at 4x" style="width:400px;height:128px"></div>
+  <div>
+    <h2>Glyphs sit outside the polygon rule — safely</h2>
+    <p>Glyph outlines are real curves, allowed because they only meet
+    tiny-skia in glyph-local <em>unclipped</em> space during the one-time A8
+    mask rasterization; bands see only cached masks blitted at integer pen
+    positions via an exact-rounding integer source-over. 4× zoom of the F5
+    button.</p>
+  </div>
+</div>
+
 </body>
 </html>
