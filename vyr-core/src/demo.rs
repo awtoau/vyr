@@ -34,6 +34,27 @@ pub const DEMO_IR: &str = r##"{
   ]}
 }"##;
 
+/// The F5 text fixture — label / button-with-centred-label / lcd, all three
+/// runs crossing the 30/60/90 band seams of the 120×120 frame (the 17-row
+/// uneven split cuts them elsewhere again). Exercises: the default font
+/// (roboto 14), explicit `color`, button `color`→label ink inheritance +
+/// `align="center"`, and a `style_text_font` size parse (roboto_20).
+/// Shared by `tests/text_golden.rs` and `vyr-bench` (golden and baseline
+/// measure the SAME pixels). Needs `fonts/roboto.ttf` registered as
+/// "roboto" by the caller.
+pub const TEXT_IR: &str = r##"{
+  "w": 120, "h": 120,
+  "root": {"name": "view", "children": [
+    {"name": "vy_label", "attrs": {"x": "8", "y": "18", "width": "104", "height": "18",
+      "text": "Vyr text 14px", "color": "#1E5AA8"}},
+    {"name": "vy_button", "attrs": {"x": "10", "y": "46", "width": "100", "height": "28",
+      "background": "#1E5AA8", "radius": "6", "color": "#FFFFFF"},
+      "children": [{"name": "vy_label", "attrs": {"text": "Button", "align": "center"}}]},
+    {"name": "vy_lcd", "attrs": {"x": "8", "y": "82", "width": "104", "height": "24",
+      "text": "12:34", "color": "#222222", "style_text_font": "roboto_20"}}
+  ]}
+}"##;
+
 /// Draw the demo scene. The first op paints the backdrop — the render tree's
 /// screen-background discipline, mirrored here.
 pub fn demo_scene(c: &mut dyn Canvas) {

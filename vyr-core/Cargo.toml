@@ -18,6 +18,10 @@ libm = "0.2"
 # IR ingestion (F3) — no_std + alloc.
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
+# Font parsing (F5): charmap, metrics/advances, glyph outlines. no_std via the
+# `libm` feature (core_maths float shims) — the FULL text path builds for MCU
+# (invariant I7). Bake-off outcome recorded on issue #5.
+skrifa = { version = "0.43", default-features = false, features = ["libm"] }
 
 [dev-dependencies]
 # Tests are std (separate crates); png is for optional VYR_TEST_DUMP output.

@@ -1,6 +1,16 @@
 //! vyr-cli — the std shell. IR JSON in → PNG out (the farm contract), plus a
 //! `selftest-png` mode that renders the shared demo scene (the exact golden
-//! pixels) so "does the painter work here" is a one-command question.
+//! pixels) AND the F5 text fixture so "does the painter+text work here" is a
+//! one-command question.
+//!
+//! Fonts (F5): core never touches the filesystem (invariant I7) — THIS shell
+//! loads every `*.ttf`/`*.otf` from the fonts dir at startup and registers
+//! the bytes with `vyr_core::Fonts` (registry name = file stem, lowercased).
+//! Dir resolution: `$VYR_FONTS` if set, else `<this crate's repo>/fonts`
+//! baked in via `CARGO_MANIFEST_DIR` — so both the standalone repo build and
+//! the awto-vyvanse submodule build (whose checkout carries its own fonts/)
+//! find their fonts with NO environment setup, exactly what the render farm
+//! needs. A missing dir is a loud WARN, and text then hard-errors honestly.
 //!
 //! Logging (awto convention): every line timestamped, mirrored to BOTH
 //! stderr (live) and ./tmp/vyr-cli.log (retroactive review, append). Format:
@@ -10,8 +20,13 @@ use std::io::Write as _;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use vyr_core::demo::{DEMO_H, DEMO_W, demo_scene};
-use vyr_core::{Rect, TinySkiaCanvas};
+use vyr_core::demo::{DEMO_H, DEMO_W, TEXT_IR, demo_scene};
+use vyr_core::{Fonts, Rect, TinySkiaCanvas};
+
+/// The baked default fonts dir: the repo this binary was built from. Works
+/// unmoved for both the standalone repo and the vyvanse submodule checkout;
+/// `$VYR_FONTS` overrides for a relocated binary.
+const BAKED_FONTS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fonts");
 
 fn timestamp() -> String {
     let now = SystemTime::now()
@@ -40,6 +55,50 @@ fn log(level: &str, msg: &str) {
     {
         let _ = writeln!(f, "{line}");
     }
+}
+
+/// Load + register every `*.ttf` / `*.otf` in the fonts dir (module docs).
+/// Returns the registry; an unreadable dir is a WARN (text will then
+/// hard-error per honest failure), an unparseable font file is an ERROR.
+fn load_fonts() -> Fonts {
+    let dir = std::env::var("VYR_FONTS").unwrap_or_else(|_| BAKED_FONTS_DIR.to_string());
+    let mut fonts = Fonts::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) => {
+            log(
+                "WARN",
+                &format!("fonts dir {dir} unreadable ({e}) — text renders will hard-error"),
+            );
+            return fonts;
+        }
+    };
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        if !matches!(ext.as_deref(), Some("ttf") | Some("otf")) {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let n = bytes.len();
+                match fonts.register(stem, bytes) {
+                    Ok(()) => names.push(format!("{} ({n} B)", stem.to_lowercase())),
+                    Err(e) => log("ERROR", &format!("register {}: {e:?}", path.display())),
+                }
+            }
+            Err(e) => log("ERROR", &format!("read {}: {e}", path.display())),
+        }
+    }
+    log("INFO", &format!("fonts from {dir}: [{}]", names.join(", ")));
+    fonts
 }
 
 fn write_png(path: &str, w: u32, h: u32, rgb: &[u8]) -> Result<(), String> {
@@ -87,7 +146,36 @@ fn selftest_png(out: &str) -> ExitCode {
         log("ERROR", &e);
         return ExitCode::FAILURE;
     }
-    log("ALERT", &format!("selftest-png ok → {out}"));
+    // F5 leg: the shared text fixture through the real IR path + the fonts
+    // this binary found — proves font discovery, the registry and the glyph
+    // path end-to-end (the farm's exact wiring).
+    let text_out = match out.rsplit_once('.') {
+        Some((stem, ext)) => format!("{stem}-text.{ext}"),
+        None => format!("{out}-text.png"),
+    };
+    let mut fonts = load_fonts();
+    let mut tbuf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    let t1 = std::time::Instant::now();
+    match vyr_core::render_with_fonts(TEXT_IR, &mut fonts, area, &mut tbuf, (DEMO_W * 3) as usize) {
+        Ok(tstats) => {
+            log(
+                "INFO",
+                &format!(
+                    "text fixture rendered in {:.3} ms, stats: {tstats:?}",
+                    t1.elapsed().as_secs_f64() * 1e3
+                ),
+            );
+            if let Err(e) = write_png(&text_out, DEMO_W, DEMO_H, &tbuf) {
+                log("ERROR", &e);
+                return ExitCode::FAILURE;
+            }
+        }
+        Err(e) => {
+            log("ERROR", &format!("text fixture failed: {e:?}"));
+            return ExitCode::FAILURE;
+        }
+    }
+    log("ALERT", &format!("selftest-png ok → {out} + {text_out}"));
     ExitCode::SUCCESS
 }
 
@@ -110,8 +198,14 @@ fn render(ir_path: &str, out: &str) -> ExitCode {
         }
     };
     let (w, h) = (req.w, req.h);
+    let mut fonts = load_fonts();
     let mut buf = vec![0u8; (w * h * 3) as usize];
-    match req.render(Rect { x: 0, y: 0, w, h }, &mut buf, (w * 3) as usize) {
+    match req.render_with_fonts(
+        &mut fonts,
+        Rect { x: 0, y: 0, w, h },
+        &mut buf,
+        (w * 3) as usize,
+    ) {
         Ok(stats) => {
             log("INFO", &format!("stats: {stats:?}"));
             if let Err(e) = write_png(out, w, h, &buf) {
@@ -137,7 +231,7 @@ fn main() -> ExitCode {
         [cmd, ir, out] if cmd == "render" => render(ir, out),
         _ => {
             eprintln!("usage: vyr-cli selftest-png <out.png>");
-            eprintln!("       vyr-cli render <ir.json> <out.png>   (env: VYR_W, VYR_H)");
+            eprintln!("       vyr-cli render <ir.json> <out.png>   (env: VYR_FONTS=<dir>)");
             ExitCode::from(2)
         }
     }

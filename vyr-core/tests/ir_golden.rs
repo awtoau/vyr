@@ -1,5 +1,6 @@
 //! F3-lite goldens: the non-text IR subset renders, deterministically, with
-//! byte-exact band equivalence — and text/unknown widgets hard-error (I6).
+//! byte-exact band equivalence — and structure-needing/unknown widgets
+//! hard-error (I6). Text goldens live in tests/text_golden.rs (F5).
 
 use vyr_core::{Rect, render};
 
@@ -93,9 +94,12 @@ fn ir_band_equivalence() {
 }
 
 #[test]
-fn text_widget_is_honest_error() {
+fn structure_widget_is_honest_error() {
+    // Post-F5, label/lcd/button render; widgets needing marks/structure
+    // beyond a text run (dropdown/radio/checkbox/table/chart) still hard-
+    // error (I6). Text-without-fonts honesty lives in tests/text_golden.rs.
     let ir = r#"{"w":120,"h":120,"root":{"name":"view","children":[
-        {"name":"vy_label","attrs":{"x":"0","y":"0","width":"100","height":"20","text":"hi"}}]}}"#;
+        {"name":"vy_dropdown","attrs":{"x":"0","y":"0","width":"100","height":"20","text":"hi"}}]}}"#;
     let mut buf = vec![0u8; (W * H * 3) as usize];
     let err = render(
         ir,
@@ -108,7 +112,7 @@ fn text_widget_is_honest_error() {
         &mut buf,
         (W * 3) as usize,
     )
-    .expect_err("pre-F5 text must hard-error");
+    .expect_err("structure widgets must hard-error");
     assert!(matches!(err, vyr_core::RenderError::Unimplemented(_)));
 }
 

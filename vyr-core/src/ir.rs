@@ -13,10 +13,29 @@
 //!
 //! ## What renders vs errors (honest failure, invariant I6)
 //!
-//! Pre-F5/F6 there are no glyphs and no image decode, so **text- and
-//! image-bearing widgets are hard errors** (`Unimplemented`, named) — the
-//! farm surfaces them as honest skips, exactly like TGX's `unsupported` set.
-//! Unknown `vy_` names are `UnknownWidget` errors before any pixel.
+//! F5 brings glyphs: `vy_label` / `vy_lcd` / `vy_button` render their `text`
+//! through the caller's [`Fonts`] (registry + glyph cache — see
+//! [`crate::text`]). Image decode is still F6, so **image-bearing widgets
+//! are hard errors** (`Unimplemented`, named); widgets needing marks or
+//! structure beyond a single text run (radio/checkbox/dropdown/table/chart)
+//! stay hard errors too — the farm surfaces them as honest skips, exactly
+//! like TGX's `unsupported` set. Unknown `vy_` names are `UnknownWidget`
+//! errors before any pixel. A `text` whose font isn't registered or whose
+//! codepoints the font can't map is a hard error — never a tofu box.
+//!
+//! ## Text model (F5, deliberately minimal)
+//!
+//! Single-style single-line runs, integer pens (see [`crate::text`]). Font
+//! selection: backend-neutral `font_family` + `font_size` attrs first, else
+//! the LVGL-lowered `style_text_font` name (`roboto_14` / `spleen_8` —
+//! `<family>_<size>`), else the documented default **roboto 14** (the
+//! vyvanse IR default: FontSpec(family="Roboto", size=14)). Plain labels ink
+//! from the node's top-left content corner (baseline = y + ascent — the
+//! LVGL/TGX top-left convention and the #318 tight-box anchor);
+//! `align="center"` centres the run in the PARENT rect (the cases.py
+//! button-label contract). A label's `width`/`height` are box geometry only
+//! — runs are not clipped or wrapped (no clip stack yet; rich text is out of
+//! F5 scope).
 //!
 //! ## Chrome policy
 //!
@@ -26,6 +45,12 @@
 //! their defaults). The defaults below are LVGL-flavoured and are F4's
 //! refinement surface against geometry_measure/colour_check:
 //! track `#E6E6E6`, accent `#2196F3`, knob white + 1px `#B0B0B0` ring.
+//! Text ink defaults to **black `#000000`** when neither the node nor an
+//! ancestor button carries `color` — a widget-default chrome entry like the
+//! slider chrome: every backend has a compiled-in default text colour (LVGL
+//! theme ink, Qt palette text, TGX typography default), and black-on-paper
+//! is the neutral reading. A `vy_button`'s `color` is its TEXT colour,
+//! inherited by its label children (the cases.py contract).
 //! The SCREEN backdrop defaults to near-white `(250,250,250)` when the root
 //! carries no `background` — mirroring the TGX render server's per-render
 //! backdrop wipe so an empty screen reads as paper, not black.
@@ -35,7 +60,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::{Canvas, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
+use crate::{Canvas, Fonts, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
 
 #[derive(Debug, Deserialize)]
 pub struct Node {
@@ -60,8 +85,11 @@ impl Request {
 
     /// Render one band (`area`, world coords within the `w×h` screen) into
     /// the caller's RGB888 buffer — THE entry point shape (invariant I1).
-    pub fn render(
+    /// `fonts` is the caller-owned registry + glyph cache (F5); its
+    /// counters are surfaced into the returned stats.
+    pub fn render_with_fonts(
         &self,
+        fonts: &mut Fonts,
         area: Rect,
         buf: &mut [u8],
         stride: usize,
@@ -75,21 +103,33 @@ impl Request {
             g: 250,
             b: 250,
         });
-        canvas.fill_rrect(
-            Rect {
-                x: 0,
-                y: 0,
-                w: self.w,
-                h: self.h,
-            },
-            0,
-            backdrop,
-            0xFF,
-        );
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            w: self.w,
+            h: self.h,
+        };
+        canvas.fill_rrect(screen, 0, backdrop, 0xFF);
         for child in &self.root.children {
-            walk(child, 0, 0, &mut canvas)?;
+            walk(child, screen, &mut canvas, fonts, None)?;
         }
-        Ok(canvas.finish_into_rgb888(buf, stride))
+        let mut stats = canvas.finish_into_rgb888(buf, stride);
+        stats.glyphs_rasterized = fonts.rasterized();
+        stats.glyph_cache_entries = fonts.cache_entries();
+        stats.glyph_cache_bytes = fonts.cache_bytes();
+        Ok(stats)
+    }
+
+    /// [`Request::render_with_fonts`] with an empty registry — text-free
+    /// scenes only (text hard-errors `UnknownFont`, honestly).
+    pub fn render(
+        &self,
+        area: Rect,
+        buf: &mut [u8],
+        stride: usize,
+    ) -> Result<RenderStats, RenderError> {
+        let mut fonts = Fonts::new();
+        self.render_with_fonts(&mut fonts, area, buf, stride)
     }
 }
 
@@ -114,6 +154,13 @@ const KNOB_RING: Rgb = Rgb {
     g: 0xB0,
     b: 0xB0,
 };
+/// Default text ink when the IR names no `color` — black-on-paper, a
+/// documented widget-default chrome entry (see module docs).
+const INK: Rgb = Rgb { r: 0, g: 0, b: 0 };
+/// Default font request when the IR names none — the vyvanse IR default
+/// (FontSpec family="Roboto" size=14; see module docs).
+const DEFAULT_FONT: &str = "roboto";
+const DEFAULT_FONT_SIZE: u32 = 14;
 
 impl Node {
     fn raw(&self, key: &str) -> Option<&serde_json::Value> {
@@ -191,11 +238,11 @@ const BOXES: &[&str] = &[
     "vy_list",
     "vy_roller",
 ];
-/// Text-bearing widgets: hard error until F5 (no glyphs to be honest with).
-const NEEDS_TEXT: &[&str] = &[
-    "vy_label",
-    "vy_lcd",
-    "vy_button",
+/// Widgets that need MARKS or STRUCTURE beyond a single text run (check /
+/// radio marks, option lists, row/column layout, plot geometry): still hard
+/// errors after F5 — they are F4 composite/placeholder territory, and a
+/// text-only rendering of them would be a lie, not a widget (I6).
+const NEEDS_STRUCTURE: &[&str] = &[
     "vy_toggle_label",
     "vy_radio",
     "vy_checkbox",
@@ -204,22 +251,47 @@ const NEEDS_TEXT: &[&str] = &[
     "vy_chart",
 ];
 
-fn walk(n: &Node, ox: i32, oy: i32, c: &mut TinySkiaCanvas) -> Result<(), RenderError> {
-    let x = ox + n.i32_attr("x", 0);
-    let y = oy + n.i32_attr("y", 0);
+/// Walk one node: `parent` is the parent's ABSOLUTE rect (child x/y are
+/// relative to it; `align="center"` text centres within it), `ink` the
+/// inherited text colour (a `vy_button`'s `color` flows to its labels).
+fn walk(
+    n: &Node,
+    parent: Rect,
+    c: &mut TinySkiaCanvas,
+    fonts: &mut Fonts,
+    ink: Option<Rgb>,
+) -> Result<(), RenderError> {
+    let x = parent.x + n.i32_attr("x", 0);
+    let y = parent.y + n.i32_attr("y", 0);
     let w = n.u32_attr("width", 0);
     let h = n.u32_attr("height", 0);
     let r = Rect { x, y, w, h };
     let name = n.name.as_str();
+    let mut child_ink = ink;
 
-    if NEEDS_TEXT.contains(&name) {
+    if NEEDS_STRUCTURE.contains(&name) {
         return Err(RenderError::Unimplemented(
-            "text-bearing widget pre-F5 (no glyph path yet)",
+            "widget needs marks/structure beyond a text run (F4 composites pending)",
         ));
     }
 
     match name {
         _ if BOXES.contains(&name) => paint_box(n, r, c),
+        "vy_label" | "vy_lcd" => {
+            // Box chrome only if the IR declared it (I5), then the run.
+            // vy_lcd: a *text* lcd renders as a plain run (the vyvanse
+            // gallery lcd arrives as a primitive 7-seg composite and never
+            // hits this arm; an IR that says `text` gets text).
+            paint_box(n, r, c);
+            draw_text(n, r, parent, ink, c, fonts)?;
+        }
+        "vy_button" => {
+            // The box exactly like a frame (background/radius/border as
+            // declared); `color` is the button's TEXT colour, inherited by
+            // its label children (see module docs).
+            paint_box(n, r, c);
+            child_ink = n.color("color").or(ink);
+        }
         "vy_circle" | "vy_ellipse" => {
             // Disc/stadium: max-radius box (the IR disc lowering). Fill from
             // `background`; nothing painted if the IR gave no fill (I5).
@@ -295,8 +367,72 @@ fn walk(n: &Node, ox: i32, oy: i32, c: &mut TinySkiaCanvas) -> Result<(), Render
     }
 
     for child in &n.children {
-        walk(child, x, y, c)?;
+        walk(child, r, c, fonts, child_ink)?;
     }
+    Ok(())
+}
+
+/// The font a node requests: `font_family` (+ `font_size`) first, else the
+/// LVGL-lowered `style_text_font` `<family>_<size>` name, else the default
+/// roboto 14 (module docs). Family is matched case-insensitively by the
+/// registry. A zero size is junk IR — hard error, not an invisible run.
+fn font_request(n: &Node) -> Result<(String, u32), RenderError> {
+    let checked = |fam: String, size: u32| {
+        if size == 0 {
+            return Err(RenderError::BadIr(format!(
+                "font {fam:?} requested at size 0 (an invisible run is a bug, not a render)"
+            )));
+        }
+        Ok((fam, size))
+    };
+    if let Some(fam) = n.str_attr("font_family") {
+        return checked(fam, n.u32_attr("font_size", DEFAULT_FONT_SIZE));
+    }
+    if let Some(ltf) = n.str_attr("style_text_font") {
+        if let Some((fam, size)) = ltf.rsplit_once('_')
+            && let Ok(size) = size.parse::<u32>()
+        {
+            return checked(String::from(fam), size);
+        }
+        // No trailing _<size>: a bare family name at the default size (the
+        // registry will honest-error if it isn't registered).
+        return checked(ltf, DEFAULT_FONT_SIZE);
+    }
+    Ok((String::from(DEFAULT_FONT), DEFAULT_FONT_SIZE))
+}
+
+/// Ink a node's `text` run (F5). No `text` attr / empty text = nothing to
+/// ink (IR-authoritative absence, not an error). Placement: top-left of the
+/// node's rect with baseline at `y + ascent`, or centred in `parent` when
+/// `align="center"` (module docs). Glyphs come from the cache via
+/// `prepare_run` (rasterize-once) + `placed_run` (integer pens).
+fn draw_text(
+    n: &Node,
+    r: Rect,
+    parent: Rect,
+    ink: Option<Rgb>,
+    c: &mut TinySkiaCanvas,
+    fonts: &mut Fonts,
+) -> Result<(), RenderError> {
+    let Some(text) = n.str_attr("text") else {
+        return Ok(());
+    };
+    if text.is_empty() {
+        return Ok(());
+    }
+    let ink = n.color("color").or(ink).unwrap_or(INK);
+    let (family, size) = font_request(n)?;
+    let m = fonts.prepare_run(&family, size, &text)?;
+    let (origin_x, baseline_y) = if n.str_attr("align").as_deref() == Some("center") {
+        (
+            parent.x + (parent.w as i32 - m.width) / 2,
+            parent.y + (parent.h as i32 - m.height()) / 2 + m.ascent,
+        )
+    } else {
+        (r.x, r.y + m.ascent)
+    };
+    let placed = fonts.placed_run(&family, size, &text, origin_x, baseline_y)?;
+    c.glyph_run(&placed, ink, 0xFF);
     Ok(())
 }
 

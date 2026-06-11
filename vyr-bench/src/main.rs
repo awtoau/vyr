@@ -28,8 +28,8 @@
 
 use std::time::Instant;
 
-use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, demo_scene};
-use vyr_core::{Canvas, Rect, Rgb, TinySkiaCanvas};
+use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, TEXT_IR, demo_scene};
+use vyr_core::{Canvas, Fonts, Rect, Rgb, TinySkiaCanvas};
 
 /// A check fails when a bench exceeds baseline × this. 1.5 = real regressions
 /// fire, day-to-day desktop noise (a few %) does not.
@@ -188,6 +188,70 @@ fn bench_gradient() -> f64 {
     })
 }
 
+// --- F5 text benches -------------------------------------------------------
+// Steady-state semantics ON PURPOSE: the cache is warmed before measuring,
+// so these report the recurring per-frame cost (pure cached blits) — the
+// number a frame budget needs. The one-time rasterization cost is a boot
+// cost, measured on target in F9 (boot-time glyph-cache fill).
+
+const BENCH_TEXT: &str = "Vyr glyph run 0123456789";
+const BENCH_TEXT_PX: u32 = 14;
+
+fn bench_fonts() -> Fonts {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/roboto.ttf");
+    let bytes = std::fs::read(&path).expect("vendored fonts/roboto.ttf");
+    let mut fonts = Fonts::new();
+    fonts.register("roboto", bytes).expect("roboto parses");
+    fonts
+}
+
+/// ns/px normalizer for text/glyph_run: the mask pixels one run blits
+/// (coverage-carrying bbox pixels — what the loop actually visits).
+fn glyph_run_pixels() -> f64 {
+    let mut fonts = bench_fonts();
+    fonts
+        .prepare_run("roboto", BENCH_TEXT_PX, BENCH_TEXT)
+        .expect("prepare");
+    let placed = fonts
+        .placed_run("roboto", BENCH_TEXT_PX, BENCH_TEXT, 4, 60)
+        .expect("placed");
+    placed.iter().map(|g| (g.mask.w * g.mask.h) as f64).sum()
+}
+
+fn bench_glyph_run() -> f64 {
+    let mut fonts = bench_fonts();
+    fonts
+        .prepare_run("roboto", BENCH_TEXT_PX, BENCH_TEXT)
+        .expect("prepare");
+    let mut c = band_canvas();
+    measure(|| {
+        let placed = fonts
+            .placed_run("roboto", BENCH_TEXT_PX, BENCH_TEXT, 4, 60)
+            .expect("placed");
+        c.glyph_run(&placed, INK, 0xFF);
+    })
+}
+
+fn bench_text_scene() -> f64 {
+    let mut fonts = bench_fonts();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with_fonts(
+            TEXT_IR,
+            &mut fonts,
+            Rect {
+                x: 0,
+                y: 0,
+                w: DEMO_W,
+                h: DEMO_H,
+            },
+            &mut buf,
+            (DEMO_W * 3) as usize,
+        )
+        .expect("text fixture renders");
+    })
+}
+
 fn bench_demo_scene() -> f64 {
     let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
     measure(|| {
@@ -254,6 +318,11 @@ fn benches() -> Vec<Bench> {
             run: bench_gradient,
         },
         Bench {
+            name: "text/glyph_run",
+            pixels: glyph_run_pixels(),
+            run: bench_glyph_run,
+        },
+        Bench {
             name: "scene/demo_full",
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_demo_scene,
@@ -262,6 +331,11 @@ fn benches() -> Vec<Bench> {
             name: "scene/ir_full",
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_ir_scene,
+        },
+        Bench {
+            name: "scene/text_full",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_text_scene,
         },
     ]
 }

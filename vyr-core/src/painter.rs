@@ -31,6 +31,14 @@
 //! stays as belt-and-braces for clip-adjacent AA. Enforcement is
 //! `tests/golden.rs::band_equivalence` (even + uneven band heights).
 //!
+//! **Glyphs (F5) sit OUTSIDE the polygon rule, safely**: glyph outlines are
+//! rasterized once into A8 masks in glyph-local space (`text::raster_glyph`
+//! — no band, no clip), and [`Canvas::glyph_run`] here only BLITS those
+//! cached masks at integer world positions with a manual integer
+//! source-over ([`d255`] rounding). Per-pixel math depends only on world
+//! position and existing dst — identical in every band by induction.
+//! Enforcement: `tests/text_golden.rs::text_band_equivalence`.
+//!
 //! tiny-skia rasterizes premultiplied RGBA8888 internally; the caller's
 //! buffer contract is RGB888 (the oracle's PNG format; RGB565 conversion for
 //! MCU panels is a flush concern, measured in F9). `finish_into_rgb888`
@@ -43,10 +51,10 @@
 
 use alloc::vec::Vec;
 
-use crate::{Canvas, OpClass, Rect, RenderStats, Rgb};
+use crate::{Canvas, OpClass, PlacedGlyph, Rect, RenderStats, Rgb};
 use tiny_skia::{
-    FillRule, GradientStop, LinearGradient, Paint, PathBuilder, Pixmap, Point, SpreadMode,
-    Transform,
+    FillRule, GradientStop, LinearGradient, Paint, PathBuilder, Pixmap, Point,
+    PremultipliedColorU8, SpreadMode, Transform,
 };
 
 /// Vertex quantization grid: 1/64 px. `v * 64` is exact in f32 for our
@@ -114,6 +122,12 @@ fn rrect_points(x: f32, y: f32, w: f32, h: f32, rad: f32) -> Vec<(f32, f32)> {
 
 fn q2(x: f32, y: f32) -> (f32, f32) {
     (q(x), q(y))
+}
+
+/// Exact `round(x / 255)` in pure integer math — the deterministic blend
+/// divisor for glyph blits (valid for x ≤ 2·255², well inside u32).
+fn d255(x: u32) -> u32 {
+    (2 * x + 255) / 510
 }
 
 pub struct TinySkiaCanvas {
@@ -391,6 +405,67 @@ impl Canvas for TinySkiaCanvas {
         );
         // Gradient spans both classes; attribute by alpha like plain fills.
         self.count(Self::class_for(alpha), r);
+    }
+
+    fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8) {
+        // Manual deterministic source-over of A8 masks into the premultiplied
+        // band pixmap (see module docs — glyph blits sit outside the polygon
+        // rule). Integer world → gutter-local translation, per-pixel integer
+        // blend with d255 rounding: bit-identical in every band.
+        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let pm_w = self.pixmap.width() as i32;
+        let pm_h = self.pixmap.height() as i32;
+        for g in glyphs {
+            let m = g.mask;
+            let px = self.pixmap.pixels_mut();
+            for row in 0..m.h as i32 {
+                let ly = g.y + row + oyi;
+                if ly < 0 || ly >= pm_h {
+                    continue;
+                }
+                for col in 0..m.w as i32 {
+                    let lx = g.x + col + oxi;
+                    if lx < 0 || lx >= pm_w {
+                        continue;
+                    }
+                    let cov = m.a8[(row * m.w as i32 + col) as usize] as u32;
+                    if cov == 0 {
+                        continue;
+                    }
+                    // Effective alpha = coverage × paint alpha.
+                    let a = d255(cov * alpha as u32);
+                    let i = (ly * pm_w + lx) as usize;
+                    let dst = px[i];
+                    let ia = 255 - a;
+                    let na = d255(255 * a + dst.alpha() as u32 * ia);
+                    let nr = d255(color.r as u32 * a + dst.red() as u32 * ia);
+                    let ng = d255(color.g as u32 * a + dst.green() as u32 * ia);
+                    let nb = d255(color.b as u32 * a + dst.blue() as u32 * ia);
+                    // Channels ≤ alpha holds by monotonicity of d255 (each
+                    // numerator ≤ the alpha numerator); min() guards the
+                    // premultiplied constructor anyway — no panic path.
+                    if let Some(p) = PremultipliedColorU8::from_rgba(
+                        nr.min(na) as u8,
+                        ng.min(na) as u8,
+                        nb.min(na) as u8,
+                        na as u8,
+                    ) {
+                        px[i] = p;
+                    }
+                }
+            }
+            // Clamped-bbox pixel attribution, like every other op (F2
+            // refines to exact span counts).
+            self.count(
+                OpClass::Glyph,
+                Rect {
+                    x: g.x,
+                    y: g.y,
+                    w: m.w,
+                    h: m.h,
+                },
+            );
+        }
     }
 
     fn stats(&self) -> RenderStats {
