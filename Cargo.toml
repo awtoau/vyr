@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["vyr-core", "vyr-cli", "vyr-bench"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-only"
+repository = "https://github.com/awtoau/vyr"
+authors = ["awto <dan@awto.au>"]

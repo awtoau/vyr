@@ -1,0 +1,12 @@
+[package]
+name = "vyr-cli"
+description = "std shell for vyr-core: IR JSON in, PNG out (render-farm contract); PNG decode/encode lives here, never in core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+vyr-core = { path = "../vyr-core" }
+# F1 adds: png (encode), and the env/arg contract mirroring vyvanse-runner.

@@ -1,0 +1,13 @@
+[package]
+name = "vyr-bench"
+description = "criterion benches: ns/px baselines, per-primitive timings, the scaling-law assertion (F2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+vyr-core = { path = "../vyr-core" }
+# F2 adds: criterion (dev), the committed baseline file, the multi-band-size
+# scaling assertion (flat ns/px or fail).

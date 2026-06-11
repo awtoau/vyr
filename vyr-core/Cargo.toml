@@ -1,0 +1,12 @@
+[package]
+name = "vyr-core"
+description = "IR-native render core: render tree, layout protocol, Canvas trait, counters (no_std + alloc)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# F1 adds: tiny-skia (verify no_std+alloc mode here — see docs/plan.md F1).
+# Core policy: no std-only deps, no filesystem/clock/thread deps (invariant I7).

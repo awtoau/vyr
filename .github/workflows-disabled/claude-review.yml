@@ -1,0 +1,31 @@
+# Claude PR review — DISABLED by default (project CI is local-only by policy).
+# To enable: move this file to .github/workflows/ and add an ANTHROPIC_API_KEY
+# repo secret (or CLAUDE_CODE_OAUTH_TOKEN for a Claude subscription).
+# Until then, reviews run from a maintainer machine via /code-review.
+name: Claude PR review
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this PR against docs/plan.md, especially day-1 invariants
+            I1-I8: no std leakage into vyr-core; no full-frame assumptions
+            (any `area` band must work); new primitives/widgets must include
+            bench + golden; no default chrome; honest failure (hard error,
+            never silent blank); determinism (no clocks/randomness in render).
+            Then review for correctness bugs. Post findings as inline review
+            comments; be specific and cite lines.
