@@ -55,6 +55,35 @@ pub const TEXT_IR: &str = r##"{
   ]}
 }"##;
 
+/// The F6 image fixture — the committed 24×24 RGBA checker asset blitted
+/// four ways: natural size inside a BIGGER widget rect (no scaling), CLIPPED
+/// by a smaller widget rect, over a frame fill (source-over onto a widget,
+/// not just the backdrop), and through `vy_imagebutton` (same arm). The
+/// asset's semi-transparent quadrant + transparent centre hole land on the
+/// coloured backdrop/frame so alpha blending is visible in the golden.
+/// Every blit crosses 30-row seams (30/60/90) and 17-row seams of the
+/// 120×120 frame. Shared by `tests/image_golden.rs` and `vyr-bench`; needs
+/// the committed `vyr-core/tests/assets/checker-24.png` registered under
+/// [`IMAGE_ASSET`] (the verbatim-src name contract — `assets` module docs).
+pub const IMAGE_IR: &str = r##"{
+  "w": 120, "h": 120,
+  "root": {"name": "view", "attrs": {"background": "#3A6EA5"}, "children": [
+    {"name": "vy_frame", "attrs": {"x": "40", "y": "70", "width": "64", "height": "44",
+      "background": "#E0D8C8"}},
+    {"name": "vy_image", "attrs": {"x": "12", "y": "14", "width": "40", "height": "40",
+      "src": "checker-24.png"}},
+    {"name": "vy_image", "attrs": {"x": "70", "y": "50", "width": "16", "height": "12",
+      "src": "checker-24.png"}},
+    {"name": "vy_image", "attrs": {"x": "56", "y": "80", "width": "24", "height": "24",
+      "src": "checker-24.png"}},
+    {"name": "vy_imagebutton", "attrs": {"x": "12", "y": "76", "width": "30", "height": "24",
+      "src": "checker-24.png"}}
+  ]}
+}"##;
+
+/// The registry name [`IMAGE_IR`]'s `src` attrs reference.
+pub const IMAGE_ASSET: &str = "checker-24.png";
+
 /// Draw the demo scene. The first op paints the backdrop — the render tree's
 /// screen-background discipline, mirrored here.
 pub fn demo_scene(c: &mut dyn Canvas) {

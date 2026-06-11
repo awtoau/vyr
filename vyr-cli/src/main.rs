@@ -12,6 +12,18 @@
 //! find their fonts with NO environment setup, exactly what the render farm
 //! needs. A missing dir is a loud WARN, and text then hard-errors honestly.
 //!
+//! Images (F6): same I7 split — THIS shell walks the parsed request for
+//! `src` attrs, decodes each PNG (the `png` crate) and registers the RGBA
+//! pixels with `vyr_core::Assets` under the VERBATIM `src` string (core
+//! looks names up exactly as the IR carries them). Path resolution per src:
+//! a leading LVGL `A:` FS-driver prefix is stripped DEFENSIVELY (the farm
+//! sends vyr the plain path; the prefix is LVGL-specific lowering), then an
+//! absolute path is used as-is, else relative to `$VYR_ASSETS` if set, else
+//! relative to the CWD (the farm's vyr_server runs with cwd = the vyvanse
+//! repo root, so repo-relative srcs resolve). A missing or undecodable
+//! asset is a NAMED hard error BEFORE any pixel (invariant I6) — exit 2,
+//! the farm's honest-FAIL contract, never a blank box.
+//!
 //! Logging (awto convention): every line timestamped, mirrored to BOTH
 //! stderr (live) and ./tmp/vyr-cli.log (retroactive review, append). Format:
 //! `HH:MM:SS.ffffff UTC  LEVEL [vyr-cli] message`.
@@ -21,7 +33,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vyr_core::demo::{DEMO_H, DEMO_W, TEXT_IR, demo_scene};
-use vyr_core::{Fonts, Rect, TinySkiaCanvas};
+use vyr_core::{Assets, Fonts, Rect, RgbaImage, TinySkiaCanvas};
 
 /// The baked default fonts dir: the repo this binary was built from. Works
 /// unmoved for both the standalone repo and the vyvanse submodule checkout;
@@ -99,6 +111,93 @@ fn load_fonts() -> Fonts {
     }
     log("INFO", &format!("fonts from {dir}: [{}]", names.join(", ")));
     fonts
+}
+
+/// Collect every `src` attr in the request tree — VERBATIM strings, deduped,
+/// first-seen order (the registry-key contract: core looks up exactly what
+/// the IR carries).
+fn collect_srcs(n: &vyr_core::ir::Node, out: &mut Vec<String>) {
+    if let Some(s) = n.str_attr("src")
+        && !out.contains(&s)
+    {
+        out.push(s);
+    }
+    for c in &n.children {
+        collect_srcs(c, out);
+    }
+}
+
+/// Resolve a verbatim IR `src` to a filesystem path (module docs): strip a
+/// defensive LVGL `A:` FS-driver prefix, then absolute as-is, else relative
+/// to `$VYR_ASSETS`, else relative to the CWD (the farm server's cwd is the
+/// vyvanse repo root).
+fn resolve_src(src: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(src.strip_prefix("A:").unwrap_or(src));
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    match std::env::var("VYR_ASSETS") {
+        Ok(base) => std::path::Path::new(&base).join(path),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// Decode one PNG to straight RGBA8888. EXPAND+STRIP_16 normalises palette /
+/// sub-byte / 16-bit sources to 8-bit channels; the remaining colour types
+/// are widened to RGBA here so core sees ONE pixel format (its contract).
+fn decode_png(path: &std::path::Path) -> Result<RgbaImage, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("open: {e}"))?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().map_err(|e| format!("header: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("decode: {e}"))?;
+    buf.truncate(info.buffer_size());
+    let rgba: Vec<u8> = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => buf
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 0xFF])
+            .collect(),
+        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 0xFF]).collect(),
+        png::ColorType::GrayscaleAlpha => buf
+            .chunks_exact(2)
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
+        png::ColorType::Indexed => {
+            return Err("indexed PNG survived EXPAND (decoder bug?)".into());
+        }
+    };
+    RgbaImage::new(info.width, info.height, rgba).map_err(|e| format!("{e:?}"))
+}
+
+/// Pre-load every asset the request references into a `vyr_core::Assets`
+/// registry (module docs: resolution rules, verbatim-name keys). Any
+/// missing/undecodable asset is a NAMED error — the caller exits BEFORE
+/// rendering (invariant I6).
+fn load_assets(req: &vyr_core::ir::Request) -> Result<Assets, String> {
+    let mut srcs = Vec::new();
+    collect_srcs(&req.root, &mut srcs);
+    let mut assets = Assets::new();
+    let mut names = Vec::new();
+    for src in srcs {
+        let path = resolve_src(&src);
+        let img = decode_png(&path)
+            .map_err(|e| format!("asset {src:?} (resolved: {}): {e}", path.display()))?;
+        names.push(format!("{src} ({}x{})", img.w(), img.h()));
+        assets
+            .register(&src, img)
+            .map_err(|e| format!("register {src:?}: {e:?}"))?;
+    }
+    if !assets.is_empty() {
+        log(
+            "INFO",
+            &format!("assets: [{}] ({} B RGBA)", names.join(", "), assets.bytes()),
+        );
+    }
+    Ok(assets)
 }
 
 fn write_png(path: &str, w: u32, h: u32, rgb: &[u8]) -> Result<(), String> {
@@ -199,9 +298,19 @@ fn render(ir_path: &str, out: &str) -> ExitCode {
     };
     let (w, h) = (req.w, req.h);
     let mut fonts = load_fonts();
+    // Asset preload (F6): every src decoded + registered BEFORE pixels; a
+    // failure here is the honest hard exit, same as a render error.
+    let assets = match load_assets(&req) {
+        Ok(a) => a,
+        Err(e) => {
+            log("ERROR", &format!("asset preload failed: {e}"));
+            return ExitCode::from(2);
+        }
+    };
     let mut buf = vec![0u8; (w * h * 3) as usize];
-    match req.render_with_fonts(
+    match req.render_with(
         &mut fonts,
+        &assets,
         Rect { x: 0, y: 0, w, h },
         &mut buf,
         (w * 3) as usize,

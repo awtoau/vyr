@@ -39,6 +39,13 @@
 //! position and existing dst — identical in every band by induction.
 //! Enforcement: `tests/text_golden.rs::text_band_equivalence`.
 //!
+//! **Image blits (F6) follow the same pattern**: [`Canvas::blit_image`] is an
+//! integer-positioned source-over of caller-decoded straight-alpha RGBA onto
+//! the band — the glyph formula with the image's own per-pixel colour+alpha
+//! in place of (paint colour × coverage). No scaling, no filtering, no float
+//! — band-exact by the same induction. Enforcement:
+//! `tests/image_golden.rs::image_band_equivalence`.
+//!
 //! tiny-skia rasterizes premultiplied RGBA8888 internally; the caller's
 //! buffer contract is RGB888 (the oracle's PNG format; RGB565 conversion for
 //! MCU panels is a flush concern, measured in F9). `finish_into_rgb888`
@@ -51,7 +58,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{Canvas, OpClass, PlacedGlyph, Rect, RenderStats, Rgb};
+use crate::{Canvas, OpClass, PlacedGlyph, Rect, RenderStats, Rgb, RgbaImage};
 use tiny_skia::{
     FillRule, GradientStop, LinearGradient, Paint, PathBuilder, Pixmap, Point,
     PremultipliedColorU8, SpreadMode, Transform,
@@ -466,6 +473,90 @@ impl Canvas for TinySkiaCanvas {
                 },
             );
         }
+    }
+
+    fn blit_image(&mut self, x: i32, y: i32, image: &RgbaImage, clip: Rect) {
+        // Manual deterministic source-over of straight-alpha RGBA into the
+        // premultiplied band pixmap — the glyph-blit pattern (module docs):
+        // integer world → gutter-local translation, per-pixel integer blend
+        // with d255 rounding, bit-identical in every band. The world-space
+        // walk covers image ∩ clip only (the v1 natural-size policy: the
+        // clip is the widget rect — see ir module docs).
+        let (iw, ih) = (image.w() as i32, image.h() as i32);
+        let x0 = x.max(clip.x);
+        let y0 = y.max(clip.y);
+        let x1 = (x + iw).min(clip.x + clip.w as i32);
+        let y1 = (y + ih).min(clip.y + clip.h as i32);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let pm_w = self.pixmap.width() as i32;
+        let pm_h = self.pixmap.height() as i32;
+        let rgba = image.rgba();
+        let px = self.pixmap.pixels_mut();
+        for wy in y0..y1 {
+            let ly = wy + oyi;
+            if ly < 0 || ly >= pm_h {
+                continue;
+            }
+            for wx in x0..x1 {
+                let lx = wx + oxi;
+                if lx < 0 || lx >= pm_w {
+                    continue;
+                }
+                // Source pixel: image-local row/col (in-bounds by the
+                // intersection above; buffer length by RgbaImage::new).
+                let si = (((wy - y) * iw + (wx - x)) * 4) as usize;
+                let a = rgba[si + 3] as u32;
+                if a == 0 {
+                    continue;
+                }
+                let (sr, sg, sb) = (rgba[si] as u32, rgba[si + 1] as u32, rgba[si + 2] as u32);
+                let i = (ly * pm_w + lx) as usize;
+                if a == 0xFF {
+                    // Opaque copy — byte-identical to the blend below
+                    // (ia = 0 ⇒ each channel = d255(255·s) = s), split out
+                    // because opaque pixels dominate real assets.
+                    if let Some(p) =
+                        PremultipliedColorU8::from_rgba(sr as u8, sg as u8, sb as u8, 0xFF)
+                    {
+                        px[i] = p;
+                    }
+                    continue;
+                }
+                // Straight-alpha source over premultiplied dst: the glyph
+                // formula with (sr, a) in place of (color × coverage).
+                let dst = px[i];
+                let ia = 255 - a;
+                let na = d255(255 * a + dst.alpha() as u32 * ia);
+                let nr = d255(sr * a + dst.red() as u32 * ia);
+                let ng = d255(sg * a + dst.green() as u32 * ia);
+                let nb = d255(sb * a + dst.blue() as u32 * ia);
+                // Channels ≤ alpha by monotonicity of d255 (sr ≤ 255 and
+                // dst.red ≤ dst.alpha ⇒ each numerator ≤ the alpha
+                // numerator); min() guards the constructor anyway.
+                if let Some(p) = PremultipliedColorU8::from_rgba(
+                    nr.min(na) as u8,
+                    ng.min(na) as u8,
+                    nb.min(na) as u8,
+                    na as u8,
+                ) {
+                    px[i] = p;
+                }
+            }
+        }
+        // Exact blitted-area attribution (image ∩ clip), clamped to the band
+        // by count() like every other op.
+        self.count(
+            OpClass::Blit,
+            Rect {
+                x: x0,
+                y: y0,
+                w: (x1 - x0) as u32,
+                h: (y1 - y0) as u32,
+            },
+        );
     }
 
     fn stats(&self) -> RenderStats {

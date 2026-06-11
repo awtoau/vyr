@@ -15,13 +15,31 @@
 //!
 //! F5 brings glyphs: `vy_label` / `vy_lcd` / `vy_button` render their `text`
 //! through the caller's [`Fonts`] (registry + glyph cache — see
-//! [`crate::text`]). Image decode is still F6, so **image-bearing widgets
-//! are hard errors** (`Unimplemented`, named); widgets needing marks or
-//! structure beyond a single text run (radio/checkbox/dropdown/table/chart)
-//! stay hard errors too — the farm surfaces them as honest skips, exactly
-//! like TGX's `unsupported` set. Unknown `vy_` names are `UnknownWidget`
-//! errors before any pixel. A `text` whose font isn't registered or whose
-//! codepoints the font can't map is a hard error — never a tofu box.
+//! [`crate::text`]). F6 brings images: `vy_image` / `vy_imagebutton` blit
+//! their `src` from the caller's [`Assets`] registry (decoded RGBA — see
+//! [`crate::assets`]; decode lives in the shell, invariant I7). Widgets
+//! needing marks or structure beyond a single text run
+//! (radio/checkbox/dropdown/table/chart) stay hard errors — the farm
+//! surfaces them as honest skips, exactly like TGX's `unsupported` set.
+//! Unknown `vy_` names are `UnknownWidget` errors before any pixel. A `text`
+//! whose font isn't registered, a codepoint the font can't map, a `src` not
+//! in the registry (`MissingAsset`), or a `vy_image` with NO `src` at all
+//! (`BadIr` — an image widget with nothing to show is junk IR, not an empty
+//! box) are hard errors — never a tofu box or a blank.
+//!
+//! ## Image model (F6, scaling policy v1)
+//!
+//! `vy_image` / `vy_imagebutton` blit the asset at its NATURAL size,
+//! top-left anchored at the widget's x/y, CLIPPED to the widget rect — no
+//! resampling. This matches LVGL's `lv_image` default (no zoom:
+//! `LV_IMAGE_ALIGN_DEFAULT` paints the source 1:1 from the top-left) and
+//! TGX's `Image` (setBitmap draws natural-size). The Qt backend DIVERGES: it
+//! scales into the widget rect (KeepAspectRatio, smooth) — recorded on issue
+//! #6; nearest-neighbour scale-to-fit is a candidate follow-up once the
+//! pixel spec picks one truth. Paint order: declared `background` fill, the
+//! blit, then declared border ON TOP (a border frames the image — the LVGL
+//! reading). The `src` string is looked up in [`Assets`] VERBATIM — name
+//! resolution/decode is the shell's job (see `crate::assets` module docs).
 //!
 //! ## Text model (F5, deliberately minimal)
 //!
@@ -60,7 +78,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::{Canvas, Fonts, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
+use crate::{Assets, Canvas, Fonts, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
 
 #[derive(Debug, Deserialize)]
 pub struct Node {
@@ -85,11 +103,13 @@ impl Request {
 
     /// Render one band (`area`, world coords within the `w×h` screen) into
     /// the caller's RGB888 buffer — THE entry point shape (invariant I1).
-    /// `fonts` is the caller-owned registry + glyph cache (F5); its
-    /// counters are surfaced into the returned stats.
-    pub fn render_with_fonts(
+    /// `fonts` is the caller-owned registry + glyph cache (F5), `assets` the
+    /// caller-owned decoded-image registry (F6); font counters are surfaced
+    /// into the returned stats.
+    pub fn render_with(
         &self,
         fonts: &mut Fonts,
+        assets: &Assets,
         area: Rect,
         buf: &mut [u8],
         stride: usize,
@@ -111,7 +131,7 @@ impl Request {
         };
         canvas.fill_rrect(screen, 0, backdrop, 0xFF);
         for child in &self.root.children {
-            walk(child, screen, &mut canvas, fonts, None)?;
+            walk(child, screen, &mut canvas, fonts, assets, None)?;
         }
         let mut stats = canvas.finish_into_rgb888(buf, stride);
         stats.glyphs_rasterized = fonts.rasterized();
@@ -120,8 +140,21 @@ impl Request {
         Ok(stats)
     }
 
-    /// [`Request::render_with_fonts`] with an empty registry — text-free
-    /// scenes only (text hard-errors `UnknownFont`, honestly).
+    /// [`Request::render_with`] with an empty asset registry — image-free
+    /// scenes only (images hard-error `MissingAsset`, honestly).
+    pub fn render_with_fonts(
+        &self,
+        fonts: &mut Fonts,
+        area: Rect,
+        buf: &mut [u8],
+        stride: usize,
+    ) -> Result<RenderStats, RenderError> {
+        self.render_with(fonts, &Assets::new(), area, buf, stride)
+    }
+
+    /// [`Request::render_with`] with empty registries — text-free,
+    /// image-free scenes only (text hard-errors `UnknownFont`, images
+    /// `MissingAsset`, honestly).
     pub fn render(
         &self,
         area: Rect,
@@ -129,7 +162,7 @@ impl Request {
         stride: usize,
     ) -> Result<RenderStats, RenderError> {
         let mut fonts = Fonts::new();
-        self.render_with_fonts(&mut fonts, area, buf, stride)
+        self.render_with(&mut fonts, &Assets::new(), area, buf, stride)
     }
 }
 
@@ -167,7 +200,10 @@ impl Node {
         self.attrs.get(key)
     }
 
-    fn str_attr(&self, key: &str) -> Option<String> {
+    /// String view of an attr (numbers stringified, like the JSON the farm
+    /// emits). Public so the shell's asset pre-scan reads `src` with EXACTLY
+    /// the semantics the render path will use (vyr-cli `load_assets`).
+    pub fn str_attr(&self, key: &str) -> Option<String> {
         match self.raw(key)? {
             serde_json::Value::String(s) => Some(s.clone()),
             serde_json::Value::Number(n) => Some(n.to_string()),
@@ -259,6 +295,7 @@ fn walk(
     parent: Rect,
     c: &mut TinySkiaCanvas,
     fonts: &mut Fonts,
+    assets: &Assets,
     ink: Option<Rgb>,
 ) -> Result<(), RenderError> {
     let x = parent.x + n.i32_attr("x", 0);
@@ -352,9 +389,22 @@ fn walk(
             );
         }
         "vy_image" | "vy_imagebutton" => {
-            return Err(RenderError::Unimplemented(
-                "image widget pre-F6 (no decode path yet)",
-            ));
+            // F6: the asset at NATURAL size, top-left anchored, clipped to
+            // the widget rect (scaling policy — module docs). Declared fill
+            // under, declared border over. No `src` = junk IR (I6): an image
+            // widget with nothing to show is a BadIr, not an empty box.
+            let Some(src) = n.str_attr("src") else {
+                return Err(RenderError::BadIr(format!(
+                    "{name} {:?} has no src attr (an image with nothing to show is junk IR)",
+                    n.str_attr("name").unwrap_or_default()
+                )));
+            };
+            let rad = n.radius();
+            if let Some(fill) = n.color("background") {
+                c.fill_rrect(r, rad, fill, 0xFF);
+            }
+            c.blit_image(r.x, r.y, assets.get(&src)?, r);
+            paint_border(n, r, rad, c);
         }
         "vy_video" | "vy_widget" | "vy_canvas" => {
             return Err(RenderError::Unimplemented(
@@ -367,7 +417,7 @@ fn walk(
     }
 
     for child in &n.children {
-        walk(child, r, c, fonts, child_ink)?;
+        walk(child, r, c, fonts, assets, child_ink)?;
     }
     Ok(())
 }

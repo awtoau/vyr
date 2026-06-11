@@ -16,10 +16,12 @@
 
 extern crate alloc;
 
+pub mod assets;
 pub mod demo;
 pub mod ir;
 mod painter;
 pub mod text;
+pub use assets::{Assets, RgbaImage};
 pub use painter::TinySkiaCanvas;
 pub use text::{Fonts, GlyphMask, PlacedGlyph};
 
@@ -87,6 +89,10 @@ pub enum RenderError {
     UnknownFont(alloc::string::String),
     MissingGlyph(alloc::string::String),
     BadFont(alloc::string::String),
+    /// F6 honest registration failure: pixel bytes that don't match their
+    /// claimed dimensions, junk sizes, duplicate/empty names — rejected at
+    /// [`Assets::register`] time, never discovered mid-blit.
+    BadAsset(alloc::string::String),
 }
 
 /// The painter seam. Implementations: tiny-skia (F1, [`TinySkiaCanvas`]),
@@ -122,6 +128,14 @@ pub trait Canvas {
     /// contract; see `text` module docs); blending must be deterministic
     /// integer math, counted into [`OpClass::Glyph`].
     fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8);
+    /// Blit a caller-registered RGBA image (F6) at its NATURAL size, top-left
+    /// anchored at INTEGER world `(x, y)`, limited to the world-space `clip`
+    /// rect (the widget rect — no scaling in v1; see `ir` module docs).
+    /// Blending must be deterministic integer source-over (straight-alpha
+    /// source onto the band — same discipline as glyph blits, so band
+    /// equivalence holds by the same induction), counted into
+    /// [`OpClass::Blit`].
+    fn blit_image(&mut self, x: i32, y: i32, image: &RgbaImage, clip: Rect);
     fn stats(&self) -> RenderStats;
 }
 
@@ -129,13 +143,31 @@ pub trait Canvas {
 /// `{"w","h","root"}`, `root` in `vy_` vocabulary, verbatim — no lowering)
 /// clipped to `area` into the caller-provided `buf` (RGB888, `stride` bytes
 /// per row). A full frame is `area = whole screen` — there is no other code
-/// path. See [`ir`] for the widget subset and the honest-failure rules
-/// (image pre-F6 = hard error).
+/// path. See [`ir`] for the widget subset and the honest-failure rules.
 ///
 /// `fonts` is the caller-owned registry + glyph cache (F5): register font
 /// bytes once, keep the instance across renders so glyphs rasterize exactly
 /// once per (font, size, codepoint). Text in the IR with no matching
 /// registered font is a hard [`RenderError::UnknownFont`].
+///
+/// `assets` is the caller-owned image registry (F6): decoded RGBA pixels
+/// registered under the IR's verbatim `src` names (decode lives in the
+/// shell — invariant I7). A `src` not registered is a hard
+/// [`RenderError::MissingAsset`].
+pub fn render_with(
+    ir_json: &str,
+    fonts: &mut Fonts,
+    assets: &Assets,
+    area: Rect,
+    buf: &mut [u8],
+    stride: usize,
+) -> Result<RenderStats, RenderError> {
+    ir::Request::parse(ir_json)?.render_with(fonts, assets, area, buf, stride)
+}
+
+/// [`render_with`] with an empty asset registry — convenience for image-free
+/// scenes. Image-bearing IR through this path hard-errors with
+/// [`RenderError::MissingAsset`] (honest: there are no assets to blit).
 pub fn render_with_fonts(
     ir_json: &str,
     fonts: &mut Fonts,
@@ -143,12 +175,13 @@ pub fn render_with_fonts(
     buf: &mut [u8],
     stride: usize,
 ) -> Result<RenderStats, RenderError> {
-    ir::Request::parse(ir_json)?.render_with_fonts(fonts, area, buf, stride)
+    render_with(ir_json, fonts, &Assets::new(), area, buf, stride)
 }
 
-/// [`render_with_fonts`] with an empty font registry — convenience for
-/// text-free scenes. Text-bearing IR through this path hard-errors with
-/// [`RenderError::UnknownFont`] (honest: there are no fonts to draw with).
+/// [`render_with`] with empty font AND asset registries — convenience for
+/// text-free, image-free scenes. Text hard-errors
+/// [`RenderError::UnknownFont`], images [`RenderError::MissingAsset`]
+/// (honest: there is nothing to draw them with).
 pub fn render(
     ir_json: &str,
     area: Rect,
@@ -156,5 +189,5 @@ pub fn render(
     stride: usize,
 ) -> Result<RenderStats, RenderError> {
     let mut fonts = Fonts::new();
-    render_with_fonts(ir_json, &mut fonts, area, buf, stride)
+    render_with(ir_json, &mut fonts, &Assets::new(), area, buf, stride)
 }

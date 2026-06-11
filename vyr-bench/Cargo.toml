@@ -10,3 +10,6 @@ authors.workspace = true
 [dependencies]
 vyr-core = { path = "../vyr-core" }
 serde_json = "1"
+# Decode the committed F6 test asset for the image benches (std side — core
+# only ever sees RGBA bytes, invariant I7).
+png = "0.17"

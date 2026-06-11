@@ -28,8 +28,8 @@
 
 use std::time::Instant;
 
-use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, TEXT_IR, demo_scene};
-use vyr_core::{Canvas, Fonts, Rect, Rgb, TinySkiaCanvas};
+use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, IMAGE_ASSET, IMAGE_IR, TEXT_IR, demo_scene};
+use vyr_core::{Assets, Canvas, Fonts, Rect, Rgb, RgbaImage, TinySkiaCanvas};
 
 /// A check fails when a bench exceeds baseline × this. 1.5 = real regressions
 /// fire, day-to-day desktop noise (a few %) does not.
@@ -252,6 +252,77 @@ fn bench_text_scene() -> f64 {
     })
 }
 
+// --- F6 image benches --------------------------------------------------------
+// Like text: register-once semantics (decode is a load/boot cost, F9 measures
+// it on target); these report the recurring per-frame BLIT cost.
+
+/// A deterministic 64×64 straight-alpha image: left half opaque, right half
+/// a=128 — so the bench prices the blend mix a real asset has (the opaque
+/// fast path AND the d255 source-over), not just the cheapest case.
+fn synth_image_64() -> RgbaImage {
+    let mut rgba = Vec::with_capacity(64 * 64 * 4);
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let a = if x < 32 { 0xFF } else { 0x80 };
+            rgba.extend_from_slice(&[(x * 4) as u8, (y * 4) as u8, 0x80, a]);
+        }
+    }
+    RgbaImage::new(64, 64, rgba).expect("valid synth image")
+}
+
+fn bench_blit_image() -> f64 {
+    let img = synth_image_64();
+    let clip = Rect {
+        x: 20,
+        y: 20,
+        w: 64,
+        h: 64,
+    };
+    let mut c = band_canvas();
+    measure(|| c.blit_image(20, 20, &img, clip))
+}
+
+/// The committed F6 checker asset, registered under the fixture's src name
+/// (what `tests/image_golden.rs` renders — golden and baseline measure the
+/// SAME pixels).
+fn bench_assets() -> Assets {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../vyr-core/tests/assets/checker-24.png");
+    let file = std::fs::File::open(&path).expect("committed checker-24.png");
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .expect("png header");
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).expect("png decode");
+    buf.truncate(info.buffer_size());
+    let img = RgbaImage::new(info.width, info.height, buf).expect("valid dims");
+    let mut assets = Assets::new();
+    assets.register(IMAGE_ASSET, img).expect("register");
+    assets
+}
+
+fn bench_image_scene() -> f64 {
+    let assets = bench_assets();
+    let mut fonts = Fonts::new();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with(
+            IMAGE_IR,
+            &mut fonts,
+            &assets,
+            Rect {
+                x: 0,
+                y: 0,
+                w: DEMO_W,
+                h: DEMO_H,
+            },
+            &mut buf,
+            (DEMO_W * 3) as usize,
+        )
+        .expect("image fixture renders");
+    })
+}
+
 fn bench_demo_scene() -> f64 {
     let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
     measure(|| {
@@ -323,6 +394,11 @@ fn benches() -> Vec<Bench> {
             run: bench_glyph_run,
         },
         Bench {
+            name: "prim/blit_image_64",
+            pixels: 64.0 * 64.0,
+            run: bench_blit_image,
+        },
+        Bench {
             name: "scene/demo_full",
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_demo_scene,
@@ -336,6 +412,11 @@ fn benches() -> Vec<Bench> {
             name: "scene/text_full",
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_text_scene,
+        },
+        Bench {
+            name: "scene/image_full",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_image_scene,
         },
     ]
 }
