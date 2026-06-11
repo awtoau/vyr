@@ -1,0 +1,6 @@
+# Pinned toolchain (invariant I2: determinism — goldens and the perf baseline
+# are only comparable on one compiler). Bump = an explicit reviewed change,
+# re-blessing goldens/baseline if output shifts.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

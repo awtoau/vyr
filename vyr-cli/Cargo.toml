@@ -9,4 +9,4 @@ authors.workspace = true
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
-# F1 adds: png (encode), and the env/arg contract mirroring vyvanse-runner.
+png = "0.17"

@@ -1,6 +1,6 @@
 [package]
 name = "vyr-core"
-description = "IR-native render core: render tree, layout protocol, Canvas trait, counters (no_std + alloc)"
+description = "IR-native render core: render tree, layout protocol, Canvas trait, painters, counters (no_std + alloc)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,5 +8,14 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# F1 adds: tiny-skia (verify no_std+alloc mode here — see docs/plan.md F1).
-# Core policy: no std-only deps, no filesystem/clock/thread deps (invariant I7).
+# Painter (F1). no_std: default features off, no-std-float supplies the float
+# intrinsics. Core policy (invariant I7): no std-only deps, no
+# filesystem/clock/thread deps.
+tiny-skia = { version = "0.11", default-features = false, features = ["no-std-float"] }
+# Deterministic software float math for our own curve flattening (same
+# rounding on every host and on thumbv7em — no platform libm variance).
+libm = "0.2"
+
+[dev-dependencies]
+# Tests are std (separate crates); png is for optional VYR_TEST_DUMP output.
+png = "0.17"

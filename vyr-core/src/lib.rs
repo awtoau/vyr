@@ -16,6 +16,10 @@
 
 extern crate alloc;
 
+pub mod demo;
+mod painter;
+pub use painter::TinySkiaCanvas;
+
 /// Integer pixel rectangle. `x`/`y` may be negative (a band fully above or
 /// left of the origin is valid during scrolling).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,18 +73,34 @@ pub enum RenderError {
     Unimplemented(&'static str),
 }
 
-/// The painter seam. Implementations: tiny-skia (F1), vello_cpu cross-check
-/// (F8), DMA2D/Chrom-ART hybrid (F13). Widgets paint ONLY through this trait.
+/// The painter seam. Implementations: tiny-skia (F1, [`TinySkiaCanvas`]),
+/// vello_cpu cross-check (F8), DMA2D/Chrom-ART hybrid (F13). Widgets paint
+/// ONLY through this trait.
 ///
-/// Signatures are finalised in F1 alongside the first implementation — the
-/// v1 primitive set is fixed by the plan: fill_rrect, stroke_rrect, disc,
-/// ring, line, glyph_run, blit_image, linear gradient.
+/// All coordinates are WORLD coordinates — a canvas instance represents one
+/// band (invariant I1) and translates internally. The v1 primitive set per
+/// the plan; `glyph_run` and `blit_image` join the trait with their
+/// implementations (F5/F6) — no dead unimplementable surface before then.
 pub trait Canvas {
     fn fill_rrect(&mut self, r: Rect, radius: u32, color: Rgb, alpha: u8);
     fn stroke_rrect(&mut self, r: Rect, radius: u32, width: u32, color: Rgb, alpha: u8);
     fn disc(&mut self, cx: i32, cy: i32, radius: u32, color: Rgb, alpha: u8);
     fn ring(&mut self, cx: i32, cy: i32, radius: u32, width: u32, color: Rgb, alpha: u8);
+    // A line is naturally two endpoints + width + colour + alpha; grouping
+    // them into structs would be ceremony, not clarity.
+    #[allow(clippy::too_many_arguments)]
     fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: u32, color: Rgb, alpha: u8);
+    /// Two-stop linear gradient fill of a (rounded) rect, horizontal or
+    /// vertical — the IR's background-gradient shape.
+    fn fill_linear_gradient(
+        &mut self,
+        r: Rect,
+        radius: u32,
+        from: Rgb,
+        to: Rgb,
+        vertical: bool,
+        alpha: u8,
+    );
     fn stats(&self) -> RenderStats;
 }
 
