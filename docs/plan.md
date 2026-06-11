@@ -324,6 +324,46 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
   strings) emitted at build time — no silent coverage gaps.
 - **Depends:** F5 (fonts), F6 (images), F9 (numbers to beat).
 
+### F16 — Quality tiers: the speed-for-quality knobs (a product feature)
+- **Goal:** expose quality/speed knobs as a FIRST-CLASS, measured feature —
+  the thing TouchGFX never had, and the thing that becomes essential the
+  moment frames animate or play video on a budgeted MCU. Dan's framing:
+  byte-exact rendering is the oracle's job; the runtime wants to go fast,
+  and dropping quality deliberately is a feature, not a failure.
+- **The design rule that keeps the oracle intact:** quality is a SMALL
+  DISCRETE ENUM (`Q::Exact | Q::Fast | Q::Draft`, names TBD), never a float —
+  and **every tier is individually deterministic** (same input + same tier =
+  same bytes, banding included). The oracle/conformance world pins
+  `Q::Exact`; goldens exist per tier where behaviour differs; the
+  I1/I2/I4 invariants hold WITHIN each tier. A knob that breaks per-tier
+  determinism is rejected.
+- **Knob candidates (each lands with its bench so the trade is PRICED):**
+  - **AA off** (`Draft`): opaque non-AA fills become span writes — the
+    single biggest ns/px lever; tiny-skia supports it per-paint already.
+  - **Flattening density**: halve the fixed-step segment counts (`Fast`) —
+    sagitta error rises from ~0.09 px to ~0.35 px, invisible at panel DPI,
+    fewer edges to walk.
+  - **Gutter off** (`Fast`/`Draft`): the overscan exists for clip-adjacent
+    AA cleanliness; without AA (or accepting LSB seams) the (w+16)(h+16)
+    overscan cost — visible in the F2 scaling table — disappears.
+  - **Bilevel glyphs**: 1-bpp masks instead of A8 (`Draft`) — classic
+    embedded text, blits become masked writes, cache shrinks 8×.
+  - **Cheaper gradients**: banded/stepped interpolation (`Draft`).
+- **NOT knobs:** per-band op culling (always-on optimization, F2's recorded
+  target); pixel format (a flush concern, F9/F13).
+- **Runtime auto-tier (the video case, later, with F11):** a frame-budget
+  governor — when measured frame time exceeds the budget, drop a tier;
+  recover when headroom returns. The F10 perf HUD displays the ACTIVE tier
+  (the knob must be visible to be trusted), and the per-tier ns/px baselines
+  from this track are what the governor's predictions are made of.
+- **Acceptance:** tier enum plumbed through Canvas/painter with `Exact` the
+  default everywhere oracle-facing; per-tier determinism tests (golden per
+  tier on the shared fixtures); per-tier ns/px rows in baseline.json — the
+  knob's value is a measured number, not a vibe; gallery row showing
+  Exact/Fast/Draft side-by-side (the honest "what you give up" picture).
+- **Depends:** F2 (pricing), F4 (vocabulary to exercise); informs F9
+  (measure tiers on target) and F11 (the governor).
+
 ---
 
 ## 4. Milestones
@@ -334,7 +374,7 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
 | **M2 — oracle live** | full v1 vocab via the farm, conformance flipped, nightly CI | F3–F8 |
 | **M3 — embedded verdict** | measured flash/RAM/ns-px on M4F target, go/no-go doc | F9 (+F10 hooks) |
 | **M4 — toolkit alpha** | debug suite, interaction design, import-and-run demos | F10–F12 |
-| later | accel painters, editor embedding, bake-to-flash | F13, F14, F15 |
+| later | accel painters, editor embedding, bake-to-flash, quality tiers | F13, F14, F15, F16 |
 
 ## 5. Open decisions
 
