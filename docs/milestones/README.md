@@ -45,8 +45,8 @@ byte-untouched throughout** — Draft is a separate tier with its own goldens.
 | **Exact** (the oracle) | float-AA tiny-skia, full quality | **75 M** | 7.4× | — (baseline) |
 | **F16 Draft v1** | integer no-AA opaque RECT fills | 60 M | ~6× | 23–27 % |
 | **F16 Draft v2** | + integer disc / ring / line | 20 M | 2.0× | 85 % |
-| **F16 Draft v3** | + integer rounded-fill / gradient, **gutter dropped** | **13.0 M** | **1.30×** | **95 %** |
-| *(next, not yet done)* | direct-RGB888 output, no premul-convert pass | *target <10 M* | *BEAT* | — |
+| **F16 Draft v3** | + integer rounded-fill / gradient, **gutter dropped** | **~11.5 M** | 1.15× | 97 % |
+| **F16 Draft v4** | **direct-RGB888 output** — no premul pixmap, no convert pass | **~8.5–9.5 M** | **< 1.0× — BEATS LVGL** | **>100 %** |
 
 **The profile that drove v3 — "work exactly where we're slow."** An x86 callgrind
 per-function breakdown of the Draft render overturned the guess: the remaining cost
@@ -60,19 +60,28 @@ path — nothing touches tiny-skia), which made the gutter unnecessary, then
 94 → 60 KB, fidelity Δ vs Exact *down* to 5.3 % (hard rounded corners match Exact's
 shape better than the square-corner v1 did).
 
-**Why vyr isn't under LVGL yet (1.30×), and the last lever.** The remaining gap is
-purely structural: vyr renders into tiny-skia's **premultiplied pixmap** and then
-**converts** to RGB888; LVGL writes its native pixel format **straight from the
-blend**. The identified next step (not yet done — the literal endpoint of the F16
-direction): give Draft **its own render target, the RGB888 output buffer directly**
-— opaque fills become bare RGB writes, translucent/glyph/image become RGB-space
-integer source-over, no pixmap, no convert pass. That deletes the ~72 % the profile
-found. Full numbers + the per-function profile: [`docs/measurements/f9-static.md`](../measurements/f9-static.md).
+**v4 — the last lever, landed: direct-RGB888 output.** The remaining v3 gap was
+purely structural: vyr rendered into tiny-skia's **premultiplied pixmap** then
+**converted** to RGB888 (the `finish_into_rgb888` pass, 59 % of Draft), while LVGL
+writes its native format **straight from the blend**. v4 makes Draft's output
+surface **BE the RGB888 buffer**, composited in draw order: the integer fast path
+(~97 % of pixels) writes RGB888 straight out — opaque = triple store, translucent =
+the same `d255` source-over in straight-RGB space — and the rare rounded-clip
+fallback renders into a premul scratch pixmap then composites into the RGB buffer
+**in order** (z-order preserved). `finish` is now a stride-aware row copy: no demul,
+no convert. It is a **pure optimization — the Draft pixels are byte-identical** (the
+M4 frame hash is unchanged, every Draft + chart golden passes with no re-bless), so
+it cost nothing in fidelity. Result: ~11.5 M → **~8.5–9.5 M insns/frame — under the
+10 M LVGL anchor**. The trade is heap: Draft's owned RGB band buffer takes it 60 → 83
+KB (still below Exact's). Full numbers: [`docs/measurements/f9-static.md`](../measurements/f9-static.md);
+the live tracked figure: [`docs/metrics/`](../metrics/index.html).
 
-**The honest read:** integer-everything + gutter-off took vyr from **7.4× to 1.30×
-LVGL** — most of the "match LVGL" answer, in safe integer Rust, no rewrite. The own
-fixed-function painter (direct-RGB output) is the last small step to *beat* it. If
-that lands under 10 M, vyr is a deterministic, byte-exact, cross-ISA, self-validating
+**The honest read:** integer-everything + gutter-off + direct-RGB took vyr from
+**7.4× LVGL to under 1.0× — it now BEATS LVGL on a scalar M4**, in safe integer Rust
+(`forbid(unsafe_code)`), no rewrite, with the Exact oracle byte-untouched throughout.
+The insns/frame is *indicative* (SYS_CLOCK is wall-influenced on a plugin-less qemu —
+±1 cs ≈ ±0.5 M/frame); the hard proof is the **byte-identical frame hash** + the host
+ns/px bench, both green. vyr is a deterministic, byte-exact, cross-ISA, self-validating
 **reference oracle** that, in its Draft tier, **out-runs LVGL on a scalar M4** — one
 engine that is both the gold-standard reference and a competitive embedded runtime.
 

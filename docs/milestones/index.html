@@ -258,6 +258,30 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<div class="stage">
+  <div class="imgs"><img src="f16-draft-curves.png" alt="F16 Draft (pixels byte-identical to v3)"></div>
+  <div>
+    <h2>F16 Draft v4 — direct-RGB888: BEATS LVGL on the M4 <span class="meta">2026-06-12 · a2f0340</span></h2>
+    <p>The last lever the profile pointed at: <code>finish_into_rgb888</code> (the
+    premul-pixmap → RGB888 demul+convert pass) was <strong>~59% of Draft</strong>.
+    v4 makes Draft's output surface <strong>BE the RGB888 buffer</strong>, composited
+    in draw order — the integer fast path (~97% of pixels) writes RGB888 straight out
+    (opaque = triple store, translucent = the same <code>d255</code> source-over in
+    straight-RGB space), and the rare rounded-clip fallback renders into a premul
+    scratch pixmap then composites in <em>order</em> (z-order preserved). <code>finish</code>
+    is now a stride-aware row copy — no demul, no convert.</p>
+    <p>It is a <strong>pure optimization — the Draft pixels are byte-identical</strong>:
+    the M4 frame hash is unchanged and every Draft + chart golden passes with no
+    re-bless (same image as v3, left). Result: ~11.5M → <strong>~8.5–9.5M
+    instructions/frame — under the 10M LVGL anchor</strong>. From <strong>7.4× LVGL to
+    under 1.0×: vyr's Draft tier now out-runs LVGL on a scalar M4</strong>, in safe
+    integer Rust (<code>forbid(unsafe_code)</code>), Exact byte-untouched throughout.
+    Trade: Draft heap 60 → 83&nbsp;KB (the owned RGB band buffer). insns/frame is
+    indicative (wall-influenced SYS_CLOCK); the hard proof is the byte-identical hash +
+    the host ns/px bench. Tracked live in <code>docs/metrics/</code>.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
 <p class="lede">The places where vyr does something non-obvious, with the
 evidence images.</p>
