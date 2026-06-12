@@ -27,6 +27,54 @@ static server). On GitHub this README renders inline below.
 | **F6++ — tunable object-fit** | 2026-06-12 | `4e06c48` | ![F6c](f6c-object-fit.png) | The same checker in all five CSS object-fit modes side by side: **contain** (default = the spec, letterboxed), **cover** (fills + crops), **none** (natural centred), **fill** (stretched, aspect broken), **scale-down**. An IR `fit` attr selects the mode; an unknown value is an honest `BadIr`. Default-contain leaves every existing image golden byte-identical; cover's overflow and fill's non-uniform scale both hold band-equivalence. |
 | **F16 — Draft tier matches LVGL's shape** | 2026-06-12 | `39cb441` | ![F16](f16-draft-curves.png) | Exact (left, float-AA — the oracle) vs Draft (right, integer no-AA — the runtime). Extending Draft's integer fast path from opaque rects to the **curves** (disc/ring/line, `isqrt`-spanned, no `libm`) dropped the emulated-M4 cost from 60M → **20M instructions/frame** (87.4% fast-path coverage) — **recovering 85% of the Exact→LVGL gap, from 5.7× LVGL down to 2.0×**. The deliberate trade is visible: hard edges instead of AA (7.6% of pixels differ from Exact). Draft is deterministic + band-exact + cross-ISA-identical, with its own golden; Exact stays byte-untouched. The own fixed-function painter is now a *small step, not a rewrite*. |
 
+## Performance journey — Draft vs LVGL on a scalar Cortex-M4
+
+The embedded thesis under test: **can one engine be both the byte-exact reference
+oracle AND a competitive embedded runtime?** Measured step by step, in emulated-M4
+instruction count (`qemu-system-arm netduinoplus2`, deterministic `-icount`, the
+same 480×270 banded frame), against an LVGL bare-metal build of the same scene on
+the same machine (~10 M insns/frame). Same ISA, same scene, same tool — the only
+honest comparison. Every Draft step is deterministic, band-exact (proven
+full-vs-banded byte-identical, even + uneven splits), cross-ISA-identical, in pure
+safe Rust (`forbid(unsafe_code)`, `no_std`); **Exact (the oracle) stays
+byte-untouched throughout** — Draft is a separate tier with its own goldens.
+
+| step | lever | M4 insns/frame | vs LVGL | gap recovered |
+|---|---|--:|--:|--:|
+| **Exact** (the oracle) | float-AA tiny-skia, full quality | **75 M** | 7.4× | — (baseline) |
+| **F16 Draft v1** | integer no-AA opaque RECT fills | 60 M | ~6× | 23–27 % |
+| **F16 Draft v2** | + integer disc / ring / line | 20 M | 2.0× | 85 % |
+| **F16 Draft v3** | + integer rounded-fill / gradient, **gutter dropped** | **13.0 M** | **1.30×** | **95 %** |
+| *(next, not yet done)* | direct-RGB888 output, no premul-convert pass | *target <10 M* | *BEAT* | — |
+
+**The profile that drove v3 — "work exactly where we're slow."** An x86 callgrind
+per-function breakdown of the Draft render overturned the guess: the remaining cost
+was **not** AA or curves, it was **`finish_into_rgb888` (58.9 %)** — the
+premultiplied-RGBA → RGB888 convert pass — plus the pixmap **memset (13.1 %)** =
+~72 % gutter/convert overhead. The 8 px overscan **gutter** (needed only to protect
+AA fringes near the band clip edge) was pure waste for integer, no-AA Draft. So v3
+made Draft **fully integer** (rounded fills + gradient through the `isqrt`-spanned
+path — nothing touches tiny-skia), which made the gutter unnecessary, then
+**dropped the gutter for Draft** (Exact keeps it). Result: 20 M → **13.0 M**, heap
+94 → 60 KB, fidelity Δ vs Exact *down* to 5.3 % (hard rounded corners match Exact's
+shape better than the square-corner v1 did).
+
+**Why vyr isn't under LVGL yet (1.30×), and the last lever.** The remaining gap is
+purely structural: vyr renders into tiny-skia's **premultiplied pixmap** and then
+**converts** to RGB888; LVGL writes its native pixel format **straight from the
+blend**. The identified next step (not yet done — the literal endpoint of the F16
+direction): give Draft **its own render target, the RGB888 output buffer directly**
+— opaque fills become bare RGB writes, translucent/glyph/image become RGB-space
+integer source-over, no pixmap, no convert pass. That deletes the ~72 % the profile
+found. Full numbers + the per-function profile: [`docs/measurements/f9-static.md`](../measurements/f9-static.md).
+
+**The honest read:** integer-everything + gutter-off took vyr from **7.4× to 1.30×
+LVGL** — most of the "match LVGL" answer, in safe integer Rust, no rewrite. The own
+fixed-function painter (direct-RGB output) is the last small step to *beat* it. If
+that lands under 10 M, vyr is a deterministic, byte-exact, cross-ISA, self-validating
+**reference oracle** that, in its Draft tier, **out-runs LVGL on a scalar M4** — one
+engine that is both the gold-standard reference and a competitive embedded runtime.
+
 ## Engineering gallery — the special bits
 
 The places where vyr does something non-obvious, with the evidence.

@@ -206,6 +206,31 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<div class="card">
+  <div class="body">
+    <h2>F16 Draft v3 — fully integer + gutter-less: 1.30× LVGL <span class="meta">2026-06-12 · 64ec376/faaf4e6</span></h2>
+    <p><strong>"Work exactly where we're slow."</strong> An x86 per-function profile
+    of Draft overturned the guess — the remaining cost was <em>not</em> the curves
+    or AA, it was <code>finish_into_rgb888</code> (<strong>58.9%</strong>, the
+    premultiplied-RGBA → RGB888 convert pass) plus the pixmap <code>memset</code>
+    (<strong>13.1%</strong>) = ~72% gutter/convert overhead. So v3 made Draft
+    <strong>fully integer</strong> (rounded fills + gradient through the
+    <code>isqrt</code>-spanned path, nothing left touching tiny-skia), which made
+    the 8&nbsp;px AA-fringe <strong>gutter unnecessary</strong>, then dropped it for
+    Draft (Exact keeps it). Result: 20M → <strong>13.0M instructions/frame</strong>,
+    100% fast-path coverage, heap 94 → 60&nbsp;KB, fidelity Δ vs Exact <em>down</em>
+    to 5.3%. That is <strong>1.30× LVGL — 95% of the whole Exact→LVGL gap
+    recovered</strong>, from 7.4× to 1.30×, in safe integer Rust with no rewrite.</p>
+    <p>The last 1.30× is purely structural: vyr renders into a premultiplied pixmap
+    then converts, while LVGL writes its native format straight from the blend. The
+    identified next step (not yet done) is to give Draft <strong>the RGB888 output
+    buffer as its own render target</strong> — no pixmap, no convert pass — which
+    deletes the ~72% the profile found and should put Draft <em>under</em> LVGL. Full
+    numbers + the per-function profile in
+    <code>docs/measurements/f9-static.md</code>.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
 <p class="lede">The places where vyr does something non-obvious, with the
 evidence images.</p>
