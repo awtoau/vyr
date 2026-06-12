@@ -84,6 +84,22 @@
 //! stack upgrade): a long label inside a frame trims at the frame edge
 //! instead of painting past it. Rich text stays out of scope.
 //!
+//! ## Box model — fills, opacity, borders (F8 Gate 1, awto-vyvanse#321)
+//!
+//! A box fill is painted at the IR's declared opacity, NOT forced opaque: the
+//! walk threads [`Node::fill_alpha`] (the `opacity` / 8-hex `#RRGGBBAA` /
+//! `style_bg_opa` attr) into the fill alpha, source-over the
+//! backdrop/card painted first. (This fixes the FADE-FLAT bug — vyr used to
+//! hardcode `0xFF` and drop every partial alpha.)
+//!
+//! Borders are drawn **INSIDE** the box so the OUTER edge lands ON the
+//! declared bound (the TGX/Qt model — see [`draw_inside_border`]): an
+//! axis-aligned (radius-0) border is four crisp filled edge-rects (no AA
+//! wash, no straddle); a rounded border is the inset AA stroke. (This fixes
+//! the border-STRADDLE — a 2px border used to grow the box to 102×102 — and
+//! the thin-border AA-WASH — a 1px border used to blend fill+border instead
+//! of reading its declared colour.)
+//!
 //! ## Chrome policy
 //!
 //! Plain boxes are IR-authoritative (paint nothing the IR didn't say — I5).
@@ -300,20 +316,74 @@ impl Node {
             .or_else(|| hexs.strip_prefix("0x"))
             .or_else(|| hexs.strip_prefix("0X"))
             .unwrap_or(hexs);
-        if hexs.len() != 6 {
-            return None;
-        }
-        let v = u32::from_str_radix(hexs, 16).ok()?;
+        // 6-hex `#RRGGBB` or 8-hex `#RRGGBBAA` (alpha read separately by
+        // color_alpha — here we take only the RGB triple).
+        let rgb = match hexs.len() {
+            6 => u32::from_str_radix(hexs, 16).ok()?,
+            8 => u32::from_str_radix(hexs, 16).ok()? >> 8,
+            _ => return None,
+        };
         Some(Rgb {
-            r: (v >> 16) as u8,
-            g: (v >> 8) as u8,
-            b: v as u8,
+            r: (rgb >> 16) as u8,
+            g: (rgb >> 8) as u8,
+            b: rgb as u8,
         })
     }
 
     /// Corner radius: semantic `radius` or already-lowered `style_radius`.
     pub(crate) fn radius(&self) -> u32 {
         self.u32_attr("radius", self.u32_attr("style_radius", 0))
+    }
+
+    /// The FILL alpha (0..=255) for a node's `background`. The IR expresses
+    /// partial opacity three ways, in precedence order (the farm's `_prepare`
+    /// + the conformance fade fixtures, awto-vyvanse#321):
+    ///
+    /// 1. **`opacity`** — the backend-neutral semantic attr, `0..=255` (int)
+    ///    OR `0.0..=1.0` (float); the fade fixtures use `"opacity": "128"`.
+    /// 2. **8-hex `background`** (`#RRGGBBAA` / `0xRRGGBBAA`) — alpha in the
+    ///    colour literal itself.
+    /// 3. **`style_bg_opa`** — the LVGL-lowered fill opacity, `0..=255`.
+    ///
+    /// Default 255 (opaque) when none is present. NOTE: `style_bg_opa` is only
+    /// consulted as the LVGL fill-opacity when it is the *only* alpha signal;
+    /// the card fixtures carry `style_bg_opa: 255` (opaque) and the fade
+    /// fixtures carry both `style_bg_opa: 255` AND `opacity: 128` — `opacity`
+    /// wins, so the fade is honoured (the card stays opaque).
+    fn fill_alpha(&self) -> u8 {
+        if let Some(s) = self.str_attr("opacity") {
+            let t = s.trim();
+            if let Ok(f) = t.parse::<f32>() {
+                // 0..=1 floats scale to 0..=255; values >1 are already 0..=255.
+                let v = if f <= 1.0 {
+                    (f * 255.0 + 0.5) as i32
+                } else {
+                    f as i32
+                };
+                return v.clamp(0, 255) as u8;
+            }
+        }
+        if let Some(a) = self.color_alpha("background") {
+            return a;
+        }
+        self.u32_attr("style_bg_opa", 255).min(255) as u8
+    }
+
+    /// The alpha byte of an 8-hex `#RRGGBBAA` / `0xRRGGBBAA` colour attr, if
+    /// the literal carries one (6-hex literals have no embedded alpha).
+    fn color_alpha(&self, key: &str) -> Option<u8> {
+        let s = self.str_attr(key)?;
+        let h = s.trim();
+        let h = h
+            .strip_prefix('#')
+            .or_else(|| h.strip_prefix("0x"))
+            .or_else(|| h.strip_prefix("0X"))
+            .unwrap_or(h);
+        if h.len() != 8 {
+            return None;
+        }
+        let v = u32::from_str_radix(h, 16).ok()?;
+        Some(v as u8)
     }
 
     /// value/min/max → fraction of range, clamped 0..=1.
@@ -473,13 +543,13 @@ fn walk(
             // `background`; nothing painted if the IR gave no fill (I5).
             if let Some(fill) = n.color("background") {
                 let rad = h.min(w) / 2;
-                c.fill_rrect(r, rad, fill, 0xFF);
+                c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
             paint_border(n, r, h.min(w) / 2, c);
         }
         "vy_line" => {
             if let Some(fill) = n.color("background") {
-                c.fill_rrect(r, 0, fill, 0xFF);
+                c.fill_rrect(r, 0, fill, n.fill_alpha());
             }
         }
         "vy_slider" | "vy_progress" | "vy_bar" => {
@@ -543,7 +613,7 @@ fn walk(
             };
             let rad = n.radius();
             if let Some(fill) = n.color("background") {
-                c.fill_rrect(r, rad, fill, 0xFF);
+                c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
             c.blit_image(r.x, r.y, assets.get(&src)?, r);
             paint_border(n, r, rad, c);
@@ -666,7 +736,9 @@ fn draw_mark_widget(
         } else {
             // Unchecked: outline only — the same accent border weight as the
             // radio ring, interior transparent (the #313 outline primitive).
-            c.stroke_rrect(mark, rad, (d / 10).max(2), MARK_ACCENT, 0xFF);
+            // Drawn INSIDE the mark box (the box-border model — paint_border)
+            // so the outline's outer edge sits on the mark bound.
+            draw_inside_border(mark, rad, (d / 10).max(2), MARK_ACCENT, c);
         }
     }
     // Label: `text` to the right of the mark, vertically centred via the
@@ -748,7 +820,12 @@ fn draw_text(
 fn paint_box(n: &Node, r: Rect, c: &mut TinySkiaCanvas) {
     let rad = n.radius();
     if let Some(fill) = n.color("background") {
-        c.fill_rrect(r, rad, fill, 0xFF);
+        // The IR's fill opacity (F8 fade fix, awto-vyvanse#321): the walk used
+        // to hardcode 0xFF and drop every partial alpha — the FADE-FLAT bug.
+        // The painter's source-over already blends correctly (F6 proves the
+        // d255/premultiplied path); we just feed it the alpha the IR declared,
+        // composited over the backdrop/card painted first.
+        c.fill_rrect(r, rad, fill, n.fill_alpha());
     }
     paint_border(n, r, rad, c);
 }
@@ -763,6 +840,80 @@ fn paint_border(n: &Node, r: Rect, rad: u32, c: &mut TinySkiaCanvas) {
         .or_else(|| n.color("style_border_color"))
         .or_else(|| n.color("background"));
     if let Some(col) = col {
-        c.stroke_rrect(r, rad, bw, col, 0xFF);
+        draw_inside_border(r, rad, bw, col, c);
+    }
+}
+
+/// The TGX/Qt INSIDE-border model (F8 Gate 1 fix, awto-vyvanse#321). vyr used
+/// to `stroke_rrect` CENTRED on the contour, which (a) made an axis-aligned
+/// box border STRADDLE the edge — a 2px border grew the outer extent to
+/// 102×102 vs the canonical 100×100 — and (b) AA-washed a 1px border to a
+/// blend of fill+border instead of the declared colour. Both are fixed by
+/// drawing the border INSIDE so the outer edge lands ON the declared bound:
+///
+/// - **Axis-aligned (radius 0):** four FILLED edge-rects (radius-0 fills),
+///   inset so the outer edge sits on the bound and the interior starts at
+///   `x+bw` — crisp, full-colour, no AA wash. This is the box border every
+///   backend draws.
+/// - **Rounded (radius > 0):** the inset AA stroke — stroke the contour inset
+///   by `bw/2` (radius `rad − bw/2`) so the painter's centred stroke lands its
+///   OUTER edge on the declared bound, fixing the straddle for rounded boxes
+///   too while keeping the arc's anti-aliasing.
+fn draw_inside_border(r: Rect, rad: u32, bw: u32, col: Rgb, c: &mut TinySkiaCanvas) {
+    if rad == 0 {
+        // Degenerate: a border thicker than half the box is the whole box.
+        if bw * 2 >= r.w || bw * 2 >= r.h {
+            c.fill_rrect(r, 0, col, 0xFF);
+            return;
+        }
+        let (x, y, w, h) = (r.x, r.y, r.w, r.h);
+        let bwi = bw as i32;
+        // top, bottom (full width); left, right (between the top/bottom bands).
+        c.fill_rrect(Rect { x, y, w, h: bw }, 0, col, 0xFF);
+        c.fill_rrect(
+            Rect {
+                x,
+                y: y + h as i32 - bwi,
+                w,
+                h: bw,
+            },
+            0,
+            col,
+            0xFF,
+        );
+        c.fill_rrect(
+            Rect {
+                x,
+                y: y + bwi,
+                w: bw,
+                h: h - 2 * bw,
+            },
+            0,
+            col,
+            0xFF,
+        );
+        c.fill_rrect(
+            Rect {
+                x: x + w as i32 - bwi,
+                y: y + bwi,
+                w: bw,
+                h: h - 2 * bw,
+            },
+            0,
+            col,
+            0xFF,
+        );
+    } else {
+        // Inset the stroked contour by bw/2 so its outer edge sits on the
+        // bound; outer radius stays `rad` ⇒ stroked radius `rad − bw/2`.
+        let half = (bw / 2) as i32;
+        let inset = Rect {
+            x: r.x + half,
+            y: r.y + half,
+            w: r.w.saturating_sub(bw),
+            h: r.h.saturating_sub(bw),
+        };
+        let inner_rad = rad.saturating_sub(bw / 2);
+        c.stroke_rrect(inset, inner_rad, bw, col, 0xFF);
     }
 }

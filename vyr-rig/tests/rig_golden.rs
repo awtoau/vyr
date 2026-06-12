@@ -11,7 +11,7 @@ use vyr_rig::{FNV_OFFSET, fnv1a_chain, run_anim};
 
 /// Committed golden: the chained run hash of 60 frames @ 120×68.
 /// Re-bless via `./dev.py test --bless` (prints the new value).
-const SHORT_CHAIN_FNV1A: u64 = 0x40CE_0F26_CEB8_61C2;
+const SHORT_CHAIN_FNV1A: u64 = 0xCC56_1580_50BD_2EC9;
 
 #[test]
 fn short_chain_golden() {

@@ -1,0 +1,35 @@
+{
+  "schema_version": "0.6-vyvanse",
+  "w": 120,
+  "h": 120,
+  "root": {
+    "name": "view",
+    "children": [
+      {
+        "name": "vy_frame",
+        "attrs": {
+          "name": "card",
+          "x": "0",
+          "y": "0",
+          "width": "120",
+          "height": "120",
+          "style_bg_color": "0xFFFFFF",
+          "style_bg_opa": "255",
+          "style_border_width": "1",
+          "style_border_color": "0xCCCCCC"
+        }
+      },
+      {
+        "name": "vy_image",
+        "attrs": {
+          "x": "10",
+          "y": "10",
+          "width": "100",
+          "height": "100",
+          "src": "/mnt/2tb/git/vyvanse-readonly/designer-binaries/4.26.1__ad34e468b551/TouchGFX/4.26.1/designer/Themes/light_theme/images/widgets/togglebutton/large_rounded_on_active.png",
+          "name": "vy_image"
+        }
+      }
+    ]
+  }
+}

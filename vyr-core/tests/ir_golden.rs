@@ -8,7 +8,7 @@ const W: u32 = 120;
 const H: u32 = 120;
 
 /// Committed golden (FNV-1a 64). Re-bless: ./dev.py test --bless.
-const IR_GOLDEN_FNV1A: u64 = 0xFDBF_1D98_1927_E3BB;
+const IR_GOLDEN_FNV1A: u64 = 0xCB99_B7B7_0E51_F891;
 
 /// One of each F3-lite widget (shared with vyr-bench — see demo::DEMO_IR).
 const FIXTURE: &str = vyr_core::demo::DEMO_IR;

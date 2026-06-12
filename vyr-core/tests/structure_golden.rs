@@ -7,7 +7,7 @@ const W: u32 = 120;
 const H: u32 = 120;
 
 /// Committed golden (FNV-1a 64). Re-bless: ./dev.py test --bless.
-const STRUCTURE_GOLDEN_FNV1A: u64 = 0xBDEA_6FD5_08EA_90C8;
+const STRUCTURE_GOLDEN_FNV1A: u64 = 0x279C_3DB3_3989_F1B8;
 
 /// Radio selected/unselected + checkbox checked/unchecked, labels on, rows
 /// crossing the 30/60/90 band seams.

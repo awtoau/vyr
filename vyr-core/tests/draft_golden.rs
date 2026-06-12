@@ -27,7 +27,7 @@ const H: u32 = DEMO_H;
 
 /// Committed Draft golden (FNV-1a 64 of the RGB888 buffer). Re-bless via
 /// `./dev.py test --bless`. DISTINCT from the Exact golden by construction.
-const DRAFT_GOLDEN_FNV1A: u64 = 0x7CF3_680A_061B_021A;
+const DRAFT_GOLDEN_FNV1A: u64 = 0x4701_15C1_764D_30EE;
 
 fn fnv1a(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

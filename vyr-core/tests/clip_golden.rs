@@ -13,7 +13,7 @@ const W: u32 = 120;
 const H: u32 = 120;
 
 /// Committed golden (FNV-1a 64). Re-bless: ./dev.py test --bless.
-const CLIP_GOLDEN_FNV1A: u64 = 0x4E06_03B5_BD51_F336;
+const CLIP_GOLDEN_FNV1A: u64 = 0xFFCA_7A9D_D565_3D4A;
 
 fn fnv1a(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
