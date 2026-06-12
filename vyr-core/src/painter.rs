@@ -39,12 +39,19 @@
 //! position and existing dst — identical in every band by induction.
 //! Enforcement: `tests/text_golden.rs::text_band_equivalence`.
 //!
-//! **Image blits (F6) follow the same pattern**: [`Canvas::blit_image`] is an
-//! integer-positioned source-over of caller-decoded straight-alpha RGBA onto
-//! the band — the glyph formula with the image's own per-pixel colour+alpha
-//! in place of (paint colour × coverage). No scaling, no filtering, no float
-//! — band-exact by the same induction. Enforcement:
-//! `tests/image_golden.rs::image_band_equivalence`.
+//! **Image blits (F6) follow the same pattern**: [`Canvas::blit_image`] is a
+//! source-over of caller-decoded straight-alpha RGBA onto the band — the glyph
+//! formula with the image's own per-pixel colour+alpha in place of (paint
+//! colour × coverage). The image is SCALED into the FIT-TO-CELL `dst` rect
+//! (preserve aspect, centred — `ir::fit_to_cell`); resampling is
+//! NEAREST-NEIGHBOUR via FIXED-POINT INTEGER source mapping
+//! (`sx = (wx - dst.x)·W / dst.w`, integer division, clamped) — a pure integer
+//! function of WORLD position, so the mapped src pixel for a given world pixel
+//! is identical in every band. Band-exact by the SAME induction as the 1:1
+//! blit; no float in the per-pixel map. (Qt's SMOOTH/bilinear is a future F16
+//! quality knob — the dst GEOMETRY matches Qt now, resampling QUALITY is a
+//! separate axis.) Enforcement: `tests/image_golden.rs::image_band_equivalence`
+//! (+ the scaled-image seam-crossing band-equivalence test).
 //!
 //! ## The clip stack (F3) — same discipline, applied to masks
 //!
@@ -938,22 +945,45 @@ impl Canvas for TinySkiaCanvas {
         })
     }
 
-    fn blit_image(&mut self, x: i32, y: i32, image: &RgbaImage, clip: Rect) {
+    fn blit_image(&mut self, dst: Rect, image: &RgbaImage, clip: Rect) {
         // Manual deterministic source-over of straight-alpha RGBA into the
         // premultiplied band pixmap — the glyph-blit pattern (module docs):
         // integer world → gutter-local translation, per-pixel integer blend
-        // with d255 rounding, bit-identical in every band. The world-space
-        // walk covers image ∩ clip only (the v1 natural-size policy: the
-        // clip is the widget rect — see ir module docs).
+        // with d255 rounding, bit-identical in every band. The image is SCALED
+        // into the FIT-TO-CELL `dst` rect (preserve aspect, centred — computed
+        // by ir::fit_to_cell); `dst ⊆ clip` (the widget rect), so the letterbox
+        // bands of `clip` outside `dst` paint nothing. The world-space walk
+        // covers dst ∩ clip only.
+        //
+        // ## Band-exact SCALED resampling (the F6 invariant under scaling)
+        //
+        // NEAREST-NEIGHBOUR with FIXED-POINT integer source mapping: for a DEST
+        // pixel at world column `wx`, the source column is
+        //     sx = ((wx - dst.x) * W) / dst.w   (integer division)
+        // and likewise sy. This is a PURE INTEGER FUNCTION of world position
+        // and the (band-invariant) dst geometry — NO float in the per-pixel
+        // map — so every band computes the SAME src pixel for the same world
+        // pixel. Band equivalence then holds by the SAME induction as the 1:1
+        // blit (each world pixel's output depends only on world position, the
+        // mapped src RGBA, and existing dst). `wx - dst.x ∈ [0, dst.w-1]` ⇒
+        // sx ∈ [0, (dst.w-1)·W/dst.w] ⊆ [0, W-1]; the clamp is belt-and-braces.
+        // Qt uses SMOOTH (bilinear) — a future F16 quality knob; the GEOMETRY
+        // (dst position/size) matches Qt now, resampling QUALITY is a separate
+        // axis (the image_fit probe checks geometry).
         //
         // Clip-stack handling (module docs): rect-only stacks tighten the
         // exact integer walk bounds; rounded stacks fold the A8 clip mask
         // into the source alpha with d255 rounding.
         let (iw, ih) = (image.w() as i32, image.h() as i32);
-        let mut x0 = x.max(clip.x);
-        let mut y0 = y.max(clip.y);
-        let mut x1 = (x + iw).min(clip.x + clip.w as i32);
-        let mut y1 = (y + ih).min(clip.y + clip.h as i32);
+        let dw = dst.w as i32;
+        let dh = dst.h as i32;
+        if dw <= 0 || dh <= 0 {
+            return; // empty fit (degenerate box) — nothing to blit
+        }
+        let mut x0 = dst.x.max(clip.x);
+        let mut y0 = dst.y.max(clip.y);
+        let mut x1 = (dst.x + dw).min(clip.x + clip.w as i32);
+        let mut y1 = (dst.y + dh).min(clip.y + clip.h as i32);
         if x1 <= x0 || y1 <= y0 {
             return;
         }
@@ -991,14 +1021,18 @@ impl Canvas for TinySkiaCanvas {
             if ly < 0 || ly >= pm_h {
                 continue;
             }
+            // Nearest-neighbour source row — pure integer function of world wy.
+            let sy = (((wy - dst.y) * ih) / dh).clamp(0, ih - 1);
             for wx in x0..x1 {
                 let lx = wx + oxi;
                 if lx < 0 || lx >= pm_w {
                     continue;
                 }
-                // Source pixel: image-local row/col (in-bounds by the
-                // intersection above; buffer length by RgbaImage::new).
-                let si = (((wy - y) * iw + (wx - x)) * 4) as usize;
+                // Nearest-neighbour source col — pure integer function of wx.
+                let sx = (((wx - dst.x) * iw) / dw).clamp(0, iw - 1);
+                // Source pixel (in-bounds by the clamp above; buffer length by
+                // RgbaImage::new).
+                let si = ((sy * iw + sx) * 4) as usize;
                 let mut a = rgba[si + 3] as u32;
                 if let Some(cd) = cmdata {
                     // Clip mask × source alpha, d255 rounding — identity

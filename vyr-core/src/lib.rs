@@ -238,14 +238,18 @@ pub trait Canvas {
     /// landed". Computed from glyph GEOMETRY, never from band clipping, so
     /// the same run reports the same box in every band.
     fn glyph_run(&mut self, glyphs: &[PlacedGlyph<'_>], color: Rgb, alpha: u8) -> Option<Rect>;
-    /// Blit a caller-registered RGBA image (F6) at its NATURAL size, top-left
-    /// anchored at INTEGER world `(x, y)`, limited to the world-space `clip`
-    /// rect (the widget rect — no scaling in v1; see `ir` module docs).
-    /// Blending must be deterministic integer source-over (straight-alpha
-    /// source onto the band — same discipline as glyph blits, so band
-    /// equivalence holds by the same induction), counted into
+    /// Blit a caller-registered RGBA image (F6) SCALED into the world-space
+    /// `dst` rect (the FIT-TO-CELL destination the IR computed — preserve
+    /// aspect, centred; see `ir::fit_to_cell` + `ir` module docs), limited to
+    /// the world-space `clip` rect (the widget rect; `dst ⊆ clip`, so the
+    /// letterbox bands paint nothing). Resampling is NEAREST-NEIGHBOUR via
+    /// fixed-point integer source mapping that depends ONLY on world position,
+    /// so band equivalence holds by the same induction as the 1:1 glyph blit
+    /// (Qt's SMOOTH/bilinear is a future F16 quality knob — geometry matches Qt
+    /// now, resampling quality is a separate axis). Blending is deterministic
+    /// integer source-over (straight-alpha source onto the band), counted into
     /// [`OpClass::Blit`].
-    fn blit_image(&mut self, x: i32, y: i32, image: &RgbaImage, clip: Rect);
+    fn blit_image(&mut self, dst: Rect, image: &RgbaImage, clip: Rect);
     fn stats(&self) -> RenderStats;
 }
 

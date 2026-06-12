@@ -282,7 +282,9 @@ fn bench_blit_image() -> f64 {
         h: 64,
     };
     let mut c = band_canvas();
-    measure(|| c.blit_image(20, 20, &img, clip))
+    // dst == clip: a 64×64 asset fit into a 64×64 box is 1:1 (the bench keeps
+    // measuring the per-pixel blit; fit-to-cell adds only an integer src map).
+    measure(|| c.blit_image(clip, &img, clip))
 }
 
 /// The committed F6 checker asset, registered under the fixture's src name

@@ -27,19 +27,27 @@
 //! (`BadIr` — an image widget with nothing to show is junk IR, not an empty
 //! box) are hard errors — never a tofu box or a blank.
 //!
-//! ## Image model (F6, scaling policy v1)
+//! ## Image model (F6 — FIT-TO-CELL, Qt is the locked reference)
 //!
-//! `vy_image` / `vy_imagebutton` blit the asset at its NATURAL size,
-//! top-left anchored at the widget's x/y, CLIPPED to the widget rect — no
-//! resampling. This matches LVGL's `lv_image` default (no zoom:
-//! `LV_IMAGE_ALIGN_DEFAULT` paints the source 1:1 from the top-left) and
-//! TGX's `Image` (setBitmap draws natural-size). The Qt backend DIVERGES: it
-//! scales into the widget rect (KeepAspectRatio, smooth) — recorded on issue
-//! #6; nearest-neighbour scale-to-fit is a candidate follow-up once the
-//! pixel spec picks one truth. Paint order: declared `background` fill, the
-//! blit, then declared border ON TOP (a border frames the image — the LVGL
-//! reading). The `src` string is looked up in [`Assets`] VERBATIM — name
-//! resolution/decode is the shell's job (see `crate::assets` module docs).
+//! `vy_image` / `vy_imagebutton` draw the asset W×H FIT-TO-CELL into the widget
+//! box (bx,by,bw,bh): `scale = min(bw/W, bh/H)` (fit INSIDE preserving aspect —
+//! never crop, never stretch), dest size `(round(W·scale), round(H·scale))`,
+//! CENTRED in the box (`ir::fit_to_cell`). The empty bands are LETTERBOXED —
+//! nothing is painted there, so the box background/card shows through (a
+//! letterbox band is filled ONLY if the IR declared a `background`, which is
+//! painted first as today). This matches **Qt** exactly — KeepAspectRatio +
+//! centre — which the #325 measurement found was the ONLY backend already
+//! doing fit-to-cell correctly, so Qt is now the LOCKED REFERENCE (the #325
+//! premise was inverted). **LVGL renders native-size** (no `lv_image_set_scale`
+//! → the diverger, filed #331 — theirs, not ours); TGX/Flutter paint
+//! placeholders. Resampling is NEAREST-NEIGHBOUR (fixed-point integer source
+//! map — band-exact, painter docs); Qt's SMOOTH/bilinear is a deliberate
+//! future **F16 quality knob** — the fit GEOMETRY (scaled rect position/size)
+//! matches Qt now, the resampling QUALITY (nearest vs bilinear) is a separate
+//! axis. Paint order: declared `background` fill UNDER, the fitted blit, then
+//! declared border ON TOP. The `src` string is looked up in [`Assets`]
+//! VERBATIM — name resolution/decode is the shell's job (see `crate::assets`
+//! module docs).
 //!
 //! ## Clip model (F3 clip stack)
 //!
@@ -442,6 +450,42 @@ const MARK_ACCENT: Rgb = Rgb {
 /// measured change, not a guess.
 const CULL_MARGIN: i32 = 32;
 
+/// F6 fit-to-cell geometry: the destination rect for an asset `aw`×`ah` drawn
+/// into widget box `b`, scaled to fit INSIDE preserving aspect and CENTRED
+/// (Qt's KeepAspectRatio + centre — the #325/#6 locked reference). `dst ⊆ b`
+/// always (fit-INSIDE), so the empty bands are LETTERBOXED (nothing painted
+/// there — the box background/card shows through). The caller paints any
+/// declared background UNDER and the border OVER, unchanged.
+///
+/// `scale = min(b.w/aw, b.h/ah)`; the dest size rounds that scaled asset, then
+/// centres in the box. The scale uses deterministic [`libm`] float for the
+/// min-and-round, but the RESULT is an integer rect — band-invariant input to
+/// the painter (the per-pixel resampling math is pure integer, painter docs).
+/// dest is clamped to `[0, b.w]`/`[0, b.h]` so rounding can never push it past
+/// the box (keeps `dst ⊆ b`). Degenerate boxes (0 area) yield an empty dst (the
+/// blit no-ops on it).
+fn fit_to_cell(b: Rect, aw: u32, ah: u32) -> Rect {
+    if b.w == 0 || b.h == 0 || aw == 0 || ah == 0 {
+        return Rect {
+            x: b.x,
+            y: b.y,
+            w: 0,
+            h: 0,
+        };
+    }
+    let scale = libm::fminf(b.w as f32 / aw as f32, b.h as f32 / ah as f32);
+    // round-then-clamp: a fitted side never exceeds its box side (scale ≤
+    // box/asset ⇒ asset·scale ≤ box; round can add ≤0.5, the min() caps it).
+    let dw = (libm::roundf(aw as f32 * scale) as u32).min(b.w);
+    let dh = (libm::roundf(ah as f32 * scale) as u32).min(b.h);
+    Rect {
+        x: b.x + (b.w - dw) as i32 / 2,
+        y: b.y + (b.h - dh) as i32 / 2,
+        w: dw,
+        h: dh,
+    }
+}
+
 /// Does `r`, inflated by [`CULL_MARGIN`], intersect the band `area`?
 fn visible_in(r: Rect, area: Rect) -> bool {
     let x0 = r.x - CULL_MARGIN;
@@ -601,10 +645,13 @@ fn walk(
             );
         }
         "vy_image" | "vy_imagebutton" => {
-            // F6: the asset at NATURAL size, top-left anchored, clipped to
-            // the widget rect (scaling policy — module docs). Declared fill
-            // under, declared border over. No `src` = junk IR (I6): an image
-            // widget with nothing to show is a BadIr, not an empty box.
+            // F6: the asset FIT-TO-CELL — scaled to fit INSIDE the widget rect
+            // preserving aspect (scale = min(bw/W, bh/H)), CENTRED, the empty
+            // bands LETTERBOXED (painted nothing — the box background/card
+            // shows through). Qt is the locked reference (#325/#6: KeepAspect +
+            // centre; LVGL native-size is theirs, #331). Declared fill under,
+            // declared border over. No `src` = junk IR (I6): an image widget
+            // with nothing to show is a BadIr, not an empty box.
             let Some(src) = n.str_attr("src") else {
                 return Err(RenderError::BadIr(format!(
                     "{name} {:?} has no src attr (an image with nothing to show is junk IR)",
@@ -615,7 +662,10 @@ fn walk(
             if let Some(fill) = n.color("background") {
                 c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
-            c.blit_image(r.x, r.y, assets.get(&src)?, r);
+            let img = assets.get(&src)?;
+            let dst = fit_to_cell(r, img.w(), img.h());
+            // dst ⊆ r (fit-INSIDE), so the widget rect is still the clip.
+            c.blit_image(dst, img, r);
             paint_border(n, r, rad, c);
         }
         "vy_video" | "vy_widget" | "vy_canvas" => {

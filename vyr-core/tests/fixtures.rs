@@ -90,7 +90,9 @@ fn checker_image() -> RgbaImage {
 /// `src` the fixture tree references (verbatim) — so an image fixture blits a
 /// real asset in the standalone CI run. The probes never read the image's own
 /// pixels (only the card chrome), so any asset suffices for Gate 1; the F6
-/// natural-size geometry is proven separately in `image_golden.rs`.
+/// fit-to-cell geometry (scale-to-fit, aspect-preserved, centred, letterboxed —
+/// Qt is the locked reference, #325/#6) is proven separately in
+/// `image_golden.rs`.
 fn assets_for(root: &serde_json::Value) -> Assets {
     let mut assets = Assets::new();
     let mut srcs: Vec<String> = Vec::new();
