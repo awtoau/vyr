@@ -27,27 +27,41 @@
 //! (`BadIr` — an image widget with nothing to show is junk IR, not an empty
 //! box) are hard errors — never a tofu box or a blank.
 //!
-//! ## Image model (F6 — FIT-TO-CELL, Qt is the locked reference)
+//! ## Image model (F6 — tunable CSS object-fit, default contain = the spec)
 //!
-//! `vy_image` / `vy_imagebutton` draw the asset W×H FIT-TO-CELL into the widget
-//! box (bx,by,bw,bh): `scale = min(bw/W, bh/H)` (fit INSIDE preserving aspect —
-//! never crop, never stretch), dest size `(round(W·scale), round(H·scale))`,
-//! CENTRED in the box (`ir::fit_to_cell`). The empty bands are LETTERBOXED —
-//! nothing is painted there, so the box background/card shows through (a
-//! letterbox band is filled ONLY if the IR declared a `background`, which is
-//! painted first as today). This matches **Qt** exactly — KeepAspectRatio +
-//! centre — which the #325 measurement found was the ONLY backend already
-//! doing fit-to-cell correctly, so Qt is now the LOCKED REFERENCE (the #325
-//! premise was inverted). **LVGL renders native-size** (no `lv_image_set_scale`
-//! → the diverger, filed #331 — theirs, not ours); TGX/Flutter paint
-//! placeholders. Resampling is NEAREST-NEIGHBOUR (fixed-point integer source
-//! map — band-exact, painter docs); Qt's SMOOTH/bilinear is a deliberate
-//! future **F16 quality knob** — the fit GEOMETRY (scaled rect position/size)
-//! matches Qt now, the resampling QUALITY (nearest vs bilinear) is a separate
-//! axis. Paint order: declared `background` fill UNDER, the fitted blit, then
-//! declared border ON TOP. The `src` string is looked up in [`Assets`]
-//! VERBATIM — name resolution/decode is the shell's job (see `crate::assets`
-//! module docs).
+//! `vy_image` / `vy_imagebutton` map the asset W×H into the widget box
+//! (bx,by,bw,bh) by a CSS-style **object-fit** mode — the IR `fit` attr (alias
+//! `object_fit`), DEFAULT **contain** when absent. Five modes ([`Fit`] /
+//! [`object_fit`]), each a different dest-rect + clip; the painter's nearest
+//! blit takes any dst + clip and stays band-exact, so the modes need NO painter
+//! change:
+//!
+//! - **contain** (DEFAULT): `scale = min(bw/W, bh/H)`, centred, letterboxed
+//!   (`dst ⊆ box`). THE canonical spec behaviour — matches **Qt** exactly
+//!   (KeepAspectRatio + centre), the #325/#6 LOCKED REFERENCE (the only backend
+//!   already fit-to-cell correctly; the #325 premise was inverted). Default
+//!   when the IR names no `fit` — so existing IR renders byte-identical.
+//! - **cover**: `scale = max(bw/W, bh/H)`, centred, CROPPED — `dst ⊇ box`, the
+//!   clip (= box) trims the overflow. Fills the box, preserves aspect.
+//! - **none**: natural size (scale 1), centred — crop if bigger than the box,
+//!   letterbox if smaller. The OLD pre-fit behaviour, now explicit.
+//! - **fill**: stretch to the box exactly, IGNORING aspect (non-uniform x/y
+//!   scale — the painter's source map already supports it).
+//! - **scale-down**: `min(contain, none)` — natural size unless it exceeds the
+//!   box, then contain (`scale = min(1.0, contain_scale)`).
+//!
+//! An UNKNOWN `fit` value is a hard `BadIr` naming the accepted set (I6 — never
+//! silently default). Centre rule (all but fill): `dst_x = bx + (bw − dst_w)/2`
+//! — MAY be negative for cover / oversized-none, which is correct (the clip
+//! trims). **LVGL renders native-size** (no `lv_image_set_scale` → the
+//! contain-diverger, filed #331 — theirs); TGX/Flutter paint placeholders.
+//! Resampling is NEAREST-NEIGHBOUR (fixed-point integer source map — band-exact,
+//! painter docs); Qt's SMOOTH/bilinear is a future **F16 quality knob**. The
+//! fit MODE (which rect) and the resampling QUALITY (which filter) are
+//! ORTHOGONAL axes — F16 composes with any fit mode. Paint order: declared
+//! `background` fill UNDER, the fitted blit, then declared border ON TOP. The
+//! `src` string is looked up in [`Assets`] VERBATIM — name resolution/decode is
+//! the shell's job (see `crate::assets` module docs).
 //!
 //! ## Clip model (F3 clip stack)
 //!
@@ -394,6 +408,17 @@ impl Node {
         Some(v as u8)
     }
 
+    /// The CSS object-fit mode for a `vy_image` / `vy_imagebutton` — the IR
+    /// `fit` attr (or its `object_fit` alias), [`Fit::Contain`] when absent
+    /// (the canonical spec default). An UNKNOWN value is a hard `BadIr` (I6 —
+    /// never silently default to contain on junk).
+    fn fit(&self) -> Result<Fit, RenderError> {
+        match self.str_attr("fit").or_else(|| self.str_attr("object_fit")) {
+            Some(s) => Fit::parse(&s),
+            None => Ok(Fit::Contain),
+        }
+    }
+
     /// value/min/max → fraction of range, clamped 0..=1.
     fn fraction(&self) -> f32 {
         let min = self.f32_attr("min", 0.0);
@@ -450,40 +475,116 @@ const MARK_ACCENT: Rgb = Rgb {
 /// measured change, not a guess.
 const CULL_MARGIN: i32 = 32;
 
-/// F6 fit-to-cell geometry: the destination rect for an asset `aw`×`ah` drawn
-/// into widget box `b`, scaled to fit INSIDE preserving aspect and CENTRED
-/// (Qt's KeepAspectRatio + centre — the #325/#6 locked reference). `dst ⊆ b`
-/// always (fit-INSIDE), so the empty bands are LETTERBOXED (nothing painted
-/// there — the box background/card shows through). The caller paints any
-/// declared background UNDER and the border OVER, unchanged.
-///
-/// `scale = min(b.w/aw, b.h/ah)`; the dest size rounds that scaled asset, then
-/// centres in the box. The scale uses deterministic [`libm`] float for the
-/// min-and-round, but the RESULT is an integer rect — band-invariant input to
-/// the painter (the per-pixel resampling math is pure integer, painter docs).
-/// dest is clamped to `[0, b.w]`/`[0, b.h]` so rounding can never push it past
-/// the box (keeps `dst ⊆ b`). Degenerate boxes (0 area) yield an empty dst (the
-/// blit no-ops on it).
-fn fit_to_cell(b: Rect, aw: u32, ah: u32) -> Rect {
-    if b.w == 0 || b.h == 0 || aw == 0 || ah == 0 {
-        return Rect {
-            x: b.x,
-            y: b.y,
-            w: 0,
-            h: 0,
-        };
+/// CSS-style `object-fit` mode for `vy_image` / `vy_imagebutton` (the IR `fit`
+/// attr, default [`Fit::Contain`]). Selects how the asset W×H maps into the
+/// widget box; the painter's nearest blit already handles an arbitrary dst rect
+/// plus clip (over-frame dst LARGER than the box, non-uniform x/y scale), so
+/// every mode stays band-exact with no painter change — only the dest-rect/clip
+/// geometry differs per mode (see [`object_fit`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    /// Scale to fit INSIDE preserving aspect, centred, letterboxed (`dst ⊆
+    /// box`). THE canonical spec behaviour (Qt KeepAspectRatio, #325/#6) — the
+    /// DEFAULT when the IR names no `fit`.
+    Contain,
+    /// Scale to COVER the box preserving aspect, centred, cropped (`dst ⊇ box`,
+    /// overflow trimmed by the clip).
+    Cover,
+    /// Natural size (scale 1), centred — crop if bigger than the box,
+    /// letterbox if smaller. The OLD pre-fit behaviour, now explicit.
+    None,
+    /// Stretch to the box exactly, IGNORING aspect (non-uniform x/y scale).
+    Fill,
+    /// `min(contain, none)` — natural size UNLESS it exceeds the box, then
+    /// contain. `scale = min(1.0, contain_scale)`.
+    ScaleDown,
+}
+
+impl Fit {
+    /// Parse the IR `fit` / `object_fit` attr (CSS spellings, case-insensitive).
+    /// An UNKNOWN value is a hard [`RenderError::BadIr`] naming the accepted set
+    /// (I6 — never silently default). The DEFAULT (attr absent) is resolved by
+    /// the caller, not here.
+    fn parse(s: &str) -> Result<Fit, RenderError> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "contain" => Ok(Fit::Contain),
+            "cover" => Ok(Fit::Cover),
+            "none" => Ok(Fit::None),
+            "fill" => Ok(Fit::Fill),
+            "scale-down" | "scale_down" | "scaledown" => Ok(Fit::ScaleDown),
+            other => Err(RenderError::BadIr(format!(
+                "unknown fit {other:?} (accepted: contain, cover, none, fill, scale-down)"
+            ))),
+        }
     }
-    let scale = libm::fminf(b.w as f32 / aw as f32, b.h as f32 / ah as f32);
-    // round-then-clamp: a fitted side never exceeds its box side (scale ≤
-    // box/asset ⇒ asset·scale ≤ box; round can add ≤0.5, the min() caps it).
-    let dw = (libm::roundf(aw as f32 * scale) as u32).min(b.w);
-    let dh = (libm::roundf(ah as f32 * scale) as u32).min(b.h);
-    Rect {
-        x: b.x + (b.w - dw) as i32 / 2,
-        y: b.y + (b.h - dh) as i32 / 2,
+}
+
+/// The geometry of a [`Fit`] mode: the destination rect AND clip for an asset
+/// `aw`×`ah` drawn into widget box `b`. The painter's nearest blit takes
+/// `(dst, image, clip)` and resamples band-exact for ANY dst + clip (the
+/// per-pixel source map `sx = (wx-dst.x)·W/dst.w` is a pure integer function of
+/// world position, painter docs), so every mode below is band-exact with NO
+/// painter change — only the dst/clip differs:
+///
+/// - **Contain** (default): `scale = min(b.w/aw, b.h/ah)`, centred, `dst ⊆ b`,
+///   clip = `b` (letterboxed — the bands paint nothing).
+/// - **Cover**: `scale = max(b.w/aw, b.h/ah)`, centred, `dst ⊇ b` (LARGER than
+///   the box), clip = `b` (the blit trims the overflow).
+/// - **None**: natural size (scale 1), centred, clip = `b` (crop if bigger,
+///   letterbox if smaller).
+/// - **Fill**: `dst = b` exactly (non-uniform x/y scale — aspect ignored),
+///   clip = `b`.
+/// - **ScaleDown**: `scale = min(1.0, contain_scale)`, centred, clip = `b`.
+///
+/// Centre rule for all (except Fill): `dst.x = b.x + (b.w − dst.w)/2`, which
+/// MAY be negative for cover / oversized-none — that is correct, the clip
+/// (always `b`) trims it. The scale uses deterministic [`libm`] float for the
+/// min/max-and-round, but the RESULT is an integer rect — band-invariant input
+/// to the painter. Degenerate boxes / assets (0 area) yield an empty dst (the
+/// blit no-ops). Resampling QUALITY (nearest vs the future F16 bilinear) is
+/// ORTHOGONAL to the fit mode — fit picks the rect, quality picks the filter.
+fn object_fit(fit: Fit, b: Rect, aw: u32, ah: u32) -> (Rect, Rect) {
+    let empty = Rect {
+        x: b.x,
+        y: b.y,
+        w: 0,
+        h: 0,
+    };
+    if b.w == 0 || b.h == 0 || aw == 0 || ah == 0 {
+        return (empty, b);
+    }
+    // Fill: stretch to the box exactly — no aspect, no centring.
+    if fit == Fit::Fill {
+        return (b, b);
+    }
+    let (bw, bh) = (b.w as f32, b.h as f32);
+    let (afw, afh) = (aw as f32, ah as f32);
+    let scale = match fit {
+        Fit::Contain => libm::fminf(bw / afw, bh / afh),
+        Fit::Cover => libm::fmaxf(bw / afw, bh / afh),
+        Fit::None => 1.0,
+        Fit::ScaleDown => libm::fminf(1.0, libm::fminf(bw / afw, bh / afh)),
+        Fit::Fill => unreachable!("Fill handled above"),
+    };
+    let dw = libm::roundf(afw * scale).max(0.0) as u32;
+    let dh = libm::roundf(afh * scale).max(0.0) as u32;
+    // Contain / ScaleDown can never exceed the box (scale ≤ box/asset); cap the
+    // rounding overshoot so they stay dst ⊆ b. Cover / None may exceed it — the
+    // clip (always b) trims, so DON'T cap those.
+    let (dw, dh) = match fit {
+        Fit::Contain | Fit::ScaleDown => (dw.min(b.w), dh.min(b.h)),
+        _ => (dw, dh),
+    };
+    let dst = Rect {
+        // Centre — (b.w − dw) is signed, so an oversized dst centres NEGATIVE
+        // (cover / oversized-none); the clip = b trims it. Integer /2 truncates
+        // toward zero, deterministic + band-invariant.
+        x: b.x + (b.w as i32 - dw as i32) / 2,
+        y: b.y + (b.h as i32 - dh as i32) / 2,
         w: dw,
         h: dh,
-    }
+    };
+    (dst, b)
 }
 
 /// Does `r`, inflated by [`CULL_MARGIN`], intersect the band `area`?
@@ -552,6 +653,9 @@ fn walk(
                         n.str_attr("name").unwrap_or_default()
                     )));
                 };
+                // Validation parity: an unknown `fit` must error in EVERY band,
+                // visible or culled (banded and full-frame agree on errors).
+                n.fit()?;
                 assets.get(&src)?;
             }
             "vy_video" | "vy_widget" | "vy_canvas" => {
@@ -659,13 +763,15 @@ fn walk(
                 )));
             };
             let rad = n.radius();
+            let fit = n.fit()?;
             if let Some(fill) = n.color("background") {
                 c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
             let img = assets.get(&src)?;
-            let dst = fit_to_cell(r, img.w(), img.h());
-            // dst ⊆ r (fit-INSIDE), so the widget rect is still the clip.
-            c.blit_image(dst, img, r);
+            let (dst, clip) = object_fit(fit, r, img.w(), img.h());
+            // clip = r always; dst ⊆ r for contain/scale-down (letterbox), dst
+            // may exceed r for cover / oversized-none (the blit trims to clip).
+            c.blit_image(dst, img, clip);
             paint_border(n, r, rad, c);
         }
         "vy_video" | "vy_widget" | "vy_canvas" => {

@@ -254,6 +254,214 @@ fn scaled_image_band_equivalence() {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// F6 object-fit: the SAME 24×24 asset in all FIVE CSS fit modes, side by side.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Five 20-px-wide × 100-px-tall boxes (deliberately non-square so the modes
+/// VISIBLY differ — a square asset into a tall box letterboxes for contain,
+/// crops for cover, stretches for fill) over a coloured backdrop. One box per
+/// mode, left→right: contain / cover / none / fill / scale-down.
+///
+/// Asset 24×24, box 20×100:
+/// - **contain**: scale=min(20/24,100/24)=0.833 → 20×20, centred → letterbox
+///   top+bottom (the backdrop shows in the bands).
+/// - **cover**: scale=max(20/24,100/24)=4.167 → 100×100, centred NEGATIVE in x
+///   (x = bx+(20-100)/2 = bx-40) → fills the 20×100 box, sides CROPPED.
+/// - **none**: natural 24×24, centred → 2px overflow each side in x (cropped),
+///   big letterbox top+bottom in y.
+/// - **fill**: 20×100 exactly — stretched, aspect broken.
+/// - **scale-down**: min(1.0, contain 0.833)=0.833 → SAME as contain here (the
+///   asset DOWN-scales to fit; it never exceeds the box, so scale-down picks
+///   contain, not natural).
+const FIT_IR: &str = r##"{"w":120,"h":120,
+  "root":{"name":"view","attrs":{"background":"#3A6EA5"},"children":[
+    {"name":"vy_image","attrs":{"x":"2","y":"10","width":"20","height":"100",
+      "src":"checker-24.png","fit":"contain"}},
+    {"name":"vy_image","attrs":{"x":"26","y":"10","width":"20","height":"100",
+      "src":"checker-24.png","fit":"cover"}},
+    {"name":"vy_image","attrs":{"x":"50","y":"10","width":"20","height":"100",
+      "src":"checker-24.png","fit":"none"}},
+    {"name":"vy_image","attrs":{"x":"74","y":"10","width":"20","height":"100",
+      "src":"checker-24.png","fit":"fill"}},
+    {"name":"vy_image","attrs":{"x":"98","y":"10","width":"20","height":"100",
+      "src":"checker-24.png","fit":"scale-down"}}
+  ]}}"##;
+
+/// Committed object-fit golden (FNV-1a 64). Re-bless: ./dev.py test --bless.
+/// 2026-06-12: blessed for tunable CSS object-fit (#6/#325) — read the dumped
+/// PNG: contain box letterboxes (backdrop top/bottom), cover FILLS+crops, none
+/// is natural-centred (small, big top/bottom letterbox), fill is STRETCHED tall,
+/// scale-down == contain (asset down-scales). All five visibly differ.
+const FIT_GOLDEN_FNV1A: u64 = 0x2D1E_4628_AFAD_861B;
+
+fn fit_full() -> Vec<u8> {
+    let assets = checker_assets();
+    let mut buf = vec![0u8; (W * H * 3) as usize];
+    render_with(
+        FIT_IR,
+        &mut Fonts::new(),
+        &assets,
+        Rect {
+            x: 0,
+            y: 0,
+            w: W,
+            h: H,
+        },
+        &mut buf,
+        (W * 3) as usize,
+    )
+    .expect("object-fit fixture renders");
+    buf
+}
+
+#[test]
+fn object_fit_golden_hash() {
+    let buf = fit_full();
+    dump_png("object-fit-f6.png", &buf);
+    let h = fnv1a(&buf);
+    if std::env::var_os("VYR_BLESS").is_some() {
+        eprintln!("BLESS: FIT_GOLDEN_FNV1A = {h:#018X}");
+        return;
+    }
+    assert_eq!(h, FIT_GOLDEN_FNV1A, "object-fit golden drifted");
+}
+
+/// Each mode geometry, spot-checked against the dest-rect formula. The 24×24
+/// checker has an opaque TL red quadrant (230,40,40), opaque quadrant fills,
+/// a 1px near-black border (20,20,20) and a TRANSPARENT centre hole — so the
+/// dst CENTRE shows the backdrop through; the assertions sample OPAQUE
+/// quadrant points, not the hole. Backdrop is #3A6EA5 (58,110,165). Every box
+/// is 20×100, y-band [10,110).
+#[test]
+fn object_fit_modes_differ() {
+    let buf = fit_full();
+    const BG: [u8; 3] = [58, 110, 165];
+    // CONTAIN box (2,10,20,100): scale=min(20/24,100/24)=0.833 → dst 20×20
+    // centred y∈[50,70), x∈[2,22). LETTERBOX top/bottom.
+    assert_eq!(px(&buf, 12, 20), BG, "contain letterboxes top");
+    assert_eq!(px(&buf, 12, 100), BG, "contain letterboxes bottom");
+    // Opaque TL red quadrant: wx=6 → sx=(4·24)/20=4, wy=54 → sy=(4·24)/20=4.
+    assert_eq!(
+        px(&buf, 6, 54),
+        [230, 40, 40],
+        "contain paints the TL quadrant"
+    );
+    // COVER box (26,10,20,100): scale=max(20/24,100/24)=4.167 → dst 100×100 at
+    // x=-14,y=10 → FILLS the full box height [10,110), clipped to x∈[26,46).
+    // NO letterbox top/bottom (the proof cover differs from contain).
+    assert_ne!(px(&buf, 36, 14), BG, "cover fills the top (no letterbox)");
+    assert_ne!(
+        px(&buf, 36, 105),
+        BG,
+        "cover fills the bottom (no letterbox)"
+    );
+    // NONE box (50,10,20,100): natural 24×24 centred y∈[48,72), x∈[48,72)
+    // clipped to the box [50,70). Big letterbox top/bottom (24 ≪ 100).
+    assert_eq!(
+        px(&buf, 60, 20),
+        BG,
+        "none letterboxes top (natural is small)"
+    );
+    // 1:1 src map: wx=53 → sx=53-48=5, wy=53 → sy=53-48=5 → TL red quadrant.
+    assert_eq!(
+        px(&buf, 53, 53),
+        [230, 40, 40],
+        "none paints natural-size 1:1"
+    );
+    // FILL box (74,10,20,100): stretched to fill — top AND bottom are image
+    // (the asset's first/last rows stretched), no letterbox anywhere.
+    assert_ne!(px(&buf, 84, 14), BG, "fill stretches to the top");
+    assert_ne!(px(&buf, 84, 105), BG, "fill stretches to the bottom");
+    // SCALE-DOWN box (98,10,20,100): asset 24>20 DOWN-scales → == contain (dst
+    // 20×20 centred y∈[50,70)). Letterboxed like contain (NOT natural-centred
+    // like none) — proves scale-down picked min(1.0, contain)=contain.
+    assert_eq!(px(&buf, 108, 20), BG, "scale-down letterboxes (== contain)");
+    assert_eq!(
+        px(&buf, 102, 54),
+        [230, 40, 40],
+        "scale-down paints the TL quadrant (fitted like contain)"
+    );
+}
+
+/// Band-equivalence for the OVERFLOW (cover) + NON-UNIFORM (fill) cases — the
+/// dst rects that exceed the box / break aspect, the worst case for a sloppy
+/// resampler. Stitched at EVEN (20, 25, 40) AND UNEVEN (7, 13) band heights,
+/// byte-identical to the full frame: the nearest source map is a pure integer
+/// function of WORLD position + the band-invariant dst, so cover's negative
+/// dst.x and fill's distinct x/y scales map every world pixel to the same src
+/// in every band.
+#[test]
+fn object_fit_band_equivalence() {
+    let assets = checker_assets();
+    let stride = (W * 3) as usize;
+    let full = fit_full();
+    for band_h in [20u32, 25u32, 40u32, 7u32, 13u32] {
+        let mut banded = vec![0u8; stride * H as usize];
+        let mut y = 0;
+        while y < H {
+            let h = band_h.min(H - y);
+            let band = &mut banded[y as usize * stride..(y + h) as usize * stride];
+            render_with(
+                FIT_IR,
+                &mut Fonts::new(),
+                &assets,
+                Rect {
+                    x: 0,
+                    y: y as i32,
+                    w: W,
+                    h,
+                },
+                band,
+                stride,
+            )
+            .expect("object-fit band renders");
+            y += h;
+        }
+        if full != banded {
+            let diffs = full.iter().zip(&banded).filter(|(a, b)| a != b).count();
+            dump_png(&format!("object-fit-band-fail-full-{band_h}.png"), &full);
+            dump_png(
+                &format!("object-fit-band-fail-banded-{band_h}.png"),
+                &banded,
+            );
+            panic!("band_h={band_h}: object-fit band stitch differs ({diffs} bytes)");
+        }
+    }
+}
+
+/// An UNKNOWN `fit` value = hard `BadIr` naming the accepted set (I6 — never
+/// silently default to contain on junk IR).
+#[test]
+fn unknown_fit_is_bad_ir() {
+    let ir = r#"{"w":120,"h":120,"root":{"name":"view","children":[
+        {"name":"vy_image","attrs":{"x":"4","y":"4","width":"24","height":"24",
+          "src":"checker-24.png","fit":"bogus"}}]}}"#;
+    let mut buf = vec![0u8; (W * H * 3) as usize];
+    let err = render_with(
+        ir,
+        &mut Fonts::new(),
+        &checker_assets(),
+        Rect {
+            x: 0,
+            y: 0,
+            w: W,
+            h: H,
+        },
+        &mut buf,
+        (W * 3) as usize,
+    )
+    .expect_err("unknown fit must hard-error");
+    match err {
+        RenderError::BadIr(msg) => {
+            assert!(msg.contains("bogus"), "names the bad value: {msg}");
+            assert!(msg.contains("contain"), "names the accepted set: {msg}");
+            assert!(msg.contains("scale-down"), "names the accepted set: {msg}");
+        }
+        other => panic!("expected BadIr, got {other:?}"),
+    }
+}
+
 /// Missing asset = hard error naming the request AND what IS registered
 /// (I6: an unrenderable image errors before pixels, never a blank box).
 #[test]
