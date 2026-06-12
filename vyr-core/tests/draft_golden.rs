@@ -1,7 +1,11 @@
 //! F16 Draft-tier goldens (#16): the integer no-AA fast path is its OWN
 //! separately-gated tier — `Quality::Draft` pixels DIFFER from `Quality::Exact`
 //! (hard edges, no AA), so this file pins Draft's own bytes and never asserts
-//! Draft == Exact. What IS enforced, same discipline as the Exact goldens:
+//! Draft == Exact. As of the v2 set the CURVE primitives (disc/ring/line) also
+//! take the integer fast path (the DEMO_IR slider/toggle knobs, the gauge ring,
+//! the orange rule), so the golden is the hard-edged-curve render and the
+//! coverage assertion expects the curves' pixels in `fastpath_pixels`.
+//! What IS enforced, same discipline as the Exact goldens:
 //!
 //! - `draft_golden_hash`: the DEMO_IR scene rendered at `Quality::Draft` hashes
 //!   to the committed constant — Draft is deterministic (invariant I2 holds
@@ -27,7 +31,7 @@ const H: u32 = DEMO_H;
 
 /// Committed Draft golden (FNV-1a 64 of the RGB888 buffer). Re-bless via
 /// `./dev.py test --bless`. DISTINCT from the Exact golden by construction.
-const DRAFT_GOLDEN_FNV1A: u64 = 0x4701_15C1_764D_30EE;
+const DRAFT_GOLDEN_FNV1A: u64 = 0x795B_51E8_4386_C00F;
 
 fn fnv1a(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -187,6 +191,16 @@ fn draft_fastpath_coverage() {
         "Draft fast-path pixels {} < one screen ({}) — backdrop should be a span fill",
         draft.fastpath_pixels,
         W * H
+    );
+    // v2: the CURVE primitives (disc/ring/line) now take the integer fast path,
+    // so coverage clears 85% of delivered pixels on this curve-heavy fixture
+    // (slider/toggle knobs, gauge ring, the rule). A regression that dropped a
+    // curve back to the Exact path would sink below this.
+    let cov = draft.fastpath_pixels as f64 / draft.pixels_written as f64;
+    assert!(
+        cov >= 0.85,
+        "Draft fast-path coverage {:.1}% < 85% — a curve primitive fell back to Exact",
+        100.0 * cov
     );
     eprintln!(
         "Draft fast-path coverage: {} / {} delivered px ({:.1}%)",

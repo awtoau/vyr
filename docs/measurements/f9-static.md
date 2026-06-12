@@ -300,54 +300,104 @@ the #19 zero-copy font registration.
 The Exact frame above costs **~75 M insns/frame** because the tiny-skia
 float-coverage AA path runs on every fill — the M4 benchmark exposed a ~7.4×
 per-pixel gap vs an LVGL equivalent (~10 M insns/frame). F16's **Draft** tier
-is the first lever against it: an OPAQUE axis-aligned `fill_rrect` (radius 0)
-— the dominant UI op (backgrounds, panels, track/bar fills, the screen
-backdrop) — becomes a direct integer span fill into the pixmap (memset-class,
-no path, no coverage, no tiny-skia). Everything else (rounded corners → drawn
-SQUARE, discs/rings/line/gradient/glyph/image, translucent fills) falls back
-to the Exact path in v1; `RenderStats::fastpath_pixels` records exactly how
-much the fast path carried so the number is honest. Draft is its own
-deterministic, band-exact tier (own goldens, `tests/draft_golden.rs`); it is
-NEVER compared byte-for-byte to Exact.
+is the lever against it. The **v1** set accelerated only the OPAQUE
+axis-aligned `fill_rrect` (radius 0) — the dominant UI fill (backgrounds,
+panels, track/bar fills, the backdrop) — as a direct integer span fill (no
+path, no coverage, no tiny-skia), and recovered ~23–27 % of the gap.
+
+**The v2 set (this update) extends the integer no-AA fast path to the CURVE
+primitives** — `disc`, `ring`, `line` — which were the bulk of the residue on
+the curve-heavy panel fixture (the gauge ring, the slider/toggle knobs, the
+footer rule):
+
+- **disc**: per scanline the span `[cx−dx, cx+dx]` from the exact integer test
+  `dx = isqrt(r²−dy²)` (pure integer; no libm `sqrt`, no rounding-mode
+  dependence). Hard edge.
+- **ring**: outer filled-circle spans minus inner-circle spans per scanline —
+  two spans where the row crosses the hole, one where it doesn't.
+- **line**: the SAME butt-capped quad the Exact path builds, rasterized as
+  integer per-row spans from the quad's edges in 1/256-px fixed point (a pure
+  integer function of the world row; pixel-centre coverage rule).
+
+Each handles the OPAQUE write (a plain premultiplied store) AND the TRANSLUCENT
+write (the d255 integer source-over the glyph/image blits use), so a
+translucent disc/line is still a fast-path pixel. All four stay
+`forbid(unsafe_code)` + `no_std` + safe slice indexing — the safe-Rust integer
+cost is what the numbers below price. Still falling back to Exact in v2:
+radius>0 fills (drawn SQUARE), `stroke_rrect`, `fill_linear_gradient`, glyphs,
+images. `RenderStats::fastpath_pixels` records exactly what the fast path
+carried; Draft is its own deterministic, band-exact tier (own goldens,
+`tests/draft_golden.rs`), NEVER compared byte-for-byte to Exact.
 
 **The headline, same vehicle, same 480×270 banded frame, same icount clock**
 (`./dev.py qemu-m4` vs `./dev.py qemu-m4 --draft`):
 
 | tier | insns/frame | insn/px | fast-path coverage | cross-ISA hash |
 |---|---|---|---|---|
-| **Exact** (default, oracle) | **77.5 M** (31 cs) | 598 | 0.0 % | M4 == x86-64, banded == full |
-| **Draft** (integer no-AA) | **57.5 M** (23 cs) | 444 | **80.7 %** | M4 == x86-64, banded == full |
+| **Exact** (default, oracle) | **~75 M** (31 cs) | 598 | 0.0 % | M4 == x86-64, banded == full |
+| Draft **v1** (rects only) | 60 M (24 cs) | 463 | 80.9 % | M4 == x86-64, banded == full |
+| **Draft v2** (+ integer curves) | **20 M** (8 cs) | **154** | **87.4 %** | M4 == x86-64, banded == full |
 | _LVGL anchor_ (the gap target) | _~10 M_ | _~77_ | — | — |
 
-- **Draft = 1.30× the Exact frame** (77.5 M → 57.5 M; 8 cs saved of 31), and
-  against the 75 M-Exact / 10 M-LVGL anchors **Draft recovers ~27 % of the
-  Exact→LVGL gap** (17.5 M of 65 M insns/frame). Draft stays fully
-  deterministic and band-exact cross-ISA (M4 hash == host hash == full-frame
-  hash, a DIFFERENT hash from Exact — the no-AA bytes).
-- **Fast-path coverage 80.7 %** of delivered pixels took the integer span
-  fill on this fixture; the **remaining ~19 % + every curve/glyph/image op**
-  still pay the tiny-skia/Exact cost — that residue IS the remaining gap. The
-  panel fixture is curve- and text-heavy (a full gauge ring, four text runs,
-  an image, sliders/toggle with disc knobs), so it is a conservative read;
-  a fill-dominated UI (dashboards, bar panels) would recover more.
-- **Host micro-numbers** (`./dev.py bench`, x86-64 release): the raw lever —
-  an opaque radius-0 fill — is **24× faster per pixel** (0.81 → 0.03 ns/px:
-  the float rasterizer vs a slice `fill`); the blended DEMO_IR scene (rects
-  fast, curves fall back) is **1.5× faster** end-to-end. Fidelity delta Draft
-  vs Exact on DEMO_IR: **628/14400 px differ (4.4 %), max channel error
-  220/255** — concentrated on the square-corner pixels (radius drawn square)
-  and the hard fill edges that Exact anti-aliases.
+- **Draft v2 = 3.75× the Exact frame** (75 M → 20 M; 8 cs vs 31), and against
+  the 75 M-Exact / 10 M-LVGL anchors **Draft v2 recovers 85 % of the
+  Exact→LVGL gap** (55 M of 65 M insns/frame) — up from the **23–27 %** of v1
+  (rects only). The integer curves were the single biggest lever: on this
+  fixture the gauge ring + two slider knobs + toggle knob + rule were paying
+  the full tiny-skia float-coverage cost, and removing it tripled the recovery.
+  Draft v2 stays fully deterministic and band-exact cross-ISA (M4 hash == host
+  hash == full-frame hash `0x5489ab9b708fa077`, a DIFFERENT hash from Exact —
+  the no-AA bytes).
+- **Fast-path coverage 87.4 %** of delivered pixels (was 80.9 %). The
+  remaining ~13 % is the radius>0 corner fills (drawn square but still routed
+  through the AA fill for the body in Exact-fallback — see below), the
+  gradient, the text runs, and the image blit — those still pay the
+  tiny-skia/Exact cost and ARE the remaining residue. (Note the insns/frame
+  fell far more than coverage rose: coverage counts PIXELS, but the
+  curve ops were disproportionately EXPENSIVE per pixel under tiny-skia —
+  flatten + stroke + float coverage — so moving them off it is worth more
+  insns than their pixel share suggests.)
+- **Host micro-numbers** (`./dev.py bench`, x86-64 release): the raw rect lever
+  is still **24× faster per pixel** (0.83 → 0.03 ns/px). The blended DEMO_IR
+  scene is now **3.65× faster** end-to-end (Exact 5.87 → Draft 1.61 ns/px; was
+  ~1.5× when only rects were fast). Fidelity delta Draft-v2 vs Exact on
+  DEMO_IR: **1088/14400 px differ (7.6 %), max channel error 220/255** — up
+  from v1's 628 px / 4.4 % because the disc/ring/line AA fringe pixels now
+  differ too. That extra ~3.2 % of the frame is the honest cost of the
+  hard-edged curves: every difference is an antialiased edge pixel Exact
+  smooths and Draft does not.
 
-**Honest read — does F16 make vyr embedded-competitive?** Not on its own, and
-not from Draft v1 alone: 57.5 M insns/frame is still ~5.7× the LVGL anchor.
-The full-frame 60 fps story was never the M4 plan (the F3 dirty-rect path is
-~8× cheaper per step, and that composes with Draft); Draft is the
-per-pixel-cost half of the same answer. The biggest remaining lever is the
-non-fast-path ops — once integer no-AA disc/ring/line land (Bresenham-class,
-no float) the fast-path coverage rises toward 100 % and the tiny-skia residue
-drops out, and the future `Fast` knob (gutter-off + half-density flattening)
-removes the per-band overscan. Draft is the proof the lever WORKS and is
-measurable; closing the gap is the rest of #16 plus #21 (the dirty-path knob).
+**Honest read — is integer-curves-in-Draft enough, or is an own fixed-function
+painter the real "match LVGL" answer?** Draft v2 is **2.0× the LVGL anchor**
+(20 M vs ~10 M) — close enough that the gap is no longer dominated by AA. What
+remains, named:
+
+1. **tiny-skia setup + the radius>0 fills and gradient still on the float
+   path** — the v2 curves are off it, but rounded-corner fills and the
+   two-stop gradient still build a polygon and run the float rasterizer.
+2. **The 8 px GUTTER overscan** — every band still rasterizes (w+16)×(h+16);
+   the future `Fast` knob (gutter-off) removes that per-band fixed cost. At
+   480×16 bands the gutter is ~12 % of raster pixels, unpriced by Draft.
+3. **Text** — glyph blits are already a hand-rolled integer source-over (not
+   tiny-skia), but the run still costs; bilevel masks (a Draft glyph knob, #16)
+   would shrink it.
+
+The read: **the integer fast path is most of the answer, and an own
+fixed-function painter is now a SMALL remaining step, not a rewrite.** The last
+2× is (1) routing radius>0 fills + gradient through the same span machinery (a
+fixed-function tier behind the `Canvas` trait — the F9 verdict's existing
+option, now scoped to a handful of ops, NOT a from-scratch rasterizer), plus
+(2) the gutter-off `Fast` knob. Draft v2 proves the lever closes ~85 % of the
+gap with pure safe-Rust integer code and no tiny-skia in the curve hot path;
+the residual is bounded and named. The full-frame 60 fps story was never the
+M4 plan anyway — the F3 dirty-rect path is ~8× cheaper per step and composes
+with Draft (Draft is the per-pixel-cost half; dirty-rects the per-frame half).
+
+> Note on the icount resolution: the SYS_CLOCK tick is 1 cs = 10⁷ insns, so
+> these counts quantize to ±10 M/frame÷4 frames = ±2.5 M/frame. v1 reads 24 cs
+> (60 M) here; the original v1 doc recorded 23 cs (57.5 M / 27 %) — the same
+> ±1 cs wobble the doc flagged. The v2 8 cs (20 M) is a 16-cs drop, far outside
+> the quantization, so the 3× insns reduction is real, not a tick artefact.
 
 Reproduce: `./dev.py qemu-m4 --draft` (Draft) vs `./dev.py qemu-m4` (Exact);
 host deltas `./dev.py bench` (the `F16 Draft …` log lines + the

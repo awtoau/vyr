@@ -178,6 +178,50 @@ fn d255(x: u32) -> u32 {
     (2 * x + 255) / 510
 }
 
+/// Integer floor square root of a non-negative `i64` (binary digit-by-digit,
+/// no float, deterministic). The Draft disc/ring per-scanline half-width is
+/// `isqrt(r²−dy²)` — an EXACT integer (no libm, no rounding mode dependence).
+fn isqrt_i64(n: i64) -> i64 {
+    debug_assert!(n >= 0);
+    if n < 2 {
+        return n;
+    }
+    // Highest power-of-four ≤ n.
+    let mut bit: i64 = 1 << ((63 - n.leading_zeros()) & !1);
+    let mut x: i64 = 0;
+    let mut rem = n;
+    while bit != 0 {
+        if rem >= x + bit {
+            rem -= x + bit;
+            x = (x >> 1) + bit;
+        } else {
+            x >>= 1;
+        }
+        bit >>= 2;
+    }
+    x
+}
+
+/// Round a world scalar to the Draft line's 1/256-px fixed-point grid
+/// (deterministic libm rounding). Exact in f32 for |v| < 2^15 (`v*256` and the
+/// power-of-two divide are exact), so vertices survive integer band offset
+/// bit-exactly — the same argument as [`q`] at a finer grid.
+fn fp(v: f32) -> i64 {
+    libm::roundf(v * 256.0) as i64
+}
+
+/// Floor division for `i64` (rounds toward −∞, unlike `/` which truncates
+/// toward zero) — needed for the line scanline-span column bounds when the
+/// fixed-point crossing is negative.
+fn div_floor(a: i64, b: i64) -> i64 {
+    let q = a / b;
+    if (a % b != 0) && ((a < 0) != (b < 0)) {
+        q - 1
+    } else {
+        q
+    }
+}
+
 /// One clip-stack entry, WORLD coordinates. `radius` is stored as pushed;
 /// clamping (half the short side) happens wherever it is consumed, exactly
 /// like fills.
@@ -206,27 +250,42 @@ enum ClipFate {
 /// ## The Draft quality tier (F16, #16) — integer, no AA, no tiny-skia
 ///
 /// `Quality::Draft` is the budgeted-MCU runtime tier: it recovers the
-/// per-pixel cost the Exact tier spends on float-coverage AA. The ONE hot
-/// op it accelerates is the dominant UI primitive — an **opaque
-/// axis-aligned `fill_rrect` with radius 0** (backgrounds, panels, bar
-/// fills, track fills, the screen backdrop): instead of building a polygon
-/// and handing it to tiny-skia's float rasterizer, [`fill_rrect_draft`]
-/// writes premultiplied pixels DIRECTLY into the pixmap, one integer span
-/// per row — memset-class, no path, no coverage, no float.
+/// per-pixel cost the Exact tier spends on float-coverage AA. The hot ops it
+/// accelerates with DIRECT INTEGER rasterization (no path, no coverage, no
+/// tiny-skia) — the v2 set, now covering the CURVE primitives:
+///
+/// - **opaque axis-aligned `fill_rrect`** ([`fill_rrect_draft`]): one integer
+///   span per row, premultiplied pixels straight into the pixmap (memset-class).
+/// - **`disc`** ([`disc_draft`]): integer filled circle — per scanline the span
+///   `[cx-dx, cx+dx]` from the exact integer test `dx² ≤ r²−dy²`
+///   (`dx = isqrt(r²−dy²)`). Hard edge, no AA.
+/// - **`ring`** ([`ring_draft`]): integer annulus — the outer filled-circle
+///   spans minus the inner-circle spans per scanline (two spans per row where
+///   the hole is open, one where it isn't). Hard edge, no AA.
+/// - **`line`** ([`line_draft`]): the same butt-capped quad the Exact path
+///   builds, rasterized as integer per-row spans from the quad's edges in
+///   1/256-px fixed point (a pure integer function of world row). Hard edge.
+///
+/// All four take an integer per-pixel decision from WORLD coordinates and an
+/// integer source-over for the pixel write ([`Self::draft_span`]) — they handle
+/// the OPAQUE case (a plain premultiplied store) and the TRANSLUCENT case (the
+/// d255 source-over the glyph/image blits use), so a translucent disc/line is
+/// still a fast-path pixel, not an Exact fallback.
 ///
 /// **Band-exact WITHIN the tier by the same induction as the glyph/image
-/// blits** (module docs above): the span fill is a pure function of WORLD
-/// position (the world rect ∩ the band ∩ the rect-only clip), written with
-/// the exact-integer world→gutter-local offset. No AA, no fringe, no
-/// arc — every band that touches a given world pixel writes the same byte.
+/// blits** (module docs above): every Draft op's per-pixel verdict is a pure
+/// function of WORLD position (op geometry ∩ the band ∩ the rect-only clip),
+/// written with the exact-integer world→gutter-local offset. No AA, no fringe —
+/// every band that touches a given world pixel writes the same byte.
 /// Enforcement: `tests/draft_golden.rs` (Draft golden hash + even/uneven
 /// band equivalence). Draft pixels DIFFER from Exact (hard edges, no AA) —
 /// that is the tier's deliberate trade; Draft is NEVER asserted == Exact.
 ///
-/// **Everything else falls back to the Exact path in Draft v1** and is
-/// counted honestly: radius>0 fills draw the rect SQUARE (corners are hard;
-/// the fidelity loss is the measurement's job to report), translucent fills
-/// and disc/ring/line/gradient/glyph/image take the float path unchanged.
+/// **What still falls back to the Exact path in Draft v2**, counted honestly:
+/// radius>0 fills draw the rect SQUARE (corners are hard — the fidelity loss
+/// the measurement reports), `stroke_rrect`, `fill_linear_gradient`, glyphs and
+/// images take the float/Exact path unchanged. A Draft op that meets a rounded
+/// clip overlap (`ClipFate::Masked`) also declines so the clip stays exact.
 /// [`RenderStats::fastpath_pixels`] records exactly how many pixels the fast
 /// path carried so the coverage % is honest (#21).
 pub struct TinySkiaCanvas {
@@ -523,6 +582,281 @@ impl TinySkiaCanvas {
         true
     }
 
+    /// World-space x-range clamp for the Draft curve span writers: the op's
+    /// world bbox ∩ (rect-only) clip bounds ∩ the band, as integer world
+    /// columns. Returns `None` if the op cannot touch this band at all.
+    /// Mirrors [`fill_rrect_draft`]'s clamp so every Draft op clips identically.
+    fn draft_world_clamp(&self, bbox: Rect) -> Option<(i32, i32, i32, i32)> {
+        let mut wx0 = bbox.x;
+        let mut wy0 = bbox.y;
+        let mut wx1 = bbox.x + bbox.w as i32;
+        let mut wy1 = bbox.y + bbox.h as i32;
+        if !self.clips.is_empty() {
+            let cb = self.clip_bounds;
+            wx0 = wx0.max(cb.x);
+            wy0 = wy0.max(cb.y);
+            wx1 = wx1.min(cb.x + cb.w as i32);
+            wy1 = wy1.min(cb.y + cb.h as i32);
+        }
+        wx0 = wx0.max(self.area.x);
+        wy0 = wy0.max(self.area.y);
+        wx1 = wx1.min(self.area.x + self.area.w as i32);
+        wy1 = wy1.min(self.area.y + self.area.h as i32);
+        if wx1 <= wx0 || wy1 <= wy0 {
+            return None;
+        }
+        Some((wx0, wy0, wx1, wy1))
+    }
+
+    /// Write one INTEGER world-space span `[sx0, sx1)` on world row `wy` with
+    /// `color`/`alpha`, clamped to `[cx0, cx1)` (the band ∩ clip x-range), and
+    /// count the written pixels as fast-path. The pixel write is the same
+    /// integer source-over the glyph/image blits use (inline below):
+    /// an OPAQUE pixel is a plain premultiplied store, a TRANSLUCENT one the
+    /// d255 blend over existing dst — band-invariant either way (pure function
+    /// of world position + existing dst). Caller has range-clamped `wy` to the
+    /// band already; `cy_local = wy + oyi`. Returns pixels written.
+    #[allow(clippy::too_many_arguments)]
+    fn draft_span(
+        &mut self,
+        wy: i32,
+        sx0: i32,
+        sx1: i32,
+        cx0: i32,
+        cx1: i32,
+        color: Rgb,
+        alpha: u8,
+    ) -> u64 {
+        let lo = sx0.max(cx0);
+        let hi = sx1.min(cx1);
+        if hi <= lo {
+            return 0;
+        }
+        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let pm_w = self.pixmap.width() as i32;
+        let ly = wy + oyi;
+        let row = (ly * pm_w) as usize;
+        let px = self.pixmap.pixels_mut();
+        if alpha == 0xFF {
+            // Opaque source-over = a plain store of the (premult==straight)
+            // colour, one slice fill — identical to fill_rrect_draft.
+            if let Some(src) = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, 0xFF) {
+                let c0 = (lo + oxi) as usize;
+                let c1 = (hi + oxi) as usize;
+                px[row + c0..row + c1].fill(src);
+            }
+        } else {
+            // Translucent: integer d255 source-over per pixel (the glyph-blit
+            // formula with full coverage; a = paint alpha).
+            let a = alpha as u32;
+            let ia = 255 - a;
+            for wx in lo..hi {
+                let i = row + (wx + oxi) as usize;
+                let dst = px[i];
+                let na = d255(255 * a + dst.alpha() as u32 * ia);
+                let nr = d255(color.r as u32 * a + dst.red() as u32 * ia);
+                let ng = d255(color.g as u32 * a + dst.green() as u32 * ia);
+                let nb = d255(color.b as u32 * a + dst.blue() as u32 * ia);
+                if let Some(p) = PremultipliedColorU8::from_rgba(
+                    nr.min(na) as u8,
+                    ng.min(na) as u8,
+                    nb.min(na) as u8,
+                    na as u8,
+                ) {
+                    px[i] = p;
+                }
+            }
+        }
+        (hi - lo) as u64
+    }
+
+    /// Tally `drawn` fast-path pixels of class `class`.
+    fn draft_tally(&mut self, class: OpClass, drawn: u64) {
+        self.stats.pixels_written += drawn;
+        self.stats.pixels_by_class[class as usize] += drawn;
+        self.stats.fastpath_pixels += drawn;
+    }
+
+    /// Draft fast path for [`Canvas::disc`]: an integer filled circle. Per
+    /// world row the half-width is `dx = isqrt(r² − dy²)` (exact integer), the
+    /// span `[cx−dx, cx+dx+1)`. Returns `true` if it handled the op; `false`
+    /// (rounded clip overlap → `ClipFate::Masked`) routes the caller to Exact.
+    fn disc_draft(&mut self, cx: i32, cy: i32, radius: u32, color: Rgb, alpha: u8) -> bool {
+        let r = radius as i32;
+        let bbox = Rect {
+            x: cx - r,
+            y: cy - r,
+            w: radius * 2,
+            h: radius * 2,
+        };
+        match self.op_clip(bbox) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((cx0, cy0, cx1, cy1)) = self.draft_world_clamp(bbox) else {
+            return true;
+        };
+        let r2 = (r as i64) * (r as i64);
+        let mut drawn = 0u64;
+        for wy in cy0..cy1 {
+            let dy = (wy - cy) as i64;
+            let rem = r2 - dy * dy;
+            if rem < 0 {
+                continue;
+            }
+            let dx = isqrt_i64(rem) as i32;
+            drawn += self.draft_span(wy, cx - dx, cx + dx + 1, cx0, cx1, color, alpha);
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
+        true
+    }
+
+    /// Draft fast path for [`Canvas::ring`]: an integer annulus. Per world row,
+    /// the outer span `[cx−dxo, cx+dxo]` minus the inner span `[cx−dxi, cx+dxi]`
+    /// — two spans where the hole is open on that row, one where it isn't.
+    /// Integer radii from the same centreline+width the Exact path uses (outer
+    /// `r+⌈w/2⌉`, inner `r−⌊w/2⌋` so width is preserved as an integer band).
+    /// Returns `false` (rounded clip overlap) to route the caller to Exact.
+    fn ring_draft(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        radius: u32,
+        width: u32,
+        color: Rgb,
+        alpha: u8,
+    ) -> bool {
+        let ro = radius as i32 + width.div_ceil(2) as i32;
+        let ri = radius as i32 - (width / 2) as i32;
+        let bbox = Rect {
+            x: cx - ro,
+            y: cy - ro,
+            w: (ro as u32) * 2,
+            h: (ro as u32) * 2,
+        };
+        match self.op_clip(bbox) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((cx0, cy0, cx1, cy1)) = self.draft_world_clamp(bbox) else {
+            return true;
+        };
+        let ro2 = (ro as i64) * (ro as i64);
+        let ri2 = (ri.max(0) as i64) * (ri.max(0) as i64);
+        let has_hole = ri > 0;
+        let mut drawn = 0u64;
+        for wy in cy0..cy1 {
+            let dy = (wy - cy) as i64;
+            let remo = ro2 - dy * dy;
+            if remo < 0 {
+                continue;
+            }
+            let dxo = isqrt_i64(remo) as i32;
+            // Inner span exists only where the row crosses the hole.
+            let remi = ri2 - dy * dy;
+            if has_hole && remi >= 0 {
+                let dxi = isqrt_i64(remi) as i32;
+                // Left band [cx−dxo, cx−dxi) and right band (cx+dxi, cx+dxo].
+                drawn += self.draft_span(wy, cx - dxo, cx - dxi, cx0, cx1, color, alpha);
+                drawn += self.draft_span(wy, cx + dxi + 1, cx + dxo + 1, cx0, cx1, color, alpha);
+            } else {
+                drawn += self.draft_span(wy, cx - dxo, cx + dxo + 1, cx0, cx1, color, alpha);
+            }
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
+        true
+    }
+
+    /// Draft fast path for [`Canvas::line`]: the SAME butt-capped quad the
+    /// Exact path builds (perpendicular half-width offset of both endpoints),
+    /// rasterized as integer per-row spans. The quad's left and right x at a
+    /// given world row come from its edges in 1/256-px FIXED POINT — a pure
+    /// integer function of the world row (band-invariant). Pixel-centre rule:
+    /// a pixel is in the span iff its centre x lies in the polygon span at its
+    /// row centre, matching a no-AA scanline fill. Returns `false` (rounded
+    /// clip overlap) to route the caller to Exact; `true` otherwise (incl. the
+    /// honest zero-length no-op).
+    #[allow(clippy::too_many_arguments)]
+    fn line_draft(
+        &mut self,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        width: u32,
+        color: Rgb,
+        alpha: u8,
+    ) -> bool {
+        let (fx0, fy0, fx1, fy1) = (x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+        let (dx, dy) = (fx1 - fx0, fy1 - fy0);
+        let len = libm::sqrtf(dx * dx + dy * dy);
+        if len <= 0.0 {
+            return true; // zero-length: honest no-op (no direction to stroke)
+        }
+        let pad = width.div_ceil(2) as i32;
+        let bbox = Rect {
+            x: x0.min(x1) - pad,
+            y: y0.min(y1) - pad,
+            w: (x0.max(x1) - x0.min(x1)) as u32 + width,
+            h: (y0.max(y1) - y0.min(y1)) as u32 + width,
+        };
+        match self.op_clip(bbox) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((cx0, cy0, cx1, cy1)) = self.draft_world_clamp(bbox) else {
+            return true;
+        };
+        // The quad corners (world space), same construction as the Exact line.
+        let w2 = width as f32 / 2.0;
+        let (px, py) = (-dy / len * w2, dx / len * w2);
+        // 1/256-px fixed-point vertices — exact-integer per-band positioning of
+        // the same world geometry (q() quantizes to 1/64; 1/256 here is finer
+        // and still exact for our coordinate range).
+        let v: [(i64, i64); 4] = [
+            (fp(fx0 + px), fp(fy0 + py)),
+            (fp(fx1 + px), fp(fy1 + py)),
+            (fp(fx1 - px), fp(fy1 - py)),
+            (fp(fx0 - px), fp(fy0 - py)),
+        ];
+        let mut drawn = 0u64;
+        for wy in cy0..cy1 {
+            // Sample the polygon at the row's pixel-centre y, in fixed point.
+            let yc = (wy as i64) * 256 + 128;
+            // Gather edge crossings of the scanline y = yc.
+            let mut xmin = i64::MAX;
+            let mut xmax = i64::MIN;
+            let mut hits = 0;
+            for e in 0..4 {
+                let (ax, ay) = v[e];
+                let (bx, by) = v[(e + 1) % 4];
+                if (ay <= yc && by > yc) || (by <= yc && ay > yc) {
+                    // Crossing x in fixed point: ax + (yc-ay)*(bx-ax)/(by-ay).
+                    let t_num = (yc - ay) * (bx - ax);
+                    let xc = ax + t_num / (by - ay);
+                    xmin = xmin.min(xc);
+                    xmax = xmax.max(xc);
+                    hits += 1;
+                }
+            }
+            if hits < 2 {
+                continue;
+            }
+            // Pixel-centre rule: column wx is inside iff its centre
+            // (wx*256+128) lies in [xmin, xmax]. Solve for integer wx range.
+            // wx*256+128 >= xmin  ⇒ wx >= ceil((xmin-128)/256)
+            // wx*256+128 <= xmax  ⇒ wx <= floor((xmax-128)/256)
+            let sx0 = div_floor(xmin - 128 + 255, 256); // ceil
+            let sx1 = div_floor(xmax - 128, 256) + 1; // exclusive upper
+            drawn += self.draft_span(wy, sx0 as i32, sx1 as i32, cx0, cx1, color, alpha);
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
+        true
+    }
+
     fn fill(&mut self, contours: &[&[(f32, f32)]], color: Rgb, alpha: u8, bbox: Rect) {
         let fate = self.op_clip_fill(bbox);
         if fate == ClipFate::Skip {
@@ -689,6 +1023,12 @@ impl Canvas for TinySkiaCanvas {
     }
 
     fn disc(&mut self, cx: i32, cy: i32, radius: u32, color: Rgb, alpha: u8) {
+        // F16 Draft fast path: integer filled circle, no AA (struct docs). It
+        // declines (→ false) only when a rounded clip overlaps, keeping the
+        // clip exact; otherwise the curve takes the integer span fill.
+        if self.quality == Quality::Draft && self.disc_draft(cx, cy, radius, color, alpha) {
+            return;
+        }
         let d = radius * 2;
         let bbox = Rect {
             x: cx - radius as i32,
@@ -702,6 +1042,10 @@ impl Canvas for TinySkiaCanvas {
     }
 
     fn ring(&mut self, cx: i32, cy: i32, radius: u32, width: u32, color: Rgb, alpha: u8) {
+        // F16 Draft fast path: integer annulus, no AA (struct docs).
+        if self.quality == Quality::Draft && self.ring_draft(cx, cy, radius, width, color, alpha) {
+            return;
+        }
         // Annulus: stroke centred on `radius`, as outer+inner contours.
         let pad = radius + width.div_ceil(2);
         let d = pad * 2;
@@ -726,6 +1070,11 @@ impl Canvas for TinySkiaCanvas {
     }
 
     fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: u32, color: Rgb, alpha: u8) {
+        // F16 Draft fast path: the same quad rasterized as integer per-row
+        // spans, no AA (struct docs).
+        if self.quality == Quality::Draft && self.line_draft(x0, y0, x1, y1, width, color, alpha) {
+            return;
+        }
         // Butt-capped stroke as a quad: offset both endpoints by the
         // perpendicular half-width. Zero-length lines draw nothing (honest
         // no-op: there is no direction to stroke).

@@ -468,9 +468,10 @@ fn bench_ir_scene() -> f64 {
 // --- F16 Draft-tier benches (#16) ------------------------------------------
 // The Exact vs Draft per-pixel comparison: same fixture, same band, two
 // quality tiers. The DEMO_IR scene is text/image-free (empty registries are
-// honest), and its opaque rects exercise the integer fast path (~81% of
-// delivered pixels) while the discs/rings/line fall back to Exact — so the
-// scene number is the realistic blended speedup, not a best-case rect.
+// honest); as of the v2 set the opaque rects AND the curve primitives
+// (disc/ring/line) take the integer fast path (~92% of delivered pixels on
+// this fixture) — only radius>0 fills (drawn square) and the gradient still
+// fall back to Exact — so the scene number is the realistic blended speedup.
 
 fn render_demo_quality(quality: Quality) -> f64 {
     let mut fonts = Fonts::new();
@@ -616,7 +617,7 @@ fn log_draft_fidelity() {
     log(&format!(
         "F16 Draft fidelity (scene/ir_full): {diff_px}/{total_px} px differ ({:.1}%), \
          max channel error {max_chan}/255; fast-path coverage {}/{} delivered px ({:.1}%) \
-         — the rest fall back to Exact (discs/rings/line/AA corners)",
+         — the rest fall back to Exact (radius>0 square corners, gradient)",
         100.0 * diff_px as f64 / total_px as f64,
         stats.fastpath_pixels,
         stats.pixels_written,
@@ -849,7 +850,7 @@ fn main() -> std::process::ExitCode {
     ) {
         log(&format!(
             "F16 Draft scene (DEMO_IR full frame): Exact {se:.0} ns vs Draft {sd:.0} ns \
-             = {:.2}x faster (blended — opaque rects fast, curves fall back)",
+             = {:.2}x faster (blended — opaque rects + curves fast, gradient/AA-corners fall back)",
             se / sd
         ));
     }
