@@ -140,6 +140,72 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
+<div class="stage">
+  <div class="imgs"><img src="f8-oracle-fade.png" alt="three fade swatches"
+       style="width:362px;height:120px;image-rendering:auto"></div>
+  <div>
+    <h2>F8 Gate 1 — vyr IS the oracle <span class="meta">2026-06-12 · cab0038</span></h2>
+    <p>The blocker that made vyr a real reference renderer: it now <strong>blends
+    partial alpha</strong>. Three fade fixtures — blue <code>#2040E0</code> at
+    α&nbsp;64 / 128 / 192 over the white card — composite the analytic source-over,
+    L-inf&nbsp;≤4 vs the spec. Before this, all three were flat opaque
+    (Δ&nbsp;55–167): vyr ignored the IR opacity entirely. Landed with the
+    inside-crisp border fix (a 2px border measures 100×100 not the straddled
+    102×102; a 1px border reads <code>#1E5AA8</code> not the AA-washed
+    <code>#85A5CF</code>) and a <strong>Rust conformance self-check</strong> —
+    vyr walks the 33-fixture manifest and grades its own pixels against the
+    geometry/colour/fade probes, no vyvanse import (I8), inside
+    <code>./dev.py gate</code>. All 9 vyr-vs-spec FAILs cleared; the remaining
+    divergences were <em>backend</em> artifacts the oracle exposed (LVGL
+    inventing roller options, an auto-scrollbar inflating the lcd bbox).</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="f6b-fit-to-cell.png" alt="image fit-to-cell"></div>
+  <div>
+    <h2>F6+ — image fit-to-cell <span class="meta">2026-06-12 · e93fa79</span></h2>
+    <p>The #325 ruling inverted (Qt's fit-to-cell is canonical, not natural-size):
+    <code>vy_image</code> now scales <code>min(box/img)</code>, preserves aspect,
+    centres, letterboxes. The scaled blit resamples nearest-neighbour via a
+    <strong>pure-integer world→source map</strong>, so band-equivalence stays
+    byte-exact (proven across five band heights incl. non-divisors). Bilinear is
+    deferred to an F16 quality knob — the fit <em>geometry</em> is what the oracle
+    grades.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="f6c-object-fit.png" alt="five object-fit modes"></div>
+  <div>
+    <h2>F6++ — tunable object-fit <span class="meta">2026-06-12 · 4e06c48</span></h2>
+    <p>The same checker in all five CSS object-fit modes side by side:
+    <strong>contain</strong> (default = the spec, letterboxed), <strong>cover</strong>
+    (fills + crops), <strong>none</strong> (natural centred), <strong>fill</strong>
+    (stretched, aspect broken), <strong>scale-down</strong>. An IR <code>fit</code>
+    attr selects the mode; an unknown value is an honest <code>BadIr</code>.
+    Default-contain leaves every existing image golden byte-identical; cover's
+    overflow and fill's non-uniform scale both hold band-equivalence.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs"><img src="f16-draft-curves.png" alt="Exact vs Draft" style="width:241px;height:120px"></div>
+  <div>
+    <h2>F16 — Draft tier matches LVGL's shape <span class="meta">2026-06-12 · 39cb441</span></h2>
+    <p>Exact (left, float-AA — the oracle) vs Draft (right, integer no-AA — the
+    runtime). Extending Draft's integer fast path from opaque rects to the
+    <strong>curves</strong> (disc/ring/line, <code>isqrt</code>-spanned, no
+    <code>libm</code>) dropped the emulated-M4 cost from 60M →
+    <strong>20M instructions/frame</strong> (87.4% coverage) — recovering
+    <strong>85% of the Exact→LVGL gap, from 5.7× LVGL down to 2.0×</strong>. The
+    trade is visible: hard edges instead of AA (7.6% of pixels differ from Exact).
+    Draft is deterministic + band-exact + cross-ISA-identical, with its own
+    golden; Exact stays byte-untouched. The own fixed-function painter is now a
+    <em>small step, not a rewrite</em>.</p>
+  </div>
+</div>
+
 <h1 style="margin-top:3rem">Engineering gallery — the special bits</h1>
 <p class="lede">The places where vyr does something non-obvious, with the
 evidence images.</p>
