@@ -250,48 +250,67 @@ enum ClipFate {
 /// ## The Draft quality tier (F16, #16) — integer, no AA, no tiny-skia
 ///
 /// `Quality::Draft` is the budgeted-MCU runtime tier: it recovers the
-/// per-pixel cost the Exact tier spends on float-coverage AA. The hot ops it
-/// accelerates with DIRECT INTEGER rasterization (no path, no coverage, no
-/// tiny-skia) — the v2 set, now covering the CURVE primitives:
+/// per-pixel cost the Exact tier spends on float-coverage AA. The **v3 set is
+/// FULLY INTEGER** — every paint op rasterizes with DIRECT INTEGER spans (no
+/// path, no coverage, no tiny-skia), so Draft touches tiny-skia NOWHERE on the
+/// paint path:
 ///
-/// - **opaque axis-aligned `fill_rrect`** ([`fill_rrect_draft`]): one integer
-///   span per row, premultiplied pixels straight into the pixmap (memset-class).
-/// - **`disc`** ([`disc_draft`]): integer filled circle — per scanline the span
-///   `[cx-dx, cx+dx]` from the exact integer test `dx² ≤ r²−dy²`
-///   (`dx = isqrt(r²−dy²)`). Hard edge, no AA.
-/// - **`ring`** ([`ring_draft`]): integer annulus — the outer filled-circle
-///   spans minus the inner-circle spans per scanline (two spans per row where
-///   the hole is open, one where it isn't). Hard edge, no AA.
-/// - **`line`** ([`line_draft`]): the same butt-capped quad the Exact path
-///   builds, rasterized as integer per-row spans from the quad's edges in
-///   1/256-px fixed point (a pure integer function of world row). Hard edge.
+/// - **`fill_rrect`** — radius-0 opaque is one slice store per row
+///   ([`fill_rrect_draft`]); radius>0 (any alpha) and translucent fills carve
+///   the corners with the disc's integer arc test ([`fill_rrect_rounded_draft`]
+///   via [`rrect_row_span`]) — HARD rounded corners, no AA.
+/// - **`stroke_rrect`** ([`stroke_rrect_rounded_draft`]): the centred-stroke
+///   annulus = outer rounded-rect spans minus inner rounded-rect spans per row.
+/// - **`fill_linear_gradient`** ([`fill_gradient_draft`]): an integer per-pixel
+///   two-stop linear ramp `round((1−t)·from + t·to)`, `t` a 1/256 fixed-point
+///   ramp across the rect (pure integer; the rounded shape reuses the carve).
+/// - **`disc`** ([`disc_draft`]) / **`ring`** ([`ring_draft`]) / **`line`**
+///   ([`line_draft`]): the integer circle / annulus / butt-capped-quad spans.
+/// - **glyphs + images** ([`Canvas::glyph_run`]/[`Canvas::blit_image`]): already
+///   hand-rolled integer source-over blits (never tiny-skia), unchanged.
 ///
-/// All four take an integer per-pixel decision from WORLD coordinates and an
-/// integer source-over for the pixel write ([`Self::draft_span`]) — they handle
-/// the OPAQUE case (a plain premultiplied store) and the TRANSLUCENT case (the
-/// d255 source-over the glyph/image blits use), so a translucent disc/line is
-/// still a fast-path pixel, not an Exact fallback.
+/// Each op takes its per-pixel decision from WORLD coordinates and an integer
+/// source-over for the write ([`Self::draft_span`]) — OPAQUE (plain premultiplied
+/// store) and TRANSLUCENT (the d255 source-over) both, so a translucent fill is
+/// still a fast-path pixel.
+///
+/// Because Draft never touches tiny-skia, it has **NO AA fringe to bound, so it
+/// DROPS THE 8 px [`GUTTER`] overscan** (the [`gutter`](Self::gutter) field is 0
+/// for Draft) — the pixmap is exactly the band, ~halving the per-band raster +
+/// `finish_into_rgb888` demul+convert (the profile's dominant cost).
 ///
 /// **Band-exact WITHIN the tier by the same induction as the glyph/image
 /// blits** (module docs above): every Draft op's per-pixel verdict is a pure
 /// function of WORLD position (op geometry ∩ the band ∩ the rect-only clip),
-/// written with the exact-integer world→gutter-local offset. No AA, no fringe —
-/// every band that touches a given world pixel writes the same byte.
+/// written with the exact-integer world→pixmap offset. No AA, no fringe — every
+/// band that touches a given world pixel writes the same byte, gutter or none.
 /// Enforcement: `tests/draft_golden.rs` (Draft golden hash + even/uneven
-/// band equivalence). Draft pixels DIFFER from Exact (hard edges, no AA) —
-/// that is the tier's deliberate trade; Draft is NEVER asserted == Exact.
+/// band equivalence on DEMO_IR AND the gradient/rounded `demo_scene`; the M4
+/// workload's host leg adds the text+image fixture). Draft pixels DIFFER from
+/// Exact (hard edges, no AA) — the tier's deliberate trade; never asserted
+/// == Exact.
 ///
-/// **What still falls back to the Exact path in Draft v2**, counted honestly:
-/// radius>0 fills draw the rect SQUARE (corners are hard — the fidelity loss
-/// the measurement reports), `stroke_rrect`, `fill_linear_gradient`, glyphs and
-/// images take the float/Exact path unchanged. A Draft op that meets a rounded
-/// clip overlap (`ClipFate::Masked`) also declines so the clip stays exact.
+/// The ONLY op that declines the fast path is one meeting a ROUNDED clip overlap
+/// (`ClipFate::Masked`) — it routes to the Exact tiny-skia mask path so the clip
+/// stays exact (rare; the M4/DEMO fixtures never hit it). A translucent gradient
+/// or stroke also declines (kept exact; vanishingly rare in the IR).
 /// [`RenderStats::fastpath_pixels`] records exactly how many pixels the fast
 /// path carried so the coverage % is honest (#21).
 pub struct TinySkiaCanvas {
     pixmap: Pixmap,
     area: Rect,
     quality: Quality,
+    /// Overscan, in pixels, on every band side — [`GUTTER`] for `Exact`, **0
+    /// for `Draft`**. The gutter is belt-and-braces for the tiny-skia AA fringe
+    /// in clip-adjacent rows; Draft NEVER touches tiny-skia (every op is an
+    /// integer span with a pixel-exact hard edge, v3), so it has no AA fringe to
+    /// bound and needs no overscan. Dropping it ~halves the per-band raster and
+    /// the `finish_into_rgb888` demul+convert (the 59 %-of-Draft cost the
+    /// profile found). Band-equivalence still holds: integer spans clip at the
+    /// band edge to byte-identical pixels with or without the gutter (no AA to
+    /// bleed). Enforced by `tests/draft_golden.rs` (gutter-less even+uneven
+    /// band equivalence). Exact's gutter is UNCHANGED.
+    gutter: u32,
     stats: RenderStats,
     /// Active clip stack (world coords). Empty = band-only clipping.
     clips: Vec<Clip>,
@@ -315,17 +334,25 @@ impl TinySkiaCanvas {
     }
 
     /// A canvas for ONE band at an explicit [`Quality`] tier (F16, #16).
-    /// `Quality::Exact` is identical to [`Self::new`] (the oracle path);
-    /// `Quality::Draft` enables the integer no-AA fast path for opaque
-    /// axis-aligned fills (struct docs). The pixmap is still allocated either
-    /// way — the gutter overscan stays (its removal is a future `Fast` knob,
-    /// #16); Draft's win is per-pixel work, not the band's fixed cost.
+    /// `Quality::Exact` is identical to [`Self::new`] (the oracle path,
+    /// [`GUTTER`]-overscan pixmap); `Quality::Draft` enables the integer no-AA
+    /// fast path AND drops the gutter (pixmap is exactly `area.w × area.h` — no
+    /// `2·GUTTER` overscan), because no Draft op touches tiny-skia, so there is
+    /// no AA fringe to bound (see the [`gutter`](Self::gutter) field). The
+    /// gutter-off ~halves the per-band raster + finish cost; band-equivalence
+    /// still holds by the integer-span argument.
     pub fn new_with_quality(area: Rect, quality: Quality) -> Option<Self> {
-        let pixmap = Pixmap::new(area.w + 2 * GUTTER, area.h + 2 * GUTTER)?;
+        // Draft is fully integer (no AA) ⇒ no overscan needed; Exact keeps it.
+        let gutter = match quality {
+            Quality::Exact => GUTTER,
+            Quality::Draft => 0,
+        };
+        let pixmap = Pixmap::new(area.w + 2 * gutter, area.h + 2 * gutter)?;
         Some(Self {
             pixmap,
             area,
             quality,
+            gutter,
             stats: RenderStats::default(),
             clips: Vec::new(),
             clip_bounds: Rect {
@@ -344,11 +371,12 @@ impl TinySkiaCanvas {
         self.area
     }
 
-    /// The exact-integer world → gutter-local offset.
+    /// The exact-integer world → pixmap-local offset (gutter-relative; the
+    /// gutter is [`GUTTER`] for Exact, 0 for Draft — see [`Self::gutter`]).
     fn off(&self) -> (f32, f32) {
         (
-            (GUTTER as i32 - self.area.x) as f32,
-            (GUTTER as i32 - self.area.y) as f32,
+            (self.gutter as i32 - self.area.x) as f32,
+            (self.gutter as i32 - self.area.y) as f32,
         )
     }
 
@@ -488,8 +516,8 @@ impl TinySkiaCanvas {
                 rad,
             );
             let (ox, oy) = (
-                (GUTTER as i32 - self.area.x) as f32,
-                (GUTTER as i32 - self.area.y) as f32,
+                (self.gutter as i32 - self.area.x) as f32,
+                (self.gutter as i32 - self.area.y) as f32,
             );
             let mut pb = PathBuilder::new();
             let mut it = pts.iter();
@@ -564,7 +592,10 @@ impl TinySkiaCanvas {
         let Some(src) = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, 0xFF) else {
             return false;
         };
-        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let (oxi, oyi) = (
+            self.gutter as i32 - self.area.x,
+            self.gutter as i32 - self.area.y,
+        );
         let pm_w = self.pixmap.width() as i32;
         let px = self.pixmap.pixels_mut();
         for wy in wy0..wy1 {
@@ -579,6 +610,221 @@ impl TinySkiaCanvas {
         self.stats.pixels_written += drawn;
         self.stats.pixels_by_class[OpClass::OpaqueFill as usize] += drawn;
         self.stats.fastpath_pixels += drawn;
+        true
+    }
+
+    /// The integer `[sx0, sx1)` x-span of a rounded rect (`r`, corner radius
+    /// `rad`) at world row `wy`, or `None` if the row is OUTSIDE the rounded
+    /// shape (clipped off by a corner arc). The corner ends use the SAME integer
+    /// circle test the disc uses (`dx = isqrt(rad² − dy²)`), so corners are
+    /// hard-edged quarter-discs matching `disc_draft`; middle rows are full
+    /// width. A pure INTEGER function of WORLD position — band-invariant — so
+    /// every Draft op built on it (fill / gradient / stroke) is band-exact by
+    /// the same induction as the fills. `rad == 0` ⇒ always the full rect span.
+    fn rrect_row_span(r: Rect, rad: i32, wy: i32) -> Option<(i32, i32)> {
+        let (rx0, rx1) = (r.x, r.x + r.w as i32);
+        if rad <= 0 {
+            return Some((rx0, rx1));
+        }
+        let ccy_t = r.y + rad; // first full-width row from the top
+        let ccy_b = r.y + r.h as i32 - rad; // first bottom-arc row
+        // dy into the rect from the nearest corner centre (0 in the middle).
+        let dy = if wy < ccy_t {
+            (ccy_t - wy) as i64
+        } else if wy >= ccy_b {
+            (wy - ccy_b + 1) as i64
+        } else {
+            0
+        };
+        if dy == 0 {
+            return Some((rx0, rx1));
+        }
+        let rem = (rad as i64) * (rad as i64) - dy * dy;
+        if rem < 0 {
+            return None; // beyond the arc on this row
+        }
+        let dx = isqrt_i64(rem) as i32;
+        // Inset each end by (rad - dx): dy=0 → inset 0 (full width), dy=rad →
+        // inset rad (span shrinks to [x+rad, x+w-rad)).
+        Some((rx0 + rad - dx, rx1 - rad + dx))
+    }
+
+    /// Draft fast path for a ROUNDED OPAQUE-or-TRANSLUCENT `fill_rrect`
+    /// (`rad > 0`): an integer rounded-rect fill via [`rrect_row_span`] per
+    /// row, written through [`draft_span`] (opaque store or d255 source-over).
+    /// No AA, no tiny-skia. Band-exact by the same induction as the fills.
+    /// Returns `true` if it handled the op; `false` (rounded clip overlap →
+    /// `ClipFate::Masked`) routes to Exact.
+    fn fill_rrect_rounded_draft(&mut self, r: Rect, rad: u32, color: Rgb, alpha: u8) -> bool {
+        match self.op_clip(r) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((cx0, cy0, cx1, cy1)) = self.draft_world_clamp(r) else {
+            return true;
+        };
+        let rad = rad as i32;
+        let mut drawn = 0u64;
+        for wy in cy0..cy1 {
+            if let Some((sx0, sx1)) = Self::rrect_row_span(r, rad, wy) {
+                drawn += self.draft_span(wy, sx0, sx1, cx0, cx1, color, alpha);
+            }
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
+        true
+    }
+
+    /// Draft fast path for a ROUNDED [`Canvas::stroke_rrect`]: an integer
+    /// rounded-rect OUTLINE. Same CENTRED-stroke contract as the Exact path —
+    /// the stroke straddles the contour of `r` (corner radius `rad`): the OUTER
+    /// edge is `r` inflated by `⌈width/2⌉`, the INNER edge `r` deflated by
+    /// `⌊width/2⌋`. The annulus = outer rounded-rect spans minus inner
+    /// rounded-rect spans per scanline (two side bands where the row crosses the
+    /// hole, one full span on the caps). Both contours use [`rrect_row_span`]
+    /// (the disc-consistent corner carve), so the stroke is band-exact like the
+    /// fills. Opaque only on the fast path (the IR's borders are opaque).
+    /// Returns `true` if it handled the op; `false` (translucent or rounded clip
+    /// overlap) routes to Exact.
+    fn stroke_rrect_rounded_draft(
+        &mut self,
+        r: Rect,
+        rad: u32,
+        width: u32,
+        color: Rgb,
+        alpha: u8,
+    ) -> bool {
+        if alpha != 0xFF {
+            return false;
+        }
+        let half_out = width.div_ceil(2) as i32; // ⌈w/2⌉
+        let half_in = (width / 2) as i32; // ⌊w/2⌋
+        // Outer contour: r inflated by ⌈w/2⌉ on every side, radius rad+⌈w/2⌉.
+        let outer = Rect {
+            x: r.x - half_out,
+            y: r.y - half_out,
+            w: r.w + 2 * half_out as u32,
+            h: r.h + 2 * half_out as u32,
+        };
+        let outer_rad = rad as i32 + half_out;
+        // Inner contour: r deflated by ⌊w/2⌋, radius rad−⌊w/2⌋ (clamped ≥ 0).
+        let inner = Rect {
+            x: r.x + half_in,
+            y: r.y + half_in,
+            w: r.w.saturating_sub(2 * half_in as u32),
+            h: r.h.saturating_sub(2 * half_in as u32),
+        };
+        let inner_rad = (rad as i32 - half_in).max(0);
+        let inner_has_area = inner.w > 0 && inner.h > 0;
+        match self.op_clip(outer) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((cx0, cy0, cx1, cy1)) = self.draft_world_clamp(outer) else {
+            return true;
+        };
+        let mut drawn = 0u64;
+        for wy in cy0..cy1 {
+            let Some((ox0, ox1)) = Self::rrect_row_span(outer, outer_rad, wy) else {
+                continue; // outside the outer shape entirely
+            };
+            // The inner hole on this row, if the row crosses it.
+            let hole = if inner_has_area && wy >= inner.y && wy < inner.y + inner.h as i32 {
+                Self::rrect_row_span(inner, inner_rad, wy)
+            } else {
+                None
+            };
+            match hole {
+                Some((ix0, ix1)) => {
+                    // Left band [ox0, ix0) and right band [ix1, ox1).
+                    drawn += self.draft_span(wy, ox0, ix0, cx0, cx1, color, alpha);
+                    drawn += self.draft_span(wy, ix1, ox1, cx0, cx1, color, alpha);
+                }
+                None => {
+                    drawn += self.draft_span(wy, ox0, ox1, cx0, cx1, color, alpha);
+                }
+            }
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
+        true
+    }
+
+    /// Draft fast path for [`Canvas::fill_linear_gradient`]: an integer
+    /// two-stop linear ramp filled into a (rounded) rect, no AA, no tiny-skia.
+    /// Per output pixel the colour is `round((1−t)·from + t·to)` with `t` a
+    /// FIXED-POINT ramp across the rect (`t = clamp(p·256/extent, 0..256)` for
+    /// `p` the pixel's offset along the gradient axis from the rect origin) —
+    /// a pure INTEGER function of world position, so band-exact by the same
+    /// induction as the fills. The (rounded) shape reuses the same corner-arc
+    /// span carving as [`fill_rrect_rounded_draft`]. Opaque only on the fast
+    /// path (the IR's gradient backgrounds are opaque); translucent gradients
+    /// decline to Exact. Returns `true` if it handled the op.
+    #[allow(clippy::too_many_arguments)]
+    fn fill_gradient_draft(
+        &mut self,
+        r: Rect,
+        rad: u32,
+        from: Rgb,
+        to: Rgb,
+        vertical: bool,
+        alpha: u8,
+    ) -> bool {
+        if alpha != 0xFF {
+            return false; // translucent gradient → Exact (rare; keep it exact)
+        }
+        match self.op_clip(r) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((cx0, cy0, cx1, cy1)) = self.draft_world_clamp(r) else {
+            return true;
+        };
+        let rad = rad as i32;
+        // Gradient extent along the axis (px); guard the degenerate 0.
+        let extent = if vertical { r.h as i64 } else { r.w as i64 }.max(1);
+        let (oxi, oyi) = (
+            self.gutter as i32 - self.area.x,
+            self.gutter as i32 - self.area.y,
+        );
+        let pm_w = self.pixmap.width() as i32;
+        let mut drawn = 0u64;
+        for wy in cy0..cy1 {
+            let Some((sx0, sx1)) = Self::rrect_row_span(r, rad, wy) else {
+                continue;
+            };
+            let lo = sx0.max(cx0);
+            let hi = sx1.min(cx1);
+            if hi <= lo {
+                continue;
+            }
+            let ly = wy + oyi;
+            let row = (ly * pm_w) as usize;
+            // Vertical gradients have one colour per row — compute t once.
+            let t_row = if vertical {
+                Some((((wy - r.y) as i64 * 256 / extent).clamp(0, 256)) as u32)
+            } else {
+                None
+            };
+            let px = self.pixmap.pixels_mut();
+            for wx in lo..hi {
+                let t = match t_row {
+                    Some(t) => t,
+                    None => (((wx - r.x) as i64 * 256 / extent).clamp(0, 256)) as u32,
+                };
+                let it = 256 - t;
+                // round((1-t)·from + t·to) at 1/256 fixed point: (a·it + b·t + 128) >> 8.
+                let mix =
+                    |a: u8, b: u8| -> u8 { ((a as u32 * it + b as u32 * t + 128) >> 8) as u8 };
+                let (cr, cg, cb) = (mix(from.r, to.r), mix(from.g, to.g), mix(from.b, to.b));
+                if let Some(p) = PremultipliedColorU8::from_rgba(cr, cg, cb, 0xFF) {
+                    px[row + (wx + oxi) as usize] = p;
+                }
+            }
+            drawn += (hi - lo) as u64;
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
         true
     }
 
@@ -632,7 +878,10 @@ impl TinySkiaCanvas {
         if hi <= lo {
             return 0;
         }
-        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let (oxi, oyi) = (
+            self.gutter as i32 - self.area.x,
+            self.gutter as i32 - self.area.y,
+        );
         let pm_w = self.pixmap.width() as i32;
         let ly = wy + oyi;
         let row = (ly * pm_w) as usize;
@@ -921,7 +1170,7 @@ impl TinySkiaCanvas {
     pub fn finish_into_rgb888(mut self, buf: &mut [u8], stride: usize) -> RenderStats {
         let w = self.area.w as usize;
         let h = self.area.h as usize;
-        let g = GUTTER as usize;
+        let g = self.gutter as usize; // 0 for Draft (no overscan), GUTTER for Exact
         let pm_w = w + 2 * g;
         assert!(
             stride >= w * 3,
@@ -985,15 +1234,25 @@ impl Canvas for TinySkiaCanvas {
 
     fn fill_rrect(&mut self, r: Rect, radius: u32, color: Rgb, alpha: u8) {
         let rad = Self::clamp_radius(r, radius);
-        // F16 Draft fast path: an OPAQUE fill draws as an integer span fill,
-        // no AA, no tiny-skia (struct docs). Radius>0 draws SQUARE in Draft —
-        // corners are hard (the documented fidelity loss); the measurement
-        // reports how many pixels that affects. Translucent fills, and any
-        // op the fast path declines (rounded clip overlap → Masked), fall
-        // through to the Exact path below.
-        if self.quality == Quality::Draft && alpha == 0xFF && self.fill_rrect_draft(r, color, alpha)
-        {
-            return;
+        // F16 Draft fast path: integer span fill, no AA, no tiny-skia (struct
+        // docs). radius-0 OPAQUE fills are the plain span store; radius>0 fills
+        // (any alpha) and translucent radius-0 fills take the integer
+        // rounded-rect span carve (hard corners, the documented fidelity loss).
+        // A fast-path method returns `false` only when a rounded clip overlaps
+        // (→ Masked) — then we fall through to the Exact path so the clip stays
+        // exact. After v3 EVERY fill is a fast-path pixel except that case.
+        if self.quality == Quality::Draft {
+            let handled = if radius == 0 && alpha == 0xFF {
+                self.fill_rrect_draft(r, color, alpha)
+            } else {
+                // rad is clamped to half the short side (clamp_radius); 0 here
+                // means a translucent square fill, which the rounded path draws
+                // as full-width spans (dy always 0) — still all fast-path.
+                self.fill_rrect_rounded_draft(r, rad as u32, color, alpha)
+            };
+            if handled {
+                return;
+            }
         }
         let pts = rrect_points(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
         self.fill(&[&pts], color, alpha, r);
@@ -1001,11 +1260,21 @@ impl Canvas for TinySkiaCanvas {
     }
 
     fn stroke_rrect(&mut self, r: Rect, radius: u32, width: u32, color: Rgb, alpha: u8) {
+        let rad = Self::clamp_radius(r, radius);
+        // F16 Draft fast path: integer rounded-rect outline (outer spans minus
+        // inner spans), no AA, no tiny-skia (struct docs). Declines (→ Exact)
+        // for a translucent stroke or a rounded-clip overlap. The radius-0 box
+        // border never reaches here (lowered to fill_rrects in
+        // `draw_inside_border`), but the fast path handles any rad uniformly.
+        if self.quality == Quality::Draft
+            && self.stroke_rrect_rounded_draft(r, rad as u32, width, color, alpha)
+        {
+            return;
+        }
         // Stroke centred on the contour, built as outer+inner polygons.
         // Paint extends width/2 beyond r — the clip bbox covers it.
         let bbox = r.inflate(width.div_ceil(2));
         let w2 = width as f32 / 2.0;
-        let rad = Self::clamp_radius(r, radius);
         let (x, y, w, h) = (r.x as f32, r.y as f32, r.w as f32, r.h as f32);
         let outer_rad = if rad > 0.0 { rad + w2 } else { 0.0 };
         let outer = rrect_points(x - w2, y - w2, w + 2.0 * w2, h + 2.0 * w2, outer_rad);
@@ -1112,11 +1381,19 @@ impl Canvas for TinySkiaCanvas {
         vertical: bool,
         alpha: u8,
     ) {
+        let rad = Self::clamp_radius(r, radius);
+        // F16 Draft fast path: integer per-pixel linear ramp, no AA, no
+        // tiny-skia (struct docs). Declines (→ Exact) only for a translucent
+        // gradient or a rounded-clip overlap.
+        if self.quality == Quality::Draft
+            && self.fill_gradient_draft(r, rad as u32, from, to, vertical, alpha)
+        {
+            return;
+        }
         let fate = self.op_clip_fill(r);
         if fate == ClipFate::Skip {
             return;
         }
-        let rad = Self::clamp_radius(r, radius);
         let pts = rrect_points(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
         let Some(path) = self.path_from(&[&pts]) else {
             return;
@@ -1206,7 +1483,10 @@ impl Canvas for TinySkiaCanvas {
         };
         let cmdata = cmask.as_ref().map(|m| m.data());
         let mut ink: Option<(i32, i32, i32, i32)> = None;
-        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let (oxi, oyi) = (
+            self.gutter as i32 - self.area.x,
+            self.gutter as i32 - self.area.y,
+        );
         let pm_w = self.pixmap.width() as i32;
         let pm_h = self.pixmap.height() as i32;
         for g in glyphs {
@@ -1360,7 +1640,10 @@ impl Canvas for TinySkiaCanvas {
             _ => None,
         };
         let cmdata = cmask.as_ref().map(|m| m.data());
-        let (oxi, oyi) = (GUTTER as i32 - self.area.x, GUTTER as i32 - self.area.y);
+        let (oxi, oyi) = (
+            self.gutter as i32 - self.area.x,
+            self.gutter as i32 - self.area.y,
+        );
         let pm_w = self.pixmap.width() as i32;
         let pm_h = self.pixmap.height() as i32;
         let rgba = image.rgba();

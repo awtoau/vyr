@@ -1,11 +1,13 @@
 //! F16 Draft-tier goldens (#16): the integer no-AA fast path is its OWN
 //! separately-gated tier — `Quality::Draft` pixels DIFFER from `Quality::Exact`
 //! (hard edges, no AA), so this file pins Draft's own bytes and never asserts
-//! Draft == Exact. As of the v2 set the CURVE primitives (disc/ring/line) also
-//! take the integer fast path (the DEMO_IR slider/toggle knobs, the gauge ring,
-//! the orange rule), so the golden is the hard-edged-curve render and the
-//! coverage assertion expects the curves' pixels in `fastpath_pixels`.
-//! What IS enforced, same discipline as the Exact goldens:
+//! Draft == Exact. As of the **v3 set Draft is FULLY INTEGER**: opaque +
+//! translucent rects, rounded fills + rounded strokes (hard corners), the curve
+//! primitives (disc/ring/line), and the gradient all take the integer span
+//! path, and the tier DROPS the 8 px gutter (no AA ⇒ no overscan). On DEMO_IR
+//! that is 100 % fast-path coverage and zero tiny-skia. The golden is the
+//! hard-edged render; the coverage assertion expects ~all delivered pixels in
+//! `fastpath_pixels`. What IS enforced, same discipline as the Exact goldens:
 //!
 //! - `draft_golden_hash`: the DEMO_IR scene rendered at `Quality::Draft` hashes
 //!   to the committed constant — Draft is deterministic (invariant I2 holds
@@ -23,15 +25,15 @@
 //! Set `VYR_TEST_DUMP=1` to write the Draft + Exact PNGs to ../tmp/ for
 //! eyeballing (confirm Draft is hard-edged but correct before blessing).
 
-use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W};
-use vyr_core::{Assets, Fonts, Quality, Rect, RenderStats};
+use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, demo_scene};
+use vyr_core::{Assets, Fonts, Quality, Rect, RenderStats, TinySkiaCanvas};
 
 const W: u32 = DEMO_W;
 const H: u32 = DEMO_H;
 
 /// Committed Draft golden (FNV-1a 64 of the RGB888 buffer). Re-bless via
 /// `./dev.py test --bless`. DISTINCT from the Exact golden by construction.
-const DRAFT_GOLDEN_FNV1A: u64 = 0x795B_51E8_4386_C00F;
+const DRAFT_GOLDEN_FNV1A: u64 = 0xA705_4B20_5B12_FAA3;
 
 fn fnv1a(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -156,6 +158,63 @@ fn draft_band_equivalence() {
     }
 }
 
+/// Render the hand-built `demo_scene` (the ONLY scene with a `fill_linear_gradient`,
+/// plus rounded fills and a stroked rounded border) at `Quality::Draft` as
+/// horizontal bands of `band_h`, stitched into a full-frame buffer. Exercises
+/// the v3 integer gradient + rounded-fill + rounded-stroke fast paths the IR
+/// fixture (DEMO_IR) does not — these MUST stay band-exact for the gutter-off.
+fn draft_scene_banded(band_h: u32) -> Vec<u8> {
+    let stride = (W * 3) as usize;
+    let mut out = vec![0u8; stride * H as usize];
+    let mut y = 0;
+    while y < H {
+        let h = band_h.min(H - y);
+        let mut c = TinySkiaCanvas::new_with_quality(
+            Rect {
+                x: 0,
+                y: y as i32,
+                w: W,
+                h,
+            },
+            Quality::Draft,
+        )
+        .expect("pixmap");
+        demo_scene(&mut c);
+        let band = &mut out[y as usize * stride..(y + h) as usize * stride];
+        c.finish_into_rgb888(band, stride);
+        y += h;
+    }
+    out
+}
+
+#[test]
+fn draft_gradient_scene_band_equivalence() {
+    // The gradient + rounded fill/stroke fast paths, full-frame vs even (30) AND
+    // uneven (17) bands — byte-identical, the per-tier I1 invariant. If the
+    // integer gradient ramp or the rounded-rect corner carve were not a pure
+    // function of WORLD position, a band seam would diverge here.
+    let full = draft_scene_banded(H);
+    dump_png("draft-demo-scene.png", &full);
+    for band_h in [30u32, 17u32] {
+        let banded = draft_scene_banded(band_h);
+        if full != banded {
+            let stride = (W * 3) as usize;
+            let i = full
+                .iter()
+                .zip(banded.iter())
+                .position(|(a, b)| a != b)
+                .unwrap();
+            let (row, col) = (i / stride, (i % stride) / 3);
+            panic!(
+                "Draft demo_scene band_h={band_h}: first diff at row {row} col {col} \
+                 (full {:?} vs banded {:?}) — a gradient/rounded fast path is not band-exact",
+                &full[i - i % 3..i - i % 3 + 3],
+                &banded[i - i % 3..i - i % 3 + 3]
+            );
+        }
+    }
+}
+
 #[test]
 fn draft_differs_from_exact() {
     // The whole point of the tier: no AA ⇒ different bytes. If these ever
@@ -192,14 +251,15 @@ fn draft_fastpath_coverage() {
         draft.fastpath_pixels,
         W * H
     );
-    // v2: the CURVE primitives (disc/ring/line) now take the integer fast path,
-    // so coverage clears 85% of delivered pixels on this curve-heavy fixture
-    // (slider/toggle knobs, gauge ring, the rule). A regression that dropped a
-    // curve back to the Exact path would sink below this.
+    // v3: EVERY op on DEMO_IR (opaque/rounded fills, rounded border stroke, the
+    // curves, no gradient here) takes the integer fast path — coverage is 100 %.
+    // A regression that dropped ANY op back to the tiny-skia/Exact path (which
+    // would also break the gutter-off safety) sinks below this.
     let cov = draft.fastpath_pixels as f64 / draft.pixels_written as f64;
     assert!(
-        cov >= 0.85,
-        "Draft fast-path coverage {:.1}% < 85% — a curve primitive fell back to Exact",
+        cov >= 0.999,
+        "Draft fast-path coverage {:.1}% < 100% — an op fell back to the tiny-skia path \
+         (and the gutter-off is then unsafe for it)",
         100.0 * cov
     );
     eprintln!(

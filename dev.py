@@ -212,7 +212,7 @@ QEMU_M4_MACHINE = "netduinoplus2"  # STM32F405: M4F + 192 KiB SRAM (the F427 bud
 # (deterministic); sleep=off decouples it from host wall time. SYS_CLOCK
 # deltas are therefore insn counts: 1 cs = 10^7 insns.
 QEMU_M4_INSNS_PER_CS = 10_000_000
-QEMU_M4_TIMED_FRAMES = 4  # keep in sync with TIMED_FRAMES in vyr-size/src/workload.rs
+QEMU_M4_TIMED_FRAMES = 20  # keep in sync with TIMED_FRAMES in vyr-size/src/workload.rs
 # F16 (#16) gap-recovery anchors for `qemu-m4 --draft`. The Exact figure is
 # THIS vehicle's own measured Quality::Exact insns/frame (docs/measurements/
 # f9-static.md, "~75.0 M insns/frame"); the LVGL figure is the ~10 M
@@ -338,8 +338,8 @@ def cmd_qemu_m4(rest: list[str]) -> int:
                 f"  F16 Draft    {per_frame:,} insns/frame vs Exact {exact_anchor:,} "
                 f"= {speedup:.2f}x; vs LVGL anchor {lvgl_anchor:,}",
                 f"  F16 GAP      Draft recovers {recovered:.0f}% of the Exact→LVGL gap "
-                f"({saved:,} of {gap:,} insns/frame) — remaining gap is the non-fast-path "
-                "ops (discs/rings/line/glyph/image) + tiny-skia residue",
+                f"({saved:,} of {gap:,} insns/frame) — v3 is fully integer + gutter-less "
+                "(no tiny-skia); the residue is the per-pixel demul+RGB888 convert + glyph blits",
             ]
     for line in lines:
         print(line)

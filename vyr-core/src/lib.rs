@@ -118,11 +118,12 @@ pub enum OpClass {
 /// **every tier is individually deterministic** (same input + same tier =
 /// same bytes, banding included). [`Quality::Exact`] is the DEFAULT and the
 /// oracle/conformance mode — the float-AA tiny-skia path, byte-stable against
-/// the F1 goldens. [`Quality::Draft`] is the integer, no-AA fast path for
-/// budgeted MCU runtime: opaque axis-aligned fills become direct integer span
-/// writes (no path, no coverage, no tiny-skia), recovering the per-pixel cost
-/// AA spends. Draft pixels DIFFER from Exact (hard edges, no AA) — that is the
-/// tier's deliberate trade; Draft has its OWN goldens, never compared to
+/// the F1 goldens. [`Quality::Draft`] is the **fully integer, no-AA** fast path
+/// for budgeted MCU runtime: EVERY paint op rasterizes as direct integer spans
+/// (no path, no coverage, no tiny-skia anywhere), recovering the per-pixel cost
+/// AA spends — and because there is no AA fringe, Draft also drops the per-band
+/// overscan gutter. Draft pixels DIFFER from Exact (hard edges, no AA) — that is
+/// the tier's deliberate trade; Draft has its OWN goldens, never compared to
 /// Exact. Room is left for a future `Fast` (half-density flattening) — not
 /// built yet (#16).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -130,10 +131,12 @@ pub enum Quality {
     /// Float-AA tiny-skia path. The default everywhere oracle-facing.
     #[default]
     Exact,
-    /// Integer, no-AA fast path. Opaque rects → direct span fills; the
-    /// minority ops (disc/ring/line/gradient/glyph/image, and translucent
-    /// fills) fall back to the Exact path in v1, counted honestly so the
-    /// fast-path coverage is measurable ([`RenderStats::fastpath_pixels`]).
+    /// Fully integer, no-AA fast path, gutter-less. ALL ops (opaque +
+    /// translucent rects, rounded fills + rounded strokes, disc/ring/line,
+    /// gradient, glyph + image blits) rasterize as direct integer spans — no
+    /// tiny-skia on the paint path. The only fallback is an op meeting a ROUNDED
+    /// clip overlap (kept exact via the mask path) and a translucent gradient/
+    /// stroke (rare). Coverage is measurable ([`RenderStats::fastpath_pixels`]).
     Draft,
 }
 

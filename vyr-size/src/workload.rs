@@ -248,9 +248,11 @@ pub fn run(
 
     if let Some(clock) = clock_cs {
         // Warmed steady state: glyph cache is full, so these frames are the
-        // per-frame render cost. 4 frames because SYS_CLOCK ticks are
-        // centiseconds — one frame would quantize away the reading.
-        const TIMED_FRAMES: u32 = 4;
+        // per-frame render cost. SYS_CLOCK ticks are centiseconds (1 cs = 10⁷
+        // insns); 20 frames so the ±1 cs quantization is ÷20 = ±0.5 M/frame,
+        // fine enough to resolve Draft's ~12 M/frame against the LVGL 10 M
+        // anchor (4 frames quantized to ±2.5 M/frame — too coarse near LVGL).
+        const TIMED_FRAMES: u32 = 20;
         let t0 = clock();
         for _ in 0..TIMED_FRAMES {
             let (h2, _, _) =

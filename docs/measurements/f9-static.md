@@ -367,6 +367,11 @@ carried; Draft is its own deterministic, band-exact tier (own goldens,
   hard-edged curves: every difference is an antialiased edge pixel Exact
   smooths and Draft does not.
 
+> **Superseded by Draft v3** (the "Draft v3 — FULLY integer + gutter-less"
+> subsection below): v3 acted on items 1 and 2 here (radius>0 fills + gradient
+> → integer; gutter dropped) and reached **13.0 M = 1.30× LVGL**, recovering
+> 95 % of the gap. The v2 read below is kept for the record.
+
 **Honest read — is integer-curves-in-Draft enough, or is an own fixed-function
 painter the real "match LVGL" answer?** Draft v2 is **2.0× the LVGL anchor**
 (20 M vs ~10 M) — close enough that the gap is no longer dominated by AA. What
@@ -403,3 +408,151 @@ Reproduce: `./dev.py qemu-m4 --draft` (Draft) vs `./dev.py qemu-m4` (Exact);
 host deltas `./dev.py bench` (the `F16 Draft …` log lines + the
 `scene/ir_full_{exact,draft}` / `prim/fill_rect0_{exact,draft}` baseline
 rows).
+
+### Draft profile — where the 20M goes (#16, profile-first) — 2026-06-12
+
+Before attacking the last 2× to LVGL, we PROFILED Draft to find exactly where
+the instructions land — and the answer was not where the prose above guessed.
+Two callgrind runs on the 480×270 M4 `FIXTURE_IR` scene (the vyr-callgrind
+driver, 20 full-frame renders in one process so per-function totals are
+render-path-dominated; `scripts/draft-profile.py`, x86 Ir, `--cache-sim=no`):
+
+**Per-FUNCTION instruction breakdown (Draft, the top consumers):**
+
+| Ir share | function | what it is |
+|--:|---|---|
+| **58.9 %** | `finish_into_rgb888` | **per-band demul + RGB888 convert over the GUTTER pixmap** |
+| 13.1 % | `__memset_avx2` (libc) | the per-band `Pixmap::new` zero-fill of `(w+16)(h+16)·4` + the span fills |
+| 6.4 % | `glyph_run` | the four text runs (already integer source-over) |
+| 3.1 % | `fill_rrect` | the **radius>0 fills still on the tiny-skia path** (frame, slider/progress tracks+fills, toggle body, circle) |
+| 2.1 % | `tiny_skia::fill_path_impl` | the float rasterizer those radius>0 fills feed |
+| ~5 % | `tiny_skia::pipeline::lowp::*` + `alpha_runs` + `blit_*` | the AA coverage pipeline for the radius>0 residue |
+| 0.9 % | `draft_span` | the integer span writer (disc/ring/line/rect fast path) — cheap, as designed |
+| 0.6 % | `ring` / `disc` | the integer curve fast paths — cheap |
+
+The headline finding: **`finish_into_rgb888` is 59 % of Draft's instructions**
+— and its absolute cost is **IDENTICAL in Exact and Draft** (46,738,560 Ir over
+20 frames in BOTH profiles; it is tier-independent per-pixel demul+convert). In
+Exact it is 34 % of a 136M-Ir frame, hidden under the tiny-skia AA cost; once
+Draft removes the AA, the demul+convert is laid bare as the dominant remaining
+cost. It iterates the inner `w×h` of a `(w+2·GUTTER)×(h+2·GUTTER)` pixmap, and
+the `__memset` row is mostly the per-band gutter-inclusive pixmap clear. **The
+gutter is the lever**, not the radius>0 residue — exactly the STEP 3 target.
+
+**M4 per-phase icount** (`./dev.py qemu-m4 --draft`): the single timed
+quantity is the 4-warmed-frame loop — there is no finer per-phase icount split
+on target (the heap phases are RAM, not insns). The host callgrind above is the
+per-phase insn story; the M4 number is the cross-ISA-validated headline
+(17.5 M/frame this run — 7 cs, the ±1 cs neighbour of the doc's 20 M / 8 cs).
+
+**Per-op-class coverage** (`RenderStats`, M4 fixture): **87.4 %** of delivered
+pixels take the integer fast path; the **12.6 % residue is the radius>0 fills**
+(frame card, the rounded slider/progress tracks + fills, the toggle body, the
+stadium circle) **plus the glyph runs and the image blit**. No gradient is on
+this fixture's hot path (no widget lowers to `fill_linear_gradient` — only the
+hand-built `demo_scene` bench does), so the integer-gradient work is for
+coverage completeness, not this scene's number.
+
+**What the profile says to do, in order of leverage:**
+1. **Drop the gutter for Draft** (kills most of the 59 % + 13 % = ~72 % that is
+   gutter-pixmap demul/convert/clear). The big lever.
+2. **Route radius>0 fills through integer rounded-rect spans** (kills the 3.1 %
+   + 2.1 % + ~5 % AA-pipeline residue, and lifts coverage toward 100 %).
+3. Gradient → integer (coverage completeness; not on this fixture).
+Glyphs (6.4 %) are already integer; bilevel masks are a separate future knob.
+
+### Draft v3 — FULLY integer + gutter-less, re-measured vs LVGL (#16) — 2026-06-12
+
+Acting on the profile, v3 closes the last two tiny-skia paths and drops the
+gutter:
+
+- **radius>0 `fill_rrect` → integer rounded-rect spans** (`rrect_row_span`): the
+  middle rows are full-width spans, the corner rows carve the ends with the
+  SAME integer circle test the disc uses (`dx = isqrt(rad² − dy²)`) — hard
+  rounded corners, no AA. Covers the frame cards, the rounded slider/progress
+  tracks + fills, the toggle body, the stadium circle, plus translucent fills.
+- **rounded `stroke_rrect` → integer annulus** (outer rounded-rect spans minus
+  inner, same centred-stroke geometry as the Exact lowering) — the rounded
+  borders.
+- **`fill_linear_gradient` → integer per-pixel linear ramp**
+  `round((1−t)·from + t·to)`, `t` a 1/256 fixed-point ramp across the rect
+  (deterministic, no float per pixel; the rounded shape reuses the carve).
+- **gutter dropped for Draft**: the pixmap is exactly `area.w × area.h` (no
+  `2·GUTTER` overscan) because no Draft op touches tiny-skia ⇒ no AA fringe to
+  bound. `GUTTER` is now **Quality-conditional** (8 for Exact, 0 for Draft);
+  Exact's gutter and its goldens are UNCHANGED (verified byte-identical).
+
+After v3 the Draft tier touches tiny-skia **nowhere** on the paint path.
+Band-equivalence under the gutter-off is PROVEN byte-identical (full-frame vs
+even-30 + uneven-17 bands) on DEMO_IR, on the gradient/rounded `demo_scene`,
+AND on the M4 text+image+widgets fixture (the workload host leg:
+`full-frame fnv1a == banded`). The integer-span argument holds: a span clipped
+at a band edge writes the same bytes with or without the gutter (no AA to bleed).
+
+**The headline, same vehicle, same 480×270 banded frame, same icount clock**
+(20 warmed frames now, so the icount quantizes to ±0.5 M/frame — finer than the
+v1/v2 4-frame ±2.5 M):
+
+| tier | insns/frame | insn/px | fast-path coverage | heap peak (M4) | cross-ISA hash |
+|---|---|---|---|---|---|
+| **Exact** (default, oracle) | **~75 M** | 598 | 0.0 % | 94 KB | M4 == x86-64, banded == full |
+| Draft v1 (rects only) | 60 M | 463 | 80.9 % | 94 KB | ✓ |
+| Draft v2 (+ integer curves) | 20 M | 154 | 87.4 % | 94 KB | ✓ |
+| **Draft v3** (fully integer + gutter-less) | **13.0 M** (26 cs / 20) | **100** | **96.8 %** | **60 KB** | ✓ (`0xf98cbbdddd6da1ba`) |
+| _LVGL anchor_ (the gap target) | _~10 M_ | _~77_ | — | — | — |
+
+- **Draft v3 = 13.0 M insns/frame = 1.30× the LVGL ~10 M anchor.** It does NOT
+  quite MEET LVGL — the honest read — but it recovers **95 % of the Exact→LVGL
+  gap** (62 M of 65 M insns/frame), up from v2's 85–88 %. v3 is **5.77× the
+  Exact frame** (75 M → 13 M).
+- **Coverage 96.8 %** of delivered pixels via integer spans; the remaining
+  3.2 % is the text glyph runs + the image blit, which are ALSO integer (a
+  hand-rolled source-over, never tiny-skia) — they just aren't counted into
+  `fastpath_pixels` (which tracks the span-fill ops). So tiny-skia carries
+  **0 %** of the Draft frame.
+- **Heap peak fell 94 KB → 60 KB on the M4** — the gutter-less band pixmap is
+  `480×16×4 = 30,720 B` vs the gutter pixmap `63,488 B`, a 32 KB working-set win
+  on top of the speed.
+
+**Host micro-numbers** (`./dev.py bench`, x86-64 release): the raw opaque
+radius-0 lever is **25.5× faster per pixel** (0.82 → 0.03 ns/px). The blended
+DEMO_IR scene is now **5.41× faster** (Exact 5.87 → Draft 1.09 ns/px; was 3.65×
+at v2). **Fidelity delta Draft-v3 vs Exact on DEMO_IR: 766/14400 px differ
+(5.3 %), max channel error 220/255** — DOWN from v2's 7.6 %, because the rounded
+corners now match the Exact corner SHAPE (only the AA fringe of the rounded
+edges differs, not the whole square the v2 fallback drew). Every differing pixel
+is an antialiased edge Exact smooths and Draft's hard edge does not — the
+gutter-off changed ZERO pixels (band-equivalence proves it), only the integer
+rounding did, and it improved fidelity.
+
+**Honest read — does vyr meet/beat LVGL on the M4 now?** Not yet: **13.0 M vs
+~10 M = 1.30×**. But the gap is no longer AA, no longer tiny-skia, and no longer
+the gutter — it is the irreducible-ish per-pixel work every software renderer
+pays, named:
+
+1. **`finish_into_rgb888` (demul + RGB888 convert)** — 59 % of Draft's x86
+   insns. vyr renders into a PREMULTIPLIED RGBA8888 band then demultiplies +
+   converts to RGB888 in a second pass; LVGL writes its native format (RGB565/
+   RGB888) straight from the blend with no premultiply round-trip. Fusing the
+   convert into the span write (or rendering Draft directly in RGB565/RGB888, an
+   F13 pixel-format axis) is the next single biggest lever — and it is squarely
+   the "own fixed-function painter tier behind the Canvas trait" the F9 verdict
+   already scoped, now reduced to one fused output path, not a rewrite.
+2. **Glyph blits** — already integer; bilevel (1-bpp) masks (a Draft glyph knob,
+   #16) would shrink the per-pixel cost further.
+
+The read stands: **the integer fast path + gutter-off are most of the answer
+(95 % of the gap, pure safe-Rust integer code, zero tiny-skia), and the last
+1.3× is a single fused-convert / native-pixel-format step, not a from-scratch
+rasterizer.** And the M4 plan was never full-frame 60 fps anyway — the F3
+dirty-rect path is ~8× cheaper per step and composes with Draft (Draft = the
+per-pixel-cost half, dirty-rects = the per-frame half).
+
+> Note on resolution: v3 reads **26 cs / 20 frames** (finer than v1/v2's
+> 4-frame loop; `TIMED_FRAMES` bumped to 20 here + in dev.py). At 4 frames the
+> same build quantized to 5 cs = 12.5 M (the optimistic edge of its ±2.5 M
+> band); 20 frames gives 13.0 M ±0.5 M — the trustworthy figure. The 13.0 M is
+> a 7-cs-equivalent drop from v2's 20 M, far outside quantization.
+
+Reproduce: `./dev.py qemu-m4 --draft`; per-function profile
+`python3 scripts/draft-profile.py`; host deltas `./dev.py bench`.

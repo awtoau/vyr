@@ -468,10 +468,12 @@ fn bench_ir_scene() -> f64 {
 // --- F16 Draft-tier benches (#16) ------------------------------------------
 // The Exact vs Draft per-pixel comparison: same fixture, same band, two
 // quality tiers. The DEMO_IR scene is text/image-free (empty registries are
-// honest); as of the v2 set the opaque rects AND the curve primitives
-// (disc/ring/line) take the integer fast path (~92% of delivered pixels on
-// this fixture) — only radius>0 fills (drawn square) and the gradient still
-// fall back to Exact — so the scene number is the realistic blended speedup.
+// honest); as of the v3 set EVERY op takes the integer fast path — opaque +
+// translucent rects, the rounded fills + rounded strokes (hard corners), the
+// curve primitives (disc/ring/line), and the gradient (integer ramp) — so the
+// scene hits 100% fast-path coverage and touches no tiny-skia. v3 also drops
+// the 8 px gutter for Draft (no AA ⇒ no overscan), ~halving the per-band raster
+// + finish cost. The scene number is the realistic blended speedup.
 
 fn render_demo_quality(quality: Quality) -> f64 {
     let mut fonts = Fonts::new();
@@ -617,7 +619,8 @@ fn log_draft_fidelity() {
     log(&format!(
         "F16 Draft fidelity (scene/ir_full): {diff_px}/{total_px} px differ ({:.1}%), \
          max channel error {max_chan}/255; fast-path coverage {}/{} delivered px ({:.1}%) \
-         — the rest fall back to Exact (radius>0 square corners, gradient)",
+         — v3 is fully integer (no tiny-skia); the differing pixels are the AA fringe \
+         Exact smooths and Draft's hard rounded edges do not",
         100.0 * diff_px as f64 / total_px as f64,
         stats.fastpath_pixels,
         stats.pixels_written,
@@ -850,7 +853,8 @@ fn main() -> std::process::ExitCode {
     ) {
         log(&format!(
             "F16 Draft scene (DEMO_IR full frame): Exact {se:.0} ns vs Draft {sd:.0} ns \
-             = {:.2}x faster (blended — opaque rects + curves fast, gradient/AA-corners fall back)",
+             = {:.2}x faster (v3 — all ops integer: rects/rounded fills+strokes/curves/gradient, \
+             gutter-off, 100% fast-path, no tiny-skia)",
             se / sd
         ));
     }
