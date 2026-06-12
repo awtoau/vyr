@@ -178,6 +178,30 @@ fn d255(x: u32) -> u32 {
     (2 * x + 255) / 510
 }
 
+/// Fill a length-multiple-of-3 RGB888 slice with one repeating `trip` colour.
+/// The Draft opaque span fill — the single hottest path (the M4 backdrop +
+/// every opaque rect is this). A naive per-pixel `chunks_exact_mut(3)` write
+/// is ~9× the old u32 `slice.fill`; instead seed the first triple, then
+/// EXPONENTIALLY double the written prefix with `copy_within` (log₂(n)
+/// large memcpys), so the compiler emits wide vector copies. Byte-identical
+/// to a per-pixel store.
+#[inline]
+fn fill_rgb_triple(buf: &mut [u8], trip: [u8; 3]) {
+    if buf.is_empty() {
+        return;
+    }
+    buf[0] = trip[0];
+    buf[1] = trip[1];
+    buf[2] = trip[2];
+    let mut filled = 3usize;
+    let len = buf.len();
+    while filled < len {
+        let n = filled.min(len - filled);
+        buf.copy_within(0..n, filled);
+        filled += n;
+    }
+}
+
 /// Integer floor square root of a non-negative `i64` (binary digit-by-digit,
 /// no float, deterministic). The Draft disc/ring per-scanline half-width is
 /// `isqrt(r²−dy²)` — an EXACT integer (no libm, no rounding mode dependence).
@@ -298,6 +322,26 @@ enum ClipFate {
 /// path carried so the coverage % is honest (#21).
 pub struct TinySkiaCanvas {
     pixmap: Pixmap,
+    /// **Draft only** — the output surface IS this straight-RGB888 band buffer
+    /// (`area.w · area.h · 3` bytes, draw-order composited). The Draft fast
+    /// path writes RGB888 here directly, skipping the premul-pixmap→demul
+    /// round-trip that the x86 profile pinned at ~72 % of Draft cost
+    /// (`finish_into_rgb888` ~59 % + the pixmap memset ~13 %). Empty
+    /// (`Vec::new()`) for Exact, which keeps the premul `pixmap` path
+    /// unchanged. Dst is always opaque RGB here (the backdrop fills it opaque
+    /// first), so premul == straight and the `d255` blends are byte-identical
+    /// to the old path — enforced by the Draft goldens (no re-bless).
+    ///
+    /// For the rare rounded-clip fallback the shared tiny-skia rasterizer
+    /// still renders into `pixmap` (scratch), then composites the AA'd region
+    /// into `rgb` in draw order (see [`Self::fill`]). So `pixmap` stays
+    /// allocated for Draft too (it also backs the clip A8 mask, which is
+    /// pixmap-sized — [`Self::ensure_mask`]), but the per-band finish copy is
+    /// a plain row-blit, no demul. Net Draft band heap is therefore 7 B/px
+    /// (4 B pixmap + 3 B rgb) vs the old 4 B/px — a bounded rise that still
+    /// sits well under the Exact tier's footprint; the insn win (the demul +
+    /// convert pass deleted) is the trade.
+    rgb: Vec<u8>,
     area: Rect,
     quality: Quality,
     /// Overscan, in pixels, on every band side — [`GUTTER`] for `Exact`, **0
@@ -348,8 +392,16 @@ impl TinySkiaCanvas {
             Quality::Draft => 0,
         };
         let pixmap = Pixmap::new(area.w + 2 * gutter, area.h + 2 * gutter)?;
+        // Draft: the output surface IS this zeroed RGB888 band; the backdrop
+        // fill (first op of every scene) covers it opaque before any sampling.
+        // Exact: stays empty — the premul pixmap is its surface.
+        let rgb = match quality {
+            Quality::Exact => Vec::new(),
+            Quality::Draft => alloc::vec![0u8; area.w as usize * area.h as usize * 3],
+        };
         Some(Self {
             pixmap,
+            rgb,
             area,
             quality,
             gutter,
@@ -587,23 +639,18 @@ impl TinySkiaCanvas {
             return true; // fully outside this band — op handled, no pixels
         }
         // Opaque source-over of an opaque colour = a plain store of the
-        // premultiplied colour (alpha 255 ⇒ premultiplied == straight). One
-        // store per pixel; the inner loop is a straight slice write.
-        let Some(src) = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, 0xFF) else {
-            return false;
-        };
-        let (oxi, oyi) = (
-            self.gutter as i32 - self.area.x,
-            self.gutter as i32 - self.area.y,
-        );
-        let pm_w = self.pixmap.width() as i32;
-        let px = self.pixmap.pixels_mut();
+        // colour. Draft writes straight RGB888 into the output band directly
+        // (the surface IS rgb); the [w*3]-byte triple-pattern slice fill is
+        // byte-identical to the old premul-store-then-demul (alpha 255 ⇒
+        // premul == straight, demul is identity). One store per pixel.
+        let aw = self.area.w as usize;
+        let (rx, ry) = (self.area.x, self.area.y);
+        let trip = [color.r, color.g, color.b];
         for wy in wy0..wy1 {
-            let ly = wy + oyi;
-            let row = (ly * pm_w) as usize;
-            let c0 = (wx0 + oxi) as usize;
-            let c1 = (wx1 + oxi) as usize;
-            px[row + c0..row + c1].fill(src);
+            let row = ((wy - ry) as usize * aw) * 3;
+            let c0 = (wx0 - rx) as usize * 3;
+            let c1 = (wx1 - rx) as usize * 3;
+            fill_rgb_triple(&mut self.rgb[row + c0..row + c1], trip);
         }
         // Exact span attribution — these pixels took the fast path.
         let drawn = (wx1 - wx0) as u64 * (wy1 - wy0) as u64;
@@ -784,11 +831,8 @@ impl TinySkiaCanvas {
         let rad = rad as i32;
         // Gradient extent along the axis (px); guard the degenerate 0.
         let extent = if vertical { r.h as i64 } else { r.w as i64 }.max(1);
-        let (oxi, oyi) = (
-            self.gutter as i32 - self.area.x,
-            self.gutter as i32 - self.area.y,
-        );
-        let pm_w = self.pixmap.width() as i32;
+        let aw = self.area.w as usize;
+        let rx = self.area.x;
         let mut drawn = 0u64;
         for wy in cy0..cy1 {
             let Some((sx0, sx1)) = Self::rrect_row_span(r, rad, wy) else {
@@ -799,15 +843,15 @@ impl TinySkiaCanvas {
             if hi <= lo {
                 continue;
             }
-            let ly = wy + oyi;
-            let row = (ly * pm_w) as usize;
+            // Draft surface IS the straight-RGB888 band; gradient stops are
+            // opaque (translucent declined above) so a plain store, no demul.
+            let row = ((wy - self.area.y) as usize * aw) * 3;
             // Vertical gradients have one colour per row — compute t once.
             let t_row = if vertical {
                 Some((((wy - r.y) as i64 * 256 / extent).clamp(0, 256)) as u32)
             } else {
                 None
             };
-            let px = self.pixmap.pixels_mut();
             for wx in lo..hi {
                 let t = match t_row {
                     Some(t) => t,
@@ -818,9 +862,10 @@ impl TinySkiaCanvas {
                 let mix =
                     |a: u8, b: u8| -> u8 { ((a as u32 * it + b as u32 * t + 128) >> 8) as u8 };
                 let (cr, cg, cb) = (mix(from.r, to.r), mix(from.g, to.g), mix(from.b, to.b));
-                if let Some(p) = PremultipliedColorU8::from_rgba(cr, cg, cb, 0xFF) {
-                    px[row + (wx + oxi) as usize] = p;
-                }
+                let i = row + (wx - rx) as usize * 3;
+                self.rgb[i] = cr;
+                self.rgb[i + 1] = cg;
+                self.rgb[i + 2] = cb;
             }
             drawn += (hi - lo) as u64;
         }
@@ -878,42 +923,33 @@ impl TinySkiaCanvas {
         if hi <= lo {
             return 0;
         }
-        let (oxi, oyi) = (
-            self.gutter as i32 - self.area.x,
-            self.gutter as i32 - self.area.y,
-        );
-        let pm_w = self.pixmap.width() as i32;
-        let ly = wy + oyi;
-        let row = (ly * pm_w) as usize;
-        let px = self.pixmap.pixels_mut();
+        // Draft writes straight RGB888 into the output band directly. Dst is
+        // always opaque RGB (the backdrop fills it first), so the d255 blend
+        // below is byte-identical to the old premul-store→demul: premul ==
+        // straight, na == 255 (demul identity).
+        let aw = self.area.w as usize;
+        let row = ((wy - self.area.y) as usize * aw) * 3;
+        let (lc, rx) = (lo, self.area.x);
         if alpha == 0xFF {
-            // Opaque source-over = a plain store of the (premult==straight)
-            // colour, one slice fill — identical to fill_rrect_draft.
-            if let Some(src) = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, 0xFF) {
-                let c0 = (lo + oxi) as usize;
-                let c1 = (hi + oxi) as usize;
-                px[row + c0..row + c1].fill(src);
-            }
+            // Opaque source-over = a plain store of the colour (triple fill).
+            let trip = [color.r, color.g, color.b];
+            let c0 = (lc - rx) as usize * 3;
+            let c1 = (hi - rx) as usize * 3;
+            fill_rgb_triple(&mut self.rgb[row + c0..row + c1], trip);
         } else {
-            // Translucent: integer d255 source-over per pixel (the glyph-blit
-            // formula with full coverage; a = paint alpha).
+            // Translucent: integer d255 source-over per pixel over straight
+            // opaque dst (the glyph-blit formula with full coverage; a = paint
+            // alpha). na == 255 always, so only the RGB channels are stored.
             let a = alpha as u32;
             let ia = 255 - a;
             for wx in lo..hi {
-                let i = row + (wx + oxi) as usize;
-                let dst = px[i];
-                let na = d255(255 * a + dst.alpha() as u32 * ia);
-                let nr = d255(color.r as u32 * a + dst.red() as u32 * ia);
-                let ng = d255(color.g as u32 * a + dst.green() as u32 * ia);
-                let nb = d255(color.b as u32 * a + dst.blue() as u32 * ia);
-                if let Some(p) = PremultipliedColorU8::from_rgba(
-                    nr.min(na) as u8,
-                    ng.min(na) as u8,
-                    nb.min(na) as u8,
-                    na as u8,
-                ) {
-                    px[i] = p;
-                }
+                let i = row + (wx - rx) as usize * 3;
+                let nr = d255(color.r as u32 * a + self.rgb[i] as u32 * ia);
+                let ng = d255(color.g as u32 * a + self.rgb[i + 1] as u32 * ia);
+                let nb = d255(color.b as u32 * a + self.rgb[i + 2] as u32 * ia);
+                self.rgb[i] = nr as u8;
+                self.rgb[i + 1] = ng as u8;
+                self.rgb[i + 2] = nb as u8;
             }
         }
         (hi - lo) as u64
@@ -1115,6 +1151,87 @@ impl TinySkiaCanvas {
             ClipFate::Masked => self.clip_mask.as_ref(),
             _ => None,
         };
+        // Draft fallback (rare — a rounded-clip overlap, ~3.2 % of pixels): the
+        // output surface is `rgb`, but the AA polygon + clip mask must go
+        // through tiny-skia. To stay BYTE-identical to the old premul path we
+        // reproduce its exact arithmetic: SEED the op's band region of the
+        // scratch `pixmap` with the current opaque-RGB output, let tiny-skia
+        // source-over the AA fill on top (the very same op as before), then
+        // demul that region straight back into `rgb`. Same dst, same
+        // tiny-skia blend, same demul ⇒ identical bytes, z-order preserved
+        // (composited the instant `fill()` runs, so a later fast-path op over
+        // these pixels still wins). Gutter is 0 for Draft, so pixmap-local ==
+        // band-local == the `rgb` pixel index.
+        if !self.rgb.is_empty() {
+            // Region = op bbox ∩ band ∩ (rect-only) clip bounds, band-local.
+            let mut wx0 = bbox.x;
+            let mut wy0 = bbox.y;
+            let mut wx1 = bbox.x + bbox.w as i32;
+            let mut wy1 = bbox.y + bbox.h as i32;
+            if !self.clips.is_empty() {
+                let cb = self.clip_bounds;
+                wx0 = wx0.max(cb.x);
+                wy0 = wy0.max(cb.y);
+                wx1 = wx1.min(cb.x + cb.w as i32);
+                wy1 = wy1.min(cb.y + cb.h as i32);
+            }
+            wx0 = wx0.max(self.area.x);
+            wy0 = wy0.max(self.area.y);
+            wx1 = wx1.min(self.area.x + self.area.w as i32);
+            wy1 = wy1.min(self.area.y + self.area.h as i32);
+            if wx1 <= wx0 || wy1 <= wy0 {
+                return;
+            }
+            let aw = self.area.w as usize;
+            let pm_w = self.pixmap.width() as usize; // == aw (gutter 0)
+            let (rx, ry) = (self.area.x, self.area.y);
+            // Seed: rgb (opaque straight) → scratch pixmap (opaque premul).
+            {
+                let px = self.pixmap.pixels_mut();
+                for wy in wy0..wy1 {
+                    let prow = (wy - ry) as usize * pm_w;
+                    let rrow = (wy - ry) as usize * aw * 3;
+                    for wx in wx0..wx1 {
+                        let lx = (wx - rx) as usize;
+                        let i3 = rrow + lx * 3;
+                        if let Some(p) = PremultipliedColorU8::from_rgba(
+                            self.rgb[i3],
+                            self.rgb[i3 + 1],
+                            self.rgb[i3 + 2],
+                            0xFF,
+                        ) {
+                            px[prow + lx] = p;
+                        }
+                    }
+                }
+            }
+            if let Some(path) = self.path_from(contours) {
+                let paint = Self::paint_for(color, alpha);
+                self.pixmap.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    mask,
+                );
+            }
+            // Demul the scratch region straight back into rgb (dst stays
+            // opaque, so this is the same identity demul the old finish did).
+            let px = self.pixmap.pixels();
+            for wy in wy0..wy1 {
+                let prow = (wy - ry) as usize * pm_w;
+                let rrow = (wy - ry) as usize * aw * 3;
+                for wx in wx0..wx1 {
+                    let lx = (wx - rx) as usize;
+                    let p = px[prow + lx].demultiply();
+                    let i3 = rrow + lx * 3;
+                    self.rgb[i3] = p.red();
+                    self.rgb[i3 + 1] = p.green();
+                    self.rgb[i3 + 2] = p.blue();
+                }
+            }
+            return;
+        }
         if let Some(path) = self.path_from(contours) {
             let paint = Self::paint_for(color, alpha);
             self.pixmap.fill_path(
@@ -1183,6 +1300,19 @@ impl TinySkiaCanvas {
             h == 0 || buf.len() >= stride * (h - 1) + w * 3,
             "buffer too small for band"
         );
+        if !self.rgb.is_empty() {
+            // Draft: the output surface ALREADY IS straight RGB888 in `rgb`
+            // (composited in draw order). No demul, no convert — a plain
+            // row-blit honouring `stride` (the band may be a sub-rect of a
+            // full frame). This is the win: the ~59 %-of-Draft demul+convert
+            // pass and the premul-pixmap round-trip are gone.
+            for row in 0..h {
+                let src = &self.rgb[row * w * 3..row * w * 3 + w * 3];
+                buf[row * stride..row * stride + w * 3].copy_from_slice(src);
+            }
+            self.stats.bands_rendered += 1;
+            return self.stats;
+        }
         let px = self.pixmap.pixels();
         for row in 0..h {
             let out = &mut buf[row * stride..row * stride + w * 3];
@@ -1489,6 +1619,11 @@ impl Canvas for TinySkiaCanvas {
         );
         let pm_w = self.pixmap.width() as i32;
         let pm_h = self.pixmap.height() as i32;
+        // Draft: composite straight RGB888 into the output band directly. Dst
+        // is opaque RGB (backdrop first), so na == 255 and the blend below is
+        // byte-identical to the premul-store→demul (the gutter is 0 for Draft
+        // so the clip-mask index ly·pm_w+lx is already the band-local pixel).
+        let draft = !self.rgb.is_empty();
         for g in glyphs {
             let m = g.mask;
             // Span ranges in mask-local coords; exact integer clamping when
@@ -1501,7 +1636,6 @@ impl Canvas for TinySkiaCanvas {
                 col0 = col0.max(cb.x - g.x);
                 col1 = col1.min(cb.x + cb.w as i32 - g.x);
             }
-            let px = self.pixmap.pixels_mut();
             for row in row0..row1 {
                 let ly = g.y + row + oyi;
                 if ly < 0 || ly >= pm_h {
@@ -1527,8 +1661,21 @@ impl Canvas for TinySkiaCanvas {
                     // Effective alpha = coverage × paint alpha.
                     let a = d255(cov * alpha as u32);
                     let i = (ly * pm_w + lx) as usize;
-                    let dst = px[i];
                     let ia = 255 - a;
+                    if draft {
+                        // Straight RGB source-over opaque dst (na == 255).
+                        let i3 = i * 3;
+                        let rgb = &mut self.rgb;
+                        let nr = d255(color.r as u32 * a + rgb[i3] as u32 * ia);
+                        let ng = d255(color.g as u32 * a + rgb[i3 + 1] as u32 * ia);
+                        let nb = d255(color.b as u32 * a + rgb[i3 + 2] as u32 * ia);
+                        rgb[i3] = nr as u8;
+                        rgb[i3 + 1] = ng as u8;
+                        rgb[i3 + 2] = nb as u8;
+                        continue;
+                    }
+                    let px = self.pixmap.pixels_mut();
+                    let dst = px[i];
                     let na = d255(255 * a + dst.alpha() as u32 * ia);
                     let nr = d255(color.r as u32 * a + dst.red() as u32 * ia);
                     let ng = d255(color.g as u32 * a + dst.green() as u32 * ia);
@@ -1647,7 +1794,11 @@ impl Canvas for TinySkiaCanvas {
         let pm_w = self.pixmap.width() as i32;
         let pm_h = self.pixmap.height() as i32;
         let rgba = image.rgba();
-        let px = self.pixmap.pixels_mut();
+        // Draft: composite straight RGB888 into the output band directly. Dst
+        // is opaque RGB (backdrop first), so na == 255 and the blend is
+        // byte-identical to the premul-store→demul (gutter 0 ⇒ the index
+        // ly·pm_w+lx is the band-local pixel; ·3 is the rgb byte offset).
+        let draft = !self.rgb.is_empty();
         for wy in y0..y1 {
             let ly = wy + oyi;
             if ly < 0 || ly >= pm_h {
@@ -1677,6 +1828,27 @@ impl Canvas for TinySkiaCanvas {
                 }
                 let (sr, sg, sb) = (rgba[si] as u32, rgba[si + 1] as u32, rgba[si + 2] as u32);
                 let i = (ly * pm_w + lx) as usize;
+                let ia = 255 - a;
+                if draft {
+                    let i3 = i * 3;
+                    let buf = &mut self.rgb;
+                    if a == 0xFF {
+                        // Opaque copy (ia = 0 ⇒ channel = d255(255·s) = s).
+                        buf[i3] = sr as u8;
+                        buf[i3 + 1] = sg as u8;
+                        buf[i3 + 2] = sb as u8;
+                    } else {
+                        // Straight-alpha source over opaque straight dst.
+                        let nr = d255(sr * a + buf[i3] as u32 * ia);
+                        let ng = d255(sg * a + buf[i3 + 1] as u32 * ia);
+                        let nb = d255(sb * a + buf[i3 + 2] as u32 * ia);
+                        buf[i3] = nr as u8;
+                        buf[i3 + 1] = ng as u8;
+                        buf[i3 + 2] = nb as u8;
+                    }
+                    continue;
+                }
+                let px = self.pixmap.pixels_mut();
                 if a == 0xFF {
                     // Opaque copy — byte-identical to the blend below
                     // (ia = 0 ⇒ each channel = d255(255·s) = s), split out
@@ -1690,12 +1862,11 @@ impl Canvas for TinySkiaCanvas {
                 }
                 // Straight-alpha source over premultiplied dst: the glyph
                 // formula with (sr, a) in place of (color × coverage).
-                let dst = px[i];
-                let ia = 255 - a;
-                let na = d255(255 * a + dst.alpha() as u32 * ia);
-                let nr = d255(sr * a + dst.red() as u32 * ia);
-                let ng = d255(sg * a + dst.green() as u32 * ia);
-                let nb = d255(sb * a + dst.blue() as u32 * ia);
+                let dpx = px[i];
+                let na = d255(255 * a + dpx.alpha() as u32 * ia);
+                let nr = d255(sr * a + dpx.red() as u32 * ia);
+                let ng = d255(sg * a + dpx.green() as u32 * ia);
+                let nb = d255(sb * a + dpx.blue() as u32 * ia);
                 // Channels ≤ alpha by monotonicity of d255 (sr ≤ 255 and
                 // dst.red ≤ dst.alpha ⇒ each numerator ≤ the alpha
                 // numerator); min() guards the constructor anyway.

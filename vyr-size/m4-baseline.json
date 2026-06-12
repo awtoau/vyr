@@ -1,12 +1,12 @@
 {
   "Draft": {
     "frame_fnv1a": "0xf98cbbdddd6da1ba",
-    "heap_peak": 59841,
-    "insns_per_frame": 11500000
+    "heap_peak": 82881,
+    "insns_per_frame": 8500000
   },
   "Exact": {
     "frame_fnv1a": "0x24dcaff531c6eb01",
     "heap_peak": 106409,
-    "insns_per_frame": 75500000
+    "insns_per_frame": 80000000
   }
 }
