@@ -124,9 +124,10 @@ fn structure_band_equivalence() {
 
 #[test]
 fn remaining_structure_widgets_still_error() {
-    // dropdown/table/chart stay honest errors until the placeholder wave is
+    // dropdown/table stay honest errors until the placeholder wave is
     // coordinated on awto-vyvanse#321 (the farm contract encodes them).
-    for name in ["vy_dropdown", "vy_table", "vy_chart"] {
+    // vy_chart graduated to a real F4 composite (renders from IR `points`).
+    for name in ["vy_dropdown", "vy_table"] {
         let ir = format!(
             r#"{{"w":120,"h":120,"root":{{"name":"view","children":[
                 {{"name":"{name}","attrs":{{"x":"0","y":"0","width":"50","height":"20"}}}}]}}}}"#

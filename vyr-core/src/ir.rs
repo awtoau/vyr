@@ -17,10 +17,12 @@
 //! through the caller's [`Fonts`] (registry + glyph cache — see
 //! [`crate::text`]). F6 brings images: `vy_image` / `vy_imagebutton` blit
 //! their `src` from the caller's [`Assets`] registry (decoded RGBA — see
-//! [`crate::assets`]; decode lives in the shell, invariant I7). Widgets
+//! [`crate::assets`]; decode lives in the shell, invariant I7). F4 brings
+//! composites: `vy_chart` paints a single-series line/bar chart from the IR's
+//! declared `points` (NOT invented data — see [`paint_chart`]). Widgets still
 //! needing marks or structure beyond a single text run
-//! (radio/checkbox/dropdown/table/chart) stay hard errors — the farm
-//! surfaces them as honest skips, exactly like TGX's `unsupported` set.
+//! (dropdown/table/toggle_label) stay hard errors — the farm surfaces them as
+//! honest skips, exactly like TGX's `unsupported` set.
 //! Unknown `vy_` names are `UnknownWidget` errors before any pixel. A `text`
 //! whose font isn't registered, a codepoint the font can't map, a `src` not
 //! in the registry (`MissingAsset`), or a `vy_image` with NO `src` at all
@@ -289,6 +291,24 @@ const KNOB_RING: Rgb = Rgb {
     g: 0xB0,
     b: 0xB0,
 };
+/// vy_chart grid div-line colour (light neutral, the lv_chart look).
+const GRID: Rgb = Rgb {
+    r: 0xD0,
+    g: 0xD0,
+    b: 0xD0,
+};
+/// vy_chart plot background when the IR declares no `background`.
+const CHART_BG: Rgb = Rgb {
+    r: 0xFF,
+    g: 0xFF,
+    b: 0xFF,
+};
+/// vy_chart frame/border colour (the plot box outline).
+const CHART_FRAME: Rgb = Rgb {
+    r: 0x90,
+    g: 0x90,
+    b: 0x90,
+};
 /// Default text ink when the IR names no `color` — black-on-paper, a
 /// documented widget-default chrome entry (see module docs).
 const INK: Rgb = Rgb { r: 0, g: 0, b: 0 };
@@ -429,6 +449,34 @@ impl Node {
         }
         ((v - min) / (max - min)).clamp(0.0, 1.0)
     }
+
+    /// The chart series: `points` parsed as a CSV of numbers (the single
+    /// y-series). Empty tokens (a trailing comma, an empty string) are
+    /// skipped; a non-empty non-numeric token is junk IR — a hard error, not
+    /// a silently-dropped point. Absent `points` ⇒ empty series (the chart
+    /// renders just its frame + grid). vyr paints what the IR declares — it
+    /// never invents demo data the way each backend currently does.
+    fn chart_points(&self) -> Result<Vec<f32>, RenderError> {
+        let Some(s) = self.str_attr("points") else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for tok in s.split(',') {
+            let t = tok.trim();
+            if t.is_empty() {
+                continue;
+            }
+            match t.parse::<f32>() {
+                Ok(v) => out.push(v),
+                Err(_) => {
+                    return Err(RenderError::BadIr(format!(
+                        "vy_chart points has a non-numeric value {t:?}"
+                    )));
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// Box-family names: plain containers/shapes — IR-authoritative chrome only.
@@ -449,7 +497,7 @@ const BOXES: &[&str] = &[
 /// because flipping error→placeholder changes the farm contract the fixture
 /// generator and smoke encode). `vy_radio`/`vy_checkbox` graduated to real
 /// composites in F4 wave 1.
-const NEEDS_STRUCTURE: &[&str] = &["vy_toggle_label", "vy_dropdown", "vy_table", "vy_chart"];
+const NEEDS_STRUCTURE: &[&str] = &["vy_toggle_label", "vy_dropdown", "vy_table"];
 
 // F4 wave-1 mark palette — matches vyvanse's #313 primitive composites
 // (cases.py `_RADIO_RING`/`_RADIO_DOT`), NOT vyr's LVGL-flavoured widget
@@ -666,6 +714,10 @@ fn walk(
             _ if BOXES.contains(&name) => {}
             "vy_circle" | "vy_ellipse" | "vy_line" | "vy_slider" | "vy_progress" | "vy_bar"
             | "vy_toggle" | "vy_switch" | "vy_gauge" | "vy_arc" => {}
+            // Parse parity: a junk points/chart_type/range errors in every band.
+            "vy_chart" => {
+                chart_params(n)?;
+            }
             other => {
                 return Err(RenderError::UnknownWidget(other.to_string()));
             }
@@ -731,6 +783,7 @@ fn walk(
         "vy_radio" | "vy_checkbox" => {
             draw_mark_widget(n, r, name == "vy_radio", ink, c, fonts)?;
         }
+        "vy_chart" => paint_chart(n, r, c)?,
         "vy_gauge" | "vy_arc" => {
             // Full ring: the circular track (the TGX gauge shape). Sweep arcs
             // need an arc primitive — F4. IR `color` wins over the track grey.
@@ -984,6 +1037,188 @@ fn paint_box(n: &Node, r: Rect, c: &mut TinySkiaCanvas) {
         c.fill_rrect(r, rad, fill, n.fill_alpha());
     }
     paint_border(n, r, rad, c);
+}
+
+/// vy_chart parse + validation, shared by the paint and the band-invisible
+/// validation arm so a junk `points`/`chart_type`/`range` errors in EVERY band
+/// (banded and full-frame agree on errors, like every other widget). Returns
+/// `(bar?, range_min, range_max, series)`.
+fn chart_params(n: &Node) -> Result<(bool, f32, f32, Vec<f32>), RenderError> {
+    let bar = match n.str_attr("chart_type").as_deref() {
+        None | Some("line") => false,
+        Some("bar") => true,
+        Some(other) => {
+            return Err(RenderError::BadIr(format!(
+                "vy_chart chart_type {other:?} is not line|bar"
+            )));
+        }
+    };
+    // LVGL's default y-range is 0..100; declared range_min/range_max win.
+    let rmin = n.f32_attr("range_min", 0.0);
+    let rmax = n.f32_attr("range_max", 100.0);
+    if !(rmax > rmin) {
+        return Err(RenderError::BadIr(format!(
+            "vy_chart range_max ({rmax}) must exceed range_min ({rmin})"
+        )));
+    }
+    Ok((bar, rmin, rmax, n.chart_points()?))
+}
+
+/// vy_chart (F4 composite) — a single-series line/bar chart painted from the
+/// IR's declared `points`, NOT invented demo data. Plot box (declared
+/// `background` else white, + a 1 px frame), an optional grid (`div_count_x`
+/// vertical / `div_count_y` horizontal interior div-lines), then the series
+/// mapped into an interior inset by the marker radius: index → x across the
+/// width, value → y by the `[range_min,range_max]` scale (default LVGL 0..100,
+/// value clamped). `chart_type` line (default: polyline + a marker disc per
+/// point — the only diagonal, hence AA in Exact / hard in Draft) or bar (a
+/// column per point up from the baseline). Series colour `line_color`/`color`
+/// (default ACCENT), width `line_width`. Frame + grid are axis-aligned, so they
+/// are crisp 1 px FILL-rects (the `draw_inside_border` rule — a stroke would
+/// straddle + AA-wash). The whole composite is integer-mapped inside the frame,
+/// so it is band-exact like every other widget — no clip needed.
+fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderError> {
+    let Rect { x, y, w, h } = r;
+    if w == 0 || h == 0 {
+        return Ok(());
+    }
+    let (bar, rmin, rmax, pts) = chart_params(n)?;
+
+    // Plot background under everything.
+    c.fill_rrect(
+        r,
+        0,
+        n.color("background").unwrap_or(CHART_BG),
+        n.fill_alpha(),
+    );
+
+    // Series stroke + marker radius; the interior is inset by the marker
+    // radius (+1 to clear the 1 px frame) so points/strokes sit fully inside.
+    let col = n
+        .color("line_color")
+        .or_else(|| n.color("color"))
+        .unwrap_or(ACCENT);
+    let lw = n.u32_attr("line_width", 2).max(1);
+    let mr = (lw + 1).max(2) as i32;
+    let pad = mr + 1;
+    let px0 = x + pad;
+    let py0 = y + pad;
+    let pw = (w as i32 - 2 * pad).max(1);
+    let ph = (h as i32 - 2 * pad).max(1);
+
+    // Grid — evenly-spaced interior div-lines, crisp axis-aligned fill-rects.
+    let vdiv = n.u32_attr("div_count_x", 0);
+    for i in 1..=vdiv {
+        let gx = px0 + (i as i32 * (pw - 1)) / (vdiv as i32 + 1);
+        c.fill_rrect(
+            Rect {
+                x: gx,
+                y: py0,
+                w: 1,
+                h: ph as u32,
+            },
+            0,
+            GRID,
+            0xFF,
+        );
+    }
+    let hdiv = n.u32_attr("div_count_y", 0);
+    for i in 1..=hdiv {
+        let gy = py0 + (i as i32 * (ph - 1)) / (hdiv as i32 + 1);
+        c.fill_rrect(
+            Rect {
+                x: px0,
+                y: gy,
+                w: pw as u32,
+                h: 1,
+            },
+            0,
+            GRID,
+            0xFF,
+        );
+    }
+
+    // The series.
+    if !pts.is_empty() {
+        let span = rmax - rmin;
+        let np = pts.len() as i32;
+        let map_x = |i: i32| -> i32 {
+            if np == 1 {
+                px0 + (pw - 1) / 2
+            } else {
+                px0 + (i * (pw - 1)) / (np - 1)
+            }
+        };
+        let map_y = |v: f32| -> i32 {
+            let t = ((v - rmin) / span).clamp(0.0, 1.0);
+            // Round-half-up by integer truncation (t·(ph−1) ≥ 0) — no libm
+            // `round`, deterministic across ISAs like the rest of the core.
+            py0 + (ph - 1) - (t * (ph as f32 - 1.0) + 0.5) as i32
+        };
+        if bar {
+            let base = py0 + ph - 1;
+            let slot = (pw / np).max(1);
+            let bw = (slot * 6 / 10).max(1) as u32;
+            for (i, &v) in pts.iter().enumerate() {
+                let cx = map_x(i as i32);
+                let top = map_y(v);
+                let bh = (base - top + 1).max(0) as u32;
+                if bh > 0 {
+                    c.fill_rrect(
+                        Rect {
+                            x: cx - bw as i32 / 2,
+                            y: top,
+                            w: bw,
+                            h: bh,
+                        },
+                        0,
+                        col,
+                        0xFF,
+                    );
+                }
+            }
+        } else {
+            // Polyline first, then a marker disc per point on top (clean joints).
+            let mut prev: Option<(i32, i32)> = None;
+            for (i, &v) in pts.iter().enumerate() {
+                let p = (map_x(i as i32), map_y(v));
+                if let Some((ax, ay)) = prev {
+                    c.line(ax, ay, p.0, p.1, lw, col, 0xFF);
+                }
+                prev = Some(p);
+            }
+            for (i, &v) in pts.iter().enumerate() {
+                c.disc(map_x(i as i32), map_y(v), mr as u32, col, 0xFF);
+            }
+        }
+    }
+
+    // The 1 px frame on top — four crisp axis-aligned edge-rects.
+    c.fill_rrect(Rect { x, y, w, h: 1 }, 0, CHART_FRAME, 0xFF);
+    c.fill_rrect(
+        Rect {
+            x,
+            y: y + h as i32 - 1,
+            w,
+            h: 1,
+        },
+        0,
+        CHART_FRAME,
+        0xFF,
+    );
+    c.fill_rrect(Rect { x, y, w: 1, h }, 0, CHART_FRAME, 0xFF);
+    c.fill_rrect(
+        Rect {
+            x: x + w as i32 - 1,
+            y,
+            w: 1,
+            h,
+        },
+        0,
+        CHART_FRAME,
+        0xFF,
+    );
+    Ok(())
 }
 
 fn paint_border(n: &Node, r: Rect, rad: u32, c: &mut TinySkiaCanvas) {

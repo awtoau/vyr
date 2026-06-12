@@ -1584,9 +1584,9 @@
     {
       "file": "vy_chart.json",
       "label": "vy_chart",
-      "expect": "error",
+      "expect": "render",
       "kind": "widget",
-      "note": "line/data chart (real backend chart widget)",
+      "note": "line/data chart — vyr renders the IR-declared `points` series (F4 composite); a point-less chart is the empty plot frame. expect flipped error→render pending the vyvanse generator regen (see vyr-coordination-log: vy_chart Position B).",
       "sha256": "b9f177d4fbfb1b43a6a67dc70a5d8c74e486d0f914e9891c9ea024f9b22d1513",
       "probes": {
         "geometry": [

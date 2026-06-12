@@ -95,9 +95,10 @@ fn ir_band_equivalence() {
 
 #[test]
 fn structure_widget_is_honest_error() {
-    // Post-F5, label/lcd/button render; widgets needing marks/structure
-    // beyond a text run (dropdown/radio/checkbox/table/chart) still hard-
-    // error (I6). Text-without-fonts honesty lives in tests/text_golden.rs.
+    // Post-F5, label/lcd/button render; post-F4, radio/checkbox/chart render
+    // too. The widgets still needing marks/structure beyond a text run
+    // (dropdown/table/toggle_label) hard-error (I6). Text-without-fonts
+    // honesty lives in tests/text_golden.rs.
     let ir = r#"{"w":120,"h":120,"root":{"name":"view","children":[
         {"name":"vy_dropdown","attrs":{"x":"0","y":"0","width":"100","height":"20","text":"hi"}}]}}"#;
     let mut buf = vec![0u8; (W * H * 3) as usize];

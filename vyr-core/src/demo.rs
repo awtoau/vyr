@@ -34,6 +34,27 @@ pub const DEMO_IR: &str = r##"{
   ]}
 }"##;
 
+/// The F4 chart fixture — a line chart (grid + polyline + per-point markers)
+/// over a bar chart, both single-series and painted from IR-declared `points`
+/// (NOT invented demo data), geometry crossing the 30/60/90 band seams of the
+/// 120×120 frame so the composite is proven band-exact at Exact and Draft.
+/// Shared by `tests/chart_golden.rs`. The series is the deterministic data the
+/// oracle scores backends against — see vyr-coordination's proposed vy_chart
+/// attribute surface (`points`/`chart_type`/`range_*`/`div_count_*`).
+pub const CHART_IR: &str = r##"{
+  "w": 120, "h": 120,
+  "root": {"name": "view", "children": [
+    {"name": "vy_frame", "attrs": {"x": "0", "y": "0", "width": "120", "height": "120",
+      "background": "#F0F0F0"}},
+    {"name": "vy_chart", "attrs": {"x": "8", "y": "8", "width": "104", "height": "48",
+      "points": "10,60,30,85,45,90,55", "range_min": "0", "range_max": "100",
+      "div_count_x": "6", "div_count_y": "4", "line_color": "#1E5AA8", "line_width": "2"}},
+    {"name": "vy_chart", "attrs": {"x": "8", "y": "64", "width": "104", "height": "48",
+      "chart_type": "bar", "points": "25,55,40,75,50,88", "range_min": "0", "range_max": "100",
+      "div_count_y": "4", "line_color": "#1E5AA8"}}
+  ]}
+}"##;
+
 /// The F5 text fixture — label / button-with-centred-label / lcd, all three
 /// runs crossing the 30/60/90 band seams of the 120×120 frame (the 17-row
 /// uneven split cuts them elsewhere again). Exercises: the default font

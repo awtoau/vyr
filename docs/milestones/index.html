@@ -206,8 +206,9 @@ scaling so the actual pixels are inspectable.)</p>
   </div>
 </div>
 
-<div class="card">
-  <div class="body">
+<div class="stage">
+  <div class="imgs"><img src="f16-draft-curves.png" alt="F16 Exact vs Draft"></div>
+  <div>
     <h2>F16 Draft v3 — fully integer + gutter-less: 1.30× LVGL <span class="meta">2026-06-12 · 64ec376/faaf4e6</span></h2>
     <p><strong>"Work exactly where we're slow."</strong> An x86 per-function profile
     of Draft overturned the guess — the remaining cost was <em>not</em> the curves
@@ -228,6 +229,32 @@ scaling so the actual pixels are inspectable.)</p>
     deletes the ~72% the profile found and should put Draft <em>under</em> LVGL. Full
     numbers + the per-function profile in
     <code>docs/measurements/f9-static.md</code>.</p>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="imgs">
+    <img src="f4-chart-exact.png" alt="F4 chart — Exact">
+    <img src="f4-chart-draft.png" alt="F4 chart — Draft">
+  </div>
+  <div>
+    <h2>F4 — vy_chart: the chart gets an oracle <span class="meta">2026-06-12 · (see git)</span></h2>
+    <p>The first <strong>data-bound</strong> widget. A single-series line (grid +
+    polyline + a marker disc per point) or bar chart, painted from the IR's
+    declared <code>points</code> — <strong>not</strong> invented demo data the way
+    each export backend currently does (Qt fakes one series, Flutter another, TGX a
+    third — they don't even agree with each other). vyr renders exactly what the IR
+    declares, so the series is <em>deterministic</em> and the backends finally have
+    a byte-exact reference to score against.</p>
+    <p>Left Exact (the AA series line — the oracle), right Draft (hard-edged,
+    integer). Frame + grid are crisp 1&nbsp;px fill-rects (the inside-border rule);
+    only the diagonal series stroke is AA/hard. Integer-mapped inside the frame ⇒
+    <strong>band-exact at both tiers</strong>, its own goldens
+    (<code>chart_golden.rs</code>), and a junk-<code>points</code> token is an honest
+    <code>BadIr</code>, never a silently-dropped point. This overturns the old
+    "charts = runtime data = honest placeholder" position: the static shape +
+    sample data live in the IR (goldenable); only <em>live</em> data is the runtime
+    layer.</p>
   </div>
 </div>
 
