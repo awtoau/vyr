@@ -32,6 +32,7 @@ COMMANDS = {
     "ci": "THE single comprehensive gate (run after every change): gate + M4 insn-count gate + bench + size-mcu + anim(+ARM) + ladder + perf-history, run-all-collect-all, one summary. --quick (~1-2 min): Draft-only M4, 60 anim frames, no video/ARM. Full run = nightly unit.",
     "ladder": "F18 resolution ladder 120→4K: ns/px full+incremental, 60fps headroom, dirty %; gates vs vyr-rig/baseline.json when present (--record re-records — commit separately)",
     "perf-history": "append the latest rig run (tmp/rig-*.json) to docs/perf/history.jsonl + regenerate docs/perf/index.html SVG charts (--regen-only rebuilds pages without appending)",
+    "track": "snapshot the valuable numbers (size/memory/perf/fidelity) vs the current git commit (+dirty) → docs/metrics/history.jsonl + regenerate docs/metrics/index.html trend charts (--regen-only rebuilds without appending). Run regularly for long-term tracking.",
     "gate": "the full pre-commit gate: fmt-check + clippy + test + check-mcu",
 }
 
@@ -737,6 +738,10 @@ def cmd_perf_history(rest: list[str]) -> int:
     return _run(["python3", "scripts/perf-history.py", *rest])
 
 
+def cmd_track(rest: list[str]) -> int:
+    return _run(["python3", "scripts/metrics-history.py", *rest])
+
+
 def cmd_gate(_rest: list[str]) -> int:
     for step in (cmd_fmt_check, cmd_clippy, cmd_test, cmd_check_mcu):
         rc = step([])
@@ -780,6 +785,10 @@ def cmd_ci(rest: list[str]) -> int:
         ("ladder", cmd_ladder, []),
         ("perf-history", cmd_perf_history, []),
     ]
+    # The long-term metrics snapshot (size/memory/perf vs git commit + graphs).
+    # Full run only — it re-measures size + M4, ~10 s; --quick stays lean.
+    if not quick:
+        steps.append(("track", cmd_track, []))
     results: list[tuple[str, int, float]] = []
     t_all = time.monotonic()
     for name, fn, args in steps:
@@ -822,6 +831,7 @@ HANDLERS = {
     "anim": cmd_anim,
     "ladder": cmd_ladder,
     "perf-history": cmd_perf_history,
+    "track": cmd_track,
     "gate": cmd_gate,
 }
 
