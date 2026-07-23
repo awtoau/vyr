@@ -508,6 +508,100 @@ fn bench_ir_scene_draft() -> f64 {
     render_demo_quality(Quality::Draft)
 }
 
+/// F16 `Quality::Fast` (#27) — the middle tier's blended scene cost. Read it
+/// as `(fast - draft) / (exact - draft)`: the fraction of the AA bill Fast
+/// still pays, which is exactly what anti-aliasing the curves costs.
+fn bench_ir_scene_fast() -> f64 {
+    render_demo_quality(Quality::Fast)
+}
+
+/// The 480x270 PANEL scene at one tier — the REPRESENTATIVE frame (it is the
+/// shape of the M4/LVGL fixture: a lot of flat area, a few curved widgets),
+/// where the 120x120 DEMO_IR is deliberately curve-dense. The middle tier's
+/// verdict differs sharply between the two, and quoting only one of them
+/// would be picking the answer.
+fn render_panel_quality(quality: Quality) -> f64 {
+    let mut fonts = bench_fonts();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (PANEL_W * PANEL_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with_quality(
+            PANEL_NEXT_IR,
+            &mut fonts,
+            &assets,
+            Rect {
+                x: 0,
+                y: 0,
+                w: PANEL_W,
+                h: PANEL_H,
+            },
+            &mut buf,
+            (PANEL_W * 3) as usize,
+            quality,
+        )
+        .expect("panel renders");
+    })
+}
+
+fn bench_panel_exact() -> f64 {
+    render_panel_quality(Quality::Exact)
+}
+
+fn bench_panel_fast() -> f64 {
+    render_panel_quality(Quality::Fast)
+}
+
+fn bench_panel_draft() -> f64 {
+    render_panel_quality(Quality::Draft)
+}
+
+/// The gauge ring — the #27 curve — at one tier, on its own band canvas.
+/// `prim/ring_{exact,fast,draft}` is the per-op price list for the tier
+/// decision: Fast must equal Exact here (it routes the curve to the same
+/// tiny-skia polygon) and Draft must be far below both.
+fn bench_ring_quality(quality: Quality) -> f64 {
+    let mut c = TinySkiaCanvas::new_with_quality(
+        Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 120,
+        },
+        quality,
+    )
+    .expect("pixmap");
+    // Seed an opaque backdrop: the Draft/Fast rgb surface composites over it,
+    // so the measured op is a source-over onto real pixels, not onto zeroes.
+    c.fill_rrect(
+        Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 120,
+        },
+        0,
+        Rgb {
+            r: 0x22,
+            g: 0x26,
+            b: 0x2B,
+        },
+        0xFF,
+    );
+    measure(|| c.ring(60, 60, 24, 4, INK, 0xFF))
+}
+
+fn bench_ring_exact() -> f64 {
+    bench_ring_quality(Quality::Exact)
+}
+
+fn bench_ring_fast() -> f64 {
+    bench_ring_quality(Quality::Fast)
+}
+
+fn bench_ring_draft() -> f64 {
+    bench_ring_quality(Quality::Draft)
+}
+
 // --- Scope benches ---------------------------------------------------------
 // Dedicated dense scope-like workload to compare decimation modes in the same
 // renderer path and quality tier.
@@ -674,6 +768,57 @@ fn demo_bytes(quality: Quality) -> Vec<u8> {
 /// differing-pixel count + %, max single-channel error, and the fast-path
 /// coverage % (how much of the frame the integer path actually carried).
 /// Logged, not gated (Draft is its own tier; it is NEVER asserted == Exact).
+fn log_fast_fidelity() {
+    // #27: the middle tier's fidelity, stated the way the issue demands —
+    // against BOTH neighbours, same renderer, same scene.
+    let exact = demo_bytes(Quality::Exact);
+    let fast = demo_bytes(Quality::Fast);
+    let draft = demo_bytes(Quality::Draft);
+    let total_px = (DEMO_W * DEMO_H) as u64;
+    let count = |a: &[u8], b: &[u8]| -> (u64, u8) {
+        let mut n = 0u64;
+        let mut m = 0u8;
+        for (x, y) in a.chunks_exact(3).zip(b.chunks_exact(3)) {
+            if x != y {
+                n += 1;
+                for k in 0..3 {
+                    m = m.max(x[k].abs_diff(y[k]));
+                }
+            }
+        }
+        (n, m)
+    };
+    let (fe, fem) = count(&fast, &exact);
+    let (fd, fdm) = count(&fast, &draft);
+    let mut fonts = Fonts::new();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (DEMO_W * DEMO_H * 3) as usize];
+    let stats = vyr_core::render_with_quality(
+        DEMO_IR,
+        &mut fonts,
+        &assets,
+        Rect {
+            x: 0,
+            y: 0,
+            w: DEMO_W,
+            h: DEMO_H,
+        },
+        &mut buf,
+        (DEMO_W * 3) as usize,
+        Quality::Fast,
+    )
+    .expect("demo renders");
+    log(&format!(
+        "#27 Fast fidelity (scene/ir_full): vs Exact {fe}/{total_px} px differ \
+         (max channel {fem}/255); vs Draft {fd}/{total_px} px differ (max channel {fdm}/255); \
+         integer fast-path coverage {}/{} delivered px ({:.1}%) — the shortfall IS the \
+         anti-aliased curve area",
+        stats.fastpath_pixels,
+        stats.pixels_written,
+        100.0 * stats.fastpath_pixels as f64 / stats.pixels_written as f64,
+    ));
+}
+
 fn log_draft_fidelity() {
     let exact = demo_bytes(Quality::Exact);
     let draft = demo_bytes(Quality::Draft);
@@ -783,6 +928,43 @@ fn benches() -> Vec<Bench> {
             name: "scene/ir_full_draft",
             pixels: (DEMO_W * DEMO_H) as f64,
             run: bench_ir_scene_draft,
+        },
+        Bench {
+            name: "scene/panel_exact",
+            pixels: (PANEL_W * PANEL_H) as f64,
+            run: bench_panel_exact,
+        },
+        Bench {
+            name: "scene/panel_fast",
+            pixels: (PANEL_W * PANEL_H) as f64,
+            run: bench_panel_fast,
+        },
+        Bench {
+            name: "scene/panel_draft",
+            pixels: (PANEL_W * PANEL_H) as f64,
+            run: bench_panel_draft,
+        },
+        Bench {
+            name: "scene/ir_full_fast",
+            pixels: (DEMO_W * DEMO_H) as f64,
+            run: bench_ir_scene_fast,
+        },
+        // #27: the curve primitive priced at all three tiers. The ring bbox
+        // (radius 24 + width 4 ⇒ 52x52) is the ns/px normalizer.
+        Bench {
+            name: "prim/ring_exact",
+            pixels: 52.0 * 52.0,
+            run: bench_ring_exact,
+        },
+        Bench {
+            name: "prim/ring_fast",
+            pixels: 52.0 * 52.0,
+            run: bench_ring_fast,
+        },
+        Bench {
+            name: "prim/ring_draft",
+            pixels: 52.0 * 52.0,
+            run: bench_ring_draft,
         },
         Bench {
             name: "prim/fill_rect0_exact",
@@ -898,6 +1080,22 @@ fn main() -> std::process::ExitCode {
         "mode={mode} (warmup={WARMUP} rounds={ROUNDS} iters={ITERS})"
     ));
 
+    // `vyr-bench only <substring>` runs just the matching rows, in a tight
+    // loop, and prints nothing else — the shape `perf record` needs to
+    // attribute cost to ONE tier's render path (#27) instead of to the
+    // 30-bench average.
+    if mode == "only" {
+        let want = std::env::args().nth(2).unwrap_or_default();
+        for b in benches() {
+            if !b.name.contains(&want) {
+                continue;
+            }
+            let ns = (b.run)();
+            log(&format!("{:24} {:9.1} ns/iter", b.name, ns));
+        }
+        return std::process::ExitCode::SUCCESS;
+    }
+
     let mut results = std::collections::BTreeMap::new();
     let mut raw_ns = std::collections::BTreeMap::new();
     for b in benches() {
@@ -959,6 +1157,49 @@ fn main() -> std::process::ExitCode {
             se / sd
         ));
     }
+    // #27: where the middle tier lands between its two neighbours. The
+    // fraction is the whole verdict — 0% means Fast is Draft-priced, 100%
+    // means anti-aliasing the curves cost the entire Exact bill.
+    if let (Some(se), Some(sf), Some(sd)) = (
+        raw_ns.get("scene/panel_exact"),
+        raw_ns.get("scene/panel_fast"),
+        raw_ns.get("scene/panel_draft"),
+    ) {
+        let frac = 100.0 * (sf - sd) / (se - sd);
+        log(&format!(
+            "#27 Fast tier (PANEL 480x270, the representative frame): Exact {se:.0} ns / \
+             Fast {sf:.0} ns / Draft {sd:.0} ns — Fast is {:.2}x Draft and {:.2}x cheaper \
+             than Exact, i.e. {frac:.0}% of the Exact-over-Draft bill",
+            sf / sd,
+            se / sf
+        ));
+    }
+    if let (Some(se), Some(sf), Some(sd)) = (
+        raw_ns.get("scene/ir_full_exact"),
+        raw_ns.get("scene/ir_full_fast"),
+        raw_ns.get("scene/ir_full_draft"),
+    ) {
+        let frac = 100.0 * (sf - sd) / (se - sd);
+        log(&format!(
+            "#27 Fast tier (DEMO_IR 120x120, curve-dense): Exact {se:.0} ns / Fast {sf:.0} ns / \
+             Draft {sd:.0} ns — Fast is {:.2}x Draft and {:.2}x cheaper than Exact, \
+             i.e. it pays {frac:.0}% of the Exact-over-Draft bill to anti-alias the curves",
+            sf / sd,
+            se / sf
+        ));
+    }
+    if let (Some(re), Some(rf), Some(rd)) = (
+        raw_ns.get("prim/ring_exact"),
+        raw_ns.get("prim/ring_fast"),
+        raw_ns.get("prim/ring_draft"),
+    ) {
+        log(&format!(
+            "#27 Fast curve primitive (ring r24 w4): Exact {re:.0} ns / Fast {rf:.0} ns / \
+             Draft {rd:.0} ns — Fast pays Exact's price for the curve itself \
+             (+{:.0}% for the rgb scratch round-trip), which is the tier's whole cost model",
+            100.0 * (rf - re) / re
+        ));
+    }
     if let (Some(sn), Some(sm)) = (
         raw_ns.get("scene/scope_full_none_draft"),
         raw_ns.get("scene/scope_full_minmax_draft"),
@@ -970,6 +1211,7 @@ fn main() -> std::process::ExitCode {
         ));
     }
     log_draft_fidelity();
+    log_fast_fidelity();
 
     match scaling_assertion() {
         Ok(lines) => {
