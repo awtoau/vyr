@@ -23,6 +23,22 @@ void    sh_write0(const char *s);
 int32_t sh_clock_cs(void);
 void    sh_exit(int ok);
 
+#ifdef DUMP_FRAME
+/* Host-file semihosting, compiled ONLY into the --dump-frame build (see
+ * startup.c). Lets the fidelity comparison show a REAL LVGL image of this
+ * scene instead of asserting what it would look like. The measurement ELF is
+ * built without -DDUMP_FRAME and contains none of it. */
+int sh_open_wb(const char *name);
+int sh_write(int handle, const void *buf, uint32_t len);
+int sh_close(int handle);
+#ifndef DUMP_FRAME_PATH
+#define DUMP_FRAME_PATH "lvgl-frame.rgb888"
+#endif
+/* -1 = not dumping. Set only around the dedicated dump render, so the timed
+ * loop never pays for file I/O even in this build. */
+static int g_dump_fd = -1;
+#endif
+
 /* LVGL assert handler hook (referenced by lv_conf.h LV_ASSERT_HANDLER). */
 void lvm4_assert_fail(void)
 {
@@ -133,6 +149,15 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
         g_hash ^= px_map[i];
         g_hash *= FNV_PRIME;
     }
+#ifdef DUMP_FRAME
+    /* Bands arrive top-to-bottom and full-width in LV_DISPLAY_RENDER_MODE_
+     * PARTIAL with this buffer size, so appending each band's tight bytes
+     * yields the whole frame in raster order. run.py asserts the byte count
+     * is exactly FRAME_W*FRAME_H*3 rather than trusting that. */
+    if (g_dump_fd >= 0) {
+        (void)sh_write(g_dump_fd, px_map, n);
+    }
+#endif
     g_bands_flushed++;
     g_px_flushed += (uint32_t)w * (uint32_t)h;
     lv_display_flush_ready(disp);
@@ -317,6 +342,29 @@ int main(void)
         *p = '\0';
         sh_write0(g_line);
     }
+
+#ifdef DUMP_FRAME
+    /* --- fidelity dump: one extra full render, bands appended to a host file.
+     * Done AFTER the reported frame-1 numbers and BEFORE the timed loop, so it
+     * perturbs neither. #27 side-by-side. */
+    {
+        int fd = sh_open_wb(DUMP_FRAME_PATH);
+        if (fd < 0) {
+            sh_write0("FATAL [lvgl-m4] dump: semihosting SYS_OPEN failed\n");
+            sh_exit(0);
+        }
+        g_dump_fd       = fd;
+        g_px_flushed    = 0;
+        g_bands_flushed = 0;
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(disp);
+        g_dump_fd = -1;
+        sh_close(fd);
+        emit_kv("INFO  [lvgl-m4] ", "dumped_pixels=", g_px_flushed);
+        emit_kv("INFO  [lvgl-m4] ", "dumped_bands=", g_bands_flushed);
+        sh_write0("ALERT [lvgl-m4] frame dumped to " DUMP_FRAME_PATH "\n");
+    }
+#endif
 
     /* --- timed: re-render N frames, force a full redraw each time ---
      * Static scene means LVGL would otherwise flush nothing (no dirty area), so

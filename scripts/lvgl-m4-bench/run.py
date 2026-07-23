@@ -173,25 +173,45 @@ def lvgl_sources():
     return sorted(keep)
 
 
-def build(mem_kb, logf, frames=None):
+def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf"):
+    """Compile + link the harness. `dump_path`, when set, adds -DDUMP_FRAME to
+    the HARNESS translation units only (startup.c, main.c) — the LVGL objects
+    are bit-identical either way, so they are reused from a previous build when
+    they are newer than their source. The measurement ELF is therefore never
+    the ELF that carries the file-I/O path."""
     obj_dir = os.path.join(TMP, "lvgl-m4-obj")
     os.makedirs(obj_dir, exist_ok=True)
     objs = []
     cflags = list(CFLAGS) + [f"-DLV_MEM_SIZE_KB={mem_kb}"]
     if frames:
         cflags += [f"-DTIMED_FRAMES={frames}"]
+    harness = [os.path.join(HERE, "startup.c"), os.path.join(HERE, "main.c")]
+    harness_extra = []
+    if dump_path:
+        harness_extra = ["-DDUMP_FRAME=1", f'-DDUMP_FRAME_PATH="{dump_path}"']
 
-    sources = [os.path.join(HERE, "startup.c"), os.path.join(HERE, "main.c")]
-    sources += lvgl_sources()
+    sources = harness + lvgl_sources()
     log(f"compiling {len(sources)} translation units (LVGL + harness), "
-        f"LV_MEM_SIZE_KB={mem_kb}", logf)
+        f"LV_MEM_SIZE_KB={mem_kb}"
+        + (f", DUMP_FRAME -> {dump_path}" if dump_path else ""), logf)
 
     failures = []
+    reused = 0
     for src in sources:
         # Flatten to a unique object name (paths collide across dirs).
         rel = os.path.relpath(src, REPO).replace(os.sep, "__")
         obj = os.path.join(obj_dir, rel + ".o")
-        cmd = [GCC] + cflags + ["-c", src, "-o", obj]
+        is_harness = src in harness
+        # Reuse an up-to-date LVGL object when only the harness changed; the
+        # LVGL cflags are identical between the two builds. Harness TUs are
+        # ALWAYS recompiled (their defines are what differ).
+        if (dump_path and not is_harness and os.path.exists(obj)
+                and os.path.getmtime(obj) >= os.path.getmtime(src)):
+            objs.append(obj)
+            reused += 1
+            continue
+        cmd = [GCC] + cflags + (harness_extra if is_harness else []) + [
+            "-c", src, "-o", obj]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             failures.append((src, r.stderr))
@@ -208,8 +228,10 @@ def build(mem_kb, logf, frames=None):
         for src, _ in failures:
             log(f"    failed: {os.path.relpath(src, REPO)}", logf)
         return None
+    if reused:
+        log(f"  reused {reused} cached LVGL objects (harness TUs recompiled)", logf)
 
-    elf = os.path.join(TMP, "lvgl-m4.elf")
+    elf = os.path.join(TMP, elf_name)
     ld = os.path.join(HERE, "m4.ld")
     link = [GCC] + cflags + objs + [
         "-T", ld,
@@ -221,7 +243,7 @@ def build(mem_kb, logf, frames=None):
         "--specs=nano.specs", "-lc", "-lgcc", "-lm",
         "-o", elf,
     ]
-    log("linking lvgl-m4.elf", logf)
+    log(f"linking {elf_name}", logf)
     r = subprocess.run(link, capture_output=True, text=True)
     if r.returncode != 0:
         log("LINK FAIL", logf)
@@ -308,6 +330,12 @@ def main():
                          "so quantisation error is ~1/total_cs — raise this for precision.")
     ap.add_argument("--lvgl-root", default=None,
                     help=f"LVGL source tree (default: the upstream mirror {LVGL_MIRROR_DEFAULT})")
+    ap.add_argument("--dump-frame", metavar="PATH", default=None,
+                    help="build a SEPARATE -DDUMP_FRAME ELF that writes the rendered "
+                         "480x270 RGB888 frame to PATH on the host via semihosting "
+                         "SYS_OPEN/WRITE (#27 fidelity comparison). The measurement "
+                         "numbers from such a run are NOT the published ones — the "
+                         "published ELF has no file-I/O path.")
     args = ap.parse_args()
 
     global LVGL_ROOT, LVGL_SRC, LVGL_INC
@@ -320,9 +348,19 @@ def main():
     benchlog = os.path.join(TMP, "lvgl-m4-bench.log")
     semilog = os.path.join(TMP, "lvgl-m4.log")
     resultjson = os.path.join(TMP, "lvgl-m4-result.json")
+    dump_path = os.path.abspath(args.dump_frame) if args.dump_frame else None
+    if dump_path:
+        # Separate artefact names so a dump run can never overwrite the
+        # measurement ELF / result JSON that docs/performance.md §3 cites.
+        semilog = os.path.join(TMP, "lvgl-m4-dump.log")
+        resultjson = os.path.join(TMP, "lvgl-m4-dump-result.json")
+        if os.path.exists(dump_path):
+            os.remove(dump_path)
     with open(benchlog, "a") as logf:
         log("=" * 60, logf)
-        log(f"lvgl-m4-bench run, mem-kb={args.mem_kb}", logf)
+        log(f"lvgl-m4-bench run, mem-kb={args.mem_kb}"
+            + (f", DUMP-FRAME run -> {dump_path} (NOT a measurement run)" if dump_path else ""),
+            logf)
 
         if not os.path.isdir(LVGL_SRC):
             log(f"LVGL SOURCE NOT FOUND at {LVGL_SRC}", logf)
@@ -341,13 +379,23 @@ def main():
                 f"this result is NOT a clean upstream anchor ***", logf)
         else:
             log("  stock upstream (clean tree, not ahead of origin)", logf)
-        elf = build(args.mem_kb, logf, args.frames)
+        elf = build(args.mem_kb, logf, args.frames, dump_path,
+                    "lvgl-m4-dump.elf" if dump_path else "lvgl-m4.elf")
         if not elf:
             log("BUILD FAILED — see log", logf)
             return 2
         gout = run_qemu(elf, logf, semilog)
         if gout is None:
             return 3
+        if dump_path:
+            want = 480 * 270 * 3
+            got = os.path.getsize(dump_path) if os.path.exists(dump_path) else 0
+            if got != want:
+                log(f"DUMP FAIL: {dump_path} is {got} B, expected {want} B "
+                    "(480x270x3) — the band flushes did not tile the frame", logf)
+                return 6
+            log(f"DUMP OK: {dump_path} = {got} B raw RGB888 (480x270), "
+                "bands appended in flush order", logf)
         res = parse(gout, logf)
         if not res["ok"]:
             log("GUEST DID NOT REPORT 'workload ok' — see semihosting log", logf)

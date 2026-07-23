@@ -319,8 +319,14 @@ fn selftest_png(out: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn render(ir_path: &str, out: &str) -> ExitCode {
-    log("INFO", &format!("render {ir_path} → {out}"));
+/// `vyr-cli render <ir.json> <out.png> [--draft]` — the farm contract, at a
+/// chosen quality tier (docs/quality-tiers.md). `--draft` selects
+/// [`vyr_core::Quality::Draft`] (integer, no-AA, MCU-budgeted); the default is
+/// `Quality::Exact` (the oracle). The two tiers produce DIFFERENT pixels by
+/// design — that is what makes a host-side Exact-vs-Draft fidelity comparison
+/// possible without an MCU in the loop.
+fn render(ir_path: &str, out: &str, quality: vyr_core::Quality) -> ExitCode {
+    log("INFO", &format!("render {ir_path} → {out} ({quality:?})"));
     let ir = match std::fs::read_to_string(ir_path) {
         Ok(s) => s,
         Err(e) => {
@@ -349,12 +355,13 @@ fn render(ir_path: &str, out: &str) -> ExitCode {
         }
     };
     let mut buf = vec![0u8; (w * h * 3) as usize];
-    match req.render_with(
+    match req.render_with_quality(
         &mut fonts,
         &assets,
         Rect { x: 0, y: 0, w, h },
         &mut buf,
         (w * 3) as usize,
+        quality,
     ) {
         Ok(mut stats) => {
             let (live, peak) = heap_now();
@@ -427,11 +434,16 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [cmd, out] if cmd == "selftest-png" => selftest_png(out),
-        [cmd, ir, out] if cmd == "render" => render(ir, out),
+        [cmd, ir, out] if cmd == "render" => render(ir, out, vyr_core::Quality::Exact),
+        [cmd, ir, out, flag] if cmd == "render" && flag == "--draft" => {
+            render(ir, out, vyr_core::Quality::Draft)
+        }
         [cmd, font, size, text] if cmd == "measure" => measure(font, size, text),
         _ => {
             eprintln!("usage: vyr-cli selftest-png <out.png>");
-            eprintln!("       vyr-cli render <ir.json> <out.png>   (env: VYR_FONTS=<dir>)");
+            eprintln!(
+                "       vyr-cli render <ir.json> <out.png> [--draft]   (env: VYR_FONTS=<dir>)"
+            );
             eprintln!("       vyr-cli measure <font> <size_px> <text>   → JSON on stdout");
             ExitCode::from(2)
         }

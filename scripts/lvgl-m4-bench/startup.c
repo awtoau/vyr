@@ -48,6 +48,49 @@ int32_t sh_clock_cs(void)
     return (int32_t)semihost(SYS_CLOCK, NULL);
 }
 
+#ifdef DUMP_FRAME
+/* ---- semihosting HOST FILE I/O, for the fidelity dump only ----------------
+ * Compiled ONLY into the -DDUMP_FRAME build (scripts/lvgl-m4-bench/run.py
+ * --dump-frame). The measurement ELF never contains any of this, so the
+ * instruction counts in docs/performance.md §3 are taken on a binary with no
+ * file-I/O path at all.
+ *
+ * qemu's `-semihosting-config target=native` services SYS_OPEN/WRITE/CLOSE
+ * against the HOST filesystem, which is how a bare-metal guest with no display
+ * gets its framebuffer bytes out. Argument blocks are the ARM semihosting
+ * spec's word arrays.
+ */
+#define SYS_OPEN  0x01u /* r1 = {name_ptr, mode, name_len} -> handle or -1    */
+#define SYS_CLOSE 0x02u /* r1 = {handle}                                      */
+#define SYS_WRITE 0x05u /* r1 = {handle, buf, len} -> bytes NOT written       */
+
+/* mode 6 = "wb" in the spec's open-mode table (0 r, 4 w, 8 a; +2 = binary). */
+#define SH_OPEN_WB 6u
+
+int sh_open_wb(const char *name)
+{
+    uint32_t len = 0;
+    while (name[len]) {
+        len++;
+    }
+    uint32_t block[3] = { (uint32_t)(uintptr_t)name, SH_OPEN_WB, len };
+    return (int)semihost(SYS_OPEN, block);
+}
+
+/* Returns 0 on a complete write (SYS_WRITE reports bytes NOT written). */
+int sh_write(int handle, const void *buf, uint32_t len)
+{
+    uint32_t block[3] = { (uint32_t)handle, (uint32_t)(uintptr_t)buf, len };
+    return (int)semihost(SYS_WRITE, block);
+}
+
+int sh_close(int handle)
+{
+    uint32_t block[1] = { (uint32_t)handle };
+    return (int)semihost(SYS_CLOSE, block);
+}
+#endif /* DUMP_FRAME */
+
 /* Terminate qemu: rc 0 on ok, rc 1 otherwise. SYS_EXIT does not return. */
 void sh_exit(int ok)
 {
