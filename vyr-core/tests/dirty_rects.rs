@@ -318,9 +318,8 @@ fn text_move_repaints_exactly() {
     }"##;
     let b_ir = a_ir.replace(r#""x": "10", "y": "20""#, r#""x": "24", "y": "52""#);
     let mut fonts = Fonts::new();
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/roboto.ttf");
     fonts
-        .register("roboto", std::fs::read(&path).expect("roboto.ttf"))
+        .register("roboto", include_bytes!("../../fonts/roboto.ttf").to_vec())
         .expect("registers");
     prove_incremental(a_ir, &b_ir, &mut fonts);
 }
@@ -330,9 +329,8 @@ fn text_move_repaints_exactly() {
 #[test]
 fn panel_pair_incremental_is_exact() {
     let mut fonts = Fonts::new();
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/roboto.ttf");
     fonts
-        .register("roboto", std::fs::read(&path).expect("roboto.ttf"))
+        .register("roboto", include_bytes!("../../fonts/roboto.ttf").to_vec())
         .expect("registers");
     let stats = prove_incremental(
         vyr_core::demo::PANEL_PREV_IR,

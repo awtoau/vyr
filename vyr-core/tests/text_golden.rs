@@ -18,10 +18,10 @@ const TEXT_GOLDEN_FNV1A: u64 = 0x7697_E6D0_6BAB_2320;
 const FIXTURE: &str = vyr_core::demo::TEXT_IR;
 
 fn roboto() -> Fonts {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/roboto.ttf");
-    let bytes = std::fs::read(&path).expect("vendored fonts/roboto.ttf");
     let mut fonts = Fonts::new();
-    fonts.register("roboto", bytes).expect("roboto parses");
+    fonts
+        .register("roboto", include_bytes!("../../fonts/roboto.ttf").to_vec())
+        .expect("roboto parses");
     fonts
 }
 

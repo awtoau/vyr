@@ -39,11 +39,11 @@ fn fnv1a(data: &[u8]) -> u64 {
 /// Decode the committed checker PNG into a registry under the fixture's
 /// verbatim src name (the `assets` module name contract).
 fn checker_assets() -> Assets {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/checker-24.png");
-    let file = std::fs::File::open(&path).expect("committed tests/assets/checker-24.png");
-    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
-        .read_info()
-        .expect("png header");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(include_bytes!(
+        "assets/checker-24.png"
+    )))
+    .read_info()
+    .expect("png header");
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).expect("png decode");
     assert_eq!(info.color_type, png::ColorType::Rgba, "test asset is RGBA");

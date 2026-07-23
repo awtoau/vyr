@@ -27,10 +27,10 @@ const FIXTURE: &str = r##"{
 }"##;
 
 fn roboto() -> Fonts {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/roboto.ttf");
-    let bytes = std::fs::read(&path).expect("vendored fonts/roboto.ttf");
     let mut fonts = Fonts::new();
-    fonts.register("roboto", bytes).expect("roboto registers");
+    fonts
+        .register("roboto", include_bytes!("../../fonts/roboto.ttf").to_vec())
+        .expect("roboto registers");
     fonts
 }
 

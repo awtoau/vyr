@@ -40,6 +40,14 @@
 
 use vyr_core::{Assets, Fonts, Rect, RenderError, RgbaImage};
 
+fn repo_root() -> std::path::PathBuf {
+    let from_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    if from_manifest.exists() {
+        return from_manifest;
+    }
+    std::env::current_dir().unwrap_or(from_manifest)
+}
+
 fn error_variant(e: &RenderError) -> &'static str {
     match e {
         RenderError::UnknownWidget(_) => "UnknownWidget",
@@ -55,7 +63,7 @@ fn error_variant(e: &RenderError) -> &'static str {
 
 fn fixture_fonts() -> Fonts {
     let mut fonts = Fonts::new();
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts");
+    let dir = repo_root().join("fonts");
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
             let p = e.path();
@@ -75,11 +83,11 @@ fn fixture_fonts() -> Fonts {
 
 /// Decode the committed checker PNG (RGBA) for image fixtures.
 fn checker_image() -> RgbaImage {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/checker-24.png");
-    let file = std::fs::File::open(&path).expect("committed tests/assets/checker-24.png");
-    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
-        .read_info()
-        .expect("png header");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(include_bytes!(
+        "assets/checker-24.png"
+    )))
+    .read_info()
+    .expect("png header");
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).expect("png decode");
     buf.truncate(info.buffer_size());
@@ -149,7 +157,7 @@ fn dump_png(name: &str, buf: &[u8], w: u32, h: u32) {
     if std::env::var_os("VYR_TEST_DUMP").is_none() {
         return;
     }
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tmp/conformance");
+    let dir = repo_root().join("tmp/conformance");
     std::fs::create_dir_all(&dir).unwrap();
     let file = std::fs::File::create(dir.join(name)).unwrap();
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
@@ -260,7 +268,7 @@ fn geometry_extent(buf: &[u8], w: u32, h: u32, bbox: [i32; 4], kind: &str) -> Op
 
 #[test]
 fn conformance_fixtures() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let dir = repo_root().join("vyr-core/tests/fixtures");
     let manifest: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(dir.join("manifest.json")).expect("manifest.json"),
     )
