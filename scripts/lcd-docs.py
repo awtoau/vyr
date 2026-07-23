@@ -11,11 +11,21 @@ and the exact ILI9341 command list ST ships for this panel.
 Fetches (read-only, public):
   * stm32f429i_discovery.h      — SPI5 + LCD control pin definitions
   * stm32f429i_discovery_lcd.h  — LCD layer/BSP declarations
+  * stm32f429i_discovery_lcd.c  — BSP_LCD_MspInit: the ~28 LTDC AF pins,
+                                  PLLSAI dividers and the LTDC timing block
+  * stm32f429i_discovery_sdram.c/.h — FMC bank-2 SDRAM init + its ~40 AF pins
   * ili9341.h                   — the controller's register map + ID
   * ili9341.c                   — ST's init sequence for THIS panel
+  * CMSIS stm32f429xx.h         — the LTDC_TypeDef / FMC_Bank5_6_TypeDef
+                                  struct layouts, i.e. the register OFFSETS
+                                  (#30: never guess an offset that a vendor
+                                  header states)
+  * trezor stm32f429i-disc1 display driver — an independent cross-check on
+    the same board, from a different vendor
 
 Then greps out the load-bearing lines and writes them to tmp/lcd-docs.log so
-the pin numbers in vyr-size/src/lcd.rs have a citable origin.
+the pin numbers and register values in vyr-size/src/lcd.rs and
+vyr-size/src/ltdc.rs have a citable origin.
 """
 import datetime
 import os
@@ -35,6 +45,8 @@ CACHE = os.path.join(TMP, "lcd-docs")
 RAW = "https://raw.githubusercontent.com"
 BSP = f"{RAW}/STMicroelectronics/32f429idiscovery-bsp/main"
 ILI = f"{RAW}/STMicroelectronics/stm32-ili9341/main"
+CMSIS = f"{RAW}/STMicroelectronics/cmsis_device_f4/master/Include"
+TREZOR = f"{RAW}/trezor/trezor-firmware/main/core/embed/io/display/stm32f429i-disc1"
 SOURCES = {
     "stm32f429i_discovery.h": f"{BSP}/stm32f429i_discovery.h",
     "stm32f429i_discovery_lcd.h": f"{BSP}/stm32f429i_discovery_lcd.h",
@@ -43,6 +55,13 @@ SOURCES = {
     "stm32f429i_discovery_sdram.c": f"{BSP}/stm32f429i_discovery_sdram.c",
     "ili9341.h": f"{ILI}/ili9341.h",
     "ili9341.c": f"{ILI}/ili9341.c",
+    # #30 additions: the register-offset authority, and an independent
+    # bring-up of the same silicon + same panel by a different vendor.
+    "stm32f429xx.h": f"{CMSIS}/stm32f429xx.h",
+    "trezor_display_ltdc.c": f"{TREZOR}/display_ltdc.c",
+    "trezor_display_internal.h": f"{TREZOR}/display_internal.h",
+    "trezor_display_driver.c": f"{TREZOR}/display_driver.c",
+    "trezor_ili9341_spi.c": f"{TREZOR}/ili9341_spi.c",
 }
 
 # What we need out of each file, as (file, label, regex) triples.
@@ -59,6 +78,29 @@ WANTED = [
      r"^\s*(ili9341_Write(Reg|Data)|LCD_IO_Write\w*)\s*\(.*$"),
     ("stm32f429i_discovery_lcd.c", "LCD IO / interface selection",
      r"^\s*(LCD_IO_\w+|.*RGB.*interface.*)\s*[\(;].*$"),
+    # --- #30: the LTDC + SDRAM half ---------------------------------------
+    ("stm32f429i_discovery_lcd.c", "LTDC timing + PLLSAI (ST's own numbers)",
+     r"^\s*(hltdc\w*\.Init\.\w+|periph_clk_init_struct\.\w+|"
+     r"RCC_PeriphCLKInitStruct\.\w+|PeriphClkInitStruct\.\w+)\s*=.*$"),
+    ("stm32f429i_discovery_lcd.c", "LTDC alternate-function pin blocks",
+     r"^\s*(GPIO_InitStructure\.(Pin|Alternate)\s*=.*|"
+     r"HAL_GPIO_Init\(GPIO\w,.*|__HAL_RCC_GPIO\w+_CLK_ENABLE\(\).*)$"),
+    ("stm32f429i_discovery_lcd.c", "layer / pixel format",
+     r"^\s*(pLayerCfg|layer_cfg)\w*\.\w+\s*=.*$"),
+    ("stm32f429i_discovery_sdram.c", "FMC SDRAM timing + geometry",
+     r"^\s*(Timing\.\w+|\w*[Ss]dramHandle\.Init\.\w+|Command\.\w+|"
+     r"#define\s+(REFRESH_COUNT|SDRAM_\w+|SDCLOCK_PERIOD)\b)\s*[=\s].*$"),
+    ("stm32f429i_discovery_sdram.c", "SDRAM alternate-function pin blocks",
+     r"^\s*(GPIO_InitStructure\.(Pin|Alternate)\s*=.*|"
+     r"HAL_GPIO_Init\(GPIO\w,.*)$"),
+    ("stm32f429i_discovery_sdram.h", "SDRAM base address / geometry",
+     r"^\s*#define\s+(SDRAM_\w+|REFRESH_COUNT)\b.*$"),
+    ("stm32f429xx.h", "LTDC / FMC base addresses (offset authority)",
+     r"^\s*#define\s+(LTDC\w*_BASE|FMC_Bank5_6\w*_BASE|"
+     r"LTDC_Layer[12]_BASE)\b.*$"),
+    ("trezor_display_ltdc.c", "cross-check: trezor's LTDC timing, same board",
+     r"^\s*(#define\s+LCD_\w+|.*\.(HorizontalSync|VerticalSync|Accumulated\w+|"
+     r"TotalW\w*|TotalHeigh\w*|PLLSAI\w*)\s*=.*)$"),
 ]
 
 

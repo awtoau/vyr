@@ -40,6 +40,11 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
+# The board is shared with the other runners (and, in practice, with other
+# agents working concurrently): every probe-rs invocation below is wrapped in
+# the repo-wide exclusive lock.
+sys.path.insert(0, HERE)
+from board_lock import BoardLock  # noqa: E402
 TMP = os.path.join(REPO, "tmp")
 
 CHIP = "STM32F429ZI"
@@ -116,18 +121,19 @@ def run_once(elf, semilog, logf):
     ]
     log("probe-rs: " + " ".join(args), logf)
     t0 = time.monotonic()
-    try:
-        p = subprocess.run(args, cwd=REPO, capture_output=True, text=True,
-                           timeout=DEADLINE_S)
-        out = p.stdout + p.stderr
-        rc = p.returncode
-    except subprocess.TimeoutExpired as e:
-        def dec(x):
-            x = x or b""
-            return x.decode(errors="replace") if isinstance(x, bytes) else x
-        out, rc = dec(e.stdout) + dec(e.stderr), None
-        log(f"ERROR: target did not finish inside the {DEADLINE_S}s guard — "
-            f"killed; partial output in {semilog}", logf)
+    with BoardLock("board-lcd", lambda m: log(m, logf)):
+        try:
+            p = subprocess.run(args, cwd=REPO, capture_output=True, text=True,
+                               timeout=DEADLINE_S)
+            out = p.stdout + p.stderr
+            rc = p.returncode
+        except subprocess.TimeoutExpired as e:
+            def dec(x):
+                x = x or b""
+                return x.decode(errors="replace") if isinstance(x, bytes) else x
+            out, rc = dec(e.stdout) + dec(e.stderr), None
+            log(f"ERROR: target did not finish inside the {DEADLINE_S}s guard "
+                f"— killed; partial output in {semilog}", logf)
     with open(semilog, "w") as f:
         f.write(out)
     log(f"probe-rs wall {time.monotonic() - t0:.1f}s rc={rc}; "
