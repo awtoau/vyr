@@ -24,17 +24,44 @@ any other framework's vocabulary. Three roles, in build order:
    targets *scored against vyr* with per-property tolerances.
 2. **The vye editor canvas.** The editing surface renders IR truth (vyr
    pixels), not any backend's interpretation — WYSIWYG = the spec.
-3. **The endgame: a universal embedded GUI toolkit.** "Send it an LVGL
-   project and it works; port a TouchGFX project and it works; a Flutter
+3. **The endgame: a universal embedded GUI toolkit.** "Port a TouchGFX
+   project and it works; send it an LVGL project and it works; a Flutter
    design is near-identical." The IR's direction of travel flips: designs
-   flow LVGL/TGX → IR → **run natively on vyr on-device**. Nobody else
+   flow TGX/LVGL → IR → **run natively on vyr on-device**. Nobody else
    ingests cross-vendor (TouchGFX Designer, LVGL Editor, SquareLine are
-   single-vendor lock-in); the importer half largely exists in vyvanse
-   (`tgx_to_ir` done; LVGL XML import is the reverse of an emit path it
-   owns). The Flutter claim is **"Flutter-fidelity rendering"** — Flutter has
-   no standard serialized UI format, so literal import is limited to `rfw`
-   (optional, experimental); the fidelity claim is structural because vyr's
-   architecture is Flutter-concept.
+   single-vendor lock-in). The Flutter claim is **"Flutter-fidelity
+   rendering"** — Flutter has no standard serialized UI format, so literal
+   import is limited to `rfw` (optional, experimental); the fidelity claim is
+   structural because vyr's architecture is Flutter-concept.
+
+   **Order matters, and it is TouchGFX first — LVGL last.** (Revised
+   2026-07-23; the original wording led with LVGL, which inverted the real
+   difficulty.) The two importers are not comparable in cost:
+
+   | | TouchGFX | LVGL |
+   |---|---|---|
+   | Importer | `tgx_to_ir` **exists** in vyvanse | **does not exist** |
+   | Positioning | **absolute** — maps to the IR directly | flex / grid / align |
+   | Styling | per-widget | theme cascade across parts *and* states |
+   | Corpus on hand | **154 real projects** (`tpa-projects` 27 SDK versions, `tpa-projects-from-wine` 127, plus `tgx-examples-sdk`) | none |
+
+   The gap is not effort, it is **architectural**. vyr is absolute-rect with
+   no layout pass and **no default chrome by construction (I5)**. There is
+   nowhere in this architecture for `lv_obj_set_flex_flow` to land: it must
+   be fully resolved to absolute geometry upstream, which means an LVGL
+   importer needs a **layout *simulator*, not a translator** — it has to
+   reimplement LVGL's flex/grid solver and its theme cascade faithfully
+   enough that the resolved geometry matches what LVGL itself would compute.
+   That is a substantial project in its own right and **nobody has scoped
+   it**. TouchGFX being absolute-positioned means it has no equivalent
+   problem.
+
+   So the defensible near-term demo is **`.touchgfx` → IR → running on the
+   DISC1 panel**, and the plan should say so rather than leading with the
+   harder claim. LVGL remains the strategically louder one — it is the
+   incumbent vyr is measured against (see F16/F9) — but it lands *after*
+   TouchGFX, and it lands only once the layout-simulator problem has an
+   owner and a design.
 
 **Why not Flutter (or any backend) as the reference:** each renders a
 *lowering* of the IR through its own opinions (Material defaults, its text
@@ -299,15 +326,32 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
 - **Depends:** F4; F9 verdict informs targets.
 
 ### F12 — Import-and-run demos (the endgame proof)
-- **Goal:** the marketing claim, measured: a real `.touchgfx` project and a
-  real LVGL XML project running on vyr.
-- **Deliverables:** LVGL XML → IR importer (vyvanse side); `.touchgfx` → IR
-  already exists there (`tgx_to_ir`); demo captures + fidelity numbers from
-  the F8 surface as evidence; `rfw` import as an explicitly experimental
-  stretch.
-- **Acceptance:** two demos render + (post-F11) interact; published fidelity
-  table.
-- **Depends:** F8 (+F11 for "works", not just "renders").
+- **Goal:** the marketing claim, measured — a real vendor project running on
+  vyr. **Staged: TouchGFX first, LVGL second** (see §1.3 for why they are not
+  comparable in cost).
+- **F12a — TouchGFX (the near-term deliverable).** `tgx_to_ir` already
+  exists in vyvanse and TouchGFX is absolute-positioned, so no layout
+  simulation is needed. A corpus of 154 real projects is already on disk.
+  Target: `.touchgfx` → IR → rendering **on the DISC1 panel** (#28/#30) —
+  the demo is the whole loop on real hardware, not a host screenshot.
+- **F12b — LVGL (blocked on a design, not on effort).** Needs an LVGL XML →
+  IR importer that **resolves flex/grid/align and the theme cascade to
+  absolute geometry**, because vyr has no layout pass and I5 forbids default
+  chrome. That is a layout *simulator*. **Do not start F12b until that has
+  an owner and a written design** — it is the single largest unscoped risk
+  in the plan.
+- **F12c — `rfw`**, explicitly experimental, unchanged.
+- **Deliverables:** demo captures + fidelity numbers from the F8 surface as
+  evidence; the published fidelity table.
+- **Acceptance:** F12a renders + (post-F11) interacts, on device, with a
+  published fidelity table. F12b is separately accepted.
+- **Depends:** F8 (+F11 for "works", not just "renders"); F12a additionally
+  wants the panel path (#28 done over SPI, #30 for animation).
+- **Blocked by a cheap fix:** I6 honest-failure is currently all-or-nothing —
+  six IR types hard-error rather than painting the labelled placeholder F4
+  and I6 both specify, so a single unsupported widget aborts the entire
+  frame. Any imported project is one `vy_table` away from rendering nothing.
+  Fix that before either import demo.
 
 ### F13 — Hardware-accelerated painters (later, never blocks v1)
 - STM32 DMA2D/Chrom-ART (fills, blits, alpha blend, format convert — exactly
