@@ -5,10 +5,10 @@
 //!
 //! Fast adds **no rasteriser and no flattening of its own**. Its curve pixels
 //! come from the very same quantized polygons, the same 1/64-px world
-//! quantization, the same exact-integer band translation AND the same 8 px
-//! overscan gutter the Exact tier uses — routed through the `rgb` scratch
-//! round-trip so they composite into Draft's straight-RGB888 band surface in
-//! draw order.
+//! quantization, the same exact-integer band translation AND an overscan
+//! gutter of its own (`FAST_GUTTER`, 4 — measured, not copied from Exact's 8)
+//! — routed through the `rgb` scratch round-trip so they composite into
+//! Draft's straight-RGB888 band surface in draw order.
 //!
 //! The gutter is not decoration and this suite is why we know: built
 //! gutter-less first, `fast_band_equivalence` failed with 4 differing bytes on
@@ -42,10 +42,26 @@
 //! - `fast_fastpath_coverage`: the honesty number (#21) — how much of the frame
 //!   still took the integer path, i.e. exactly what the AA cost bought.
 //!
+//! ## The overscan measurement rig (#38)
+//!
+//! `band_equivalence_sweep` renders EVERY committed 120×120 fixture at EVERY
+//! band height 1..=120 — 720 (scene, band_h) splits — at one tier, and reports
+//! every split that is not byte-identical to the full-frame render. It is the
+//! only way to size an overscan gutter, because the failure mode is a handful
+//! of differing bytes at SPECIFIC heights: sampling two heights (which is all
+//! the per-fixture goldens do) misses it, and sampling a subset of fixtures
+//! misses it too — `GUTTER`'s table exists because CHART_IR was not in the rig
+//! when 8 was chosen. Each tier gets an arm: `fast_…`, `exact_…`, `draft_…`,
+//! plus two `#[ignore]`d arms carrying the two measured gaps the sweep found
+//! (Exact on CHART_IR, Draft on CLIP_IR) with the numbers and the reason each
+//! is a gap and not a fix.
+//!
 //! Set `VYR_TEST_DUMP=1` to write the PNGs to ../tmp/ for eyeballing.
 
-use vyr_core::demo::{DEMO_H, DEMO_IR, DEMO_W, demo_scene};
-use vyr_core::{Assets, Fonts, Quality, Rect, RenderStats, TinySkiaCanvas};
+use vyr_core::demo::{
+    CHART_IR, CLIP_IR, DEMO_H, DEMO_IR, DEMO_W, IMAGE_ASSET, IMAGE_IR, TEXT_IR, demo_scene,
+};
+use vyr_core::{Assets, Fonts, Quality, Rect, RenderStats, RgbaImage, TinySkiaCanvas};
 
 const W: u32 = DEMO_W;
 const H: u32 = DEMO_H;
@@ -85,60 +101,152 @@ fn render_full(quality: Quality) -> (Vec<u8>, RenderStats) {
     (buf, stats)
 }
 
-fn render_banded(quality: Quality, band_h: u32) -> Vec<u8> {
-    let mut fonts = Fonts::new();
-    let assets = Assets::new();
-    let stride = (W * 3) as usize;
-    let mut out = vec![0u8; stride * H as usize];
-    let mut y = 0;
-    while y < H {
-        let h = band_h.min(H - y);
-        let band = &mut out[y as usize * stride..(y + h) as usize * stride];
-        vyr_core::render_with_quality(
-            DEMO_IR,
-            &mut fonts,
-            &assets,
-            Rect {
-                x: 0,
-                y: y as i32,
-                w: W,
-                h,
-            },
-            band,
-            stride,
-            quality,
-        )
-        .expect("demo band renders");
-        y += h;
-    }
-    out
+/// The scenes the band-equivalence sweep covers: **every committed 120×120
+/// fixture**, plus the hand-built canvas scene. Sampling a subset is exactly
+/// how an undersized gutter survives — the #38 sweep found overscan 3 and 4
+/// clean on DEMO_IR + demo_scene + CLIP_IR and NOT clean on CHART_IR, which
+/// was not in the rig at the time.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scene {
+    /// The IR fixture: frame, disc, slider, toggle, gauge (ring/arc), line.
+    DemoIr,
+    /// The hand-built canvas scene — the ONLY one with a
+    /// `fill_linear_gradient`, plus rounded fills and a stroked rounded border.
+    DemoCanvas,
+    /// The clip fixture: children overflowing a ROUNDED container (the A8 mask
+    /// path, nested two deep) and a pure-rect one, over path fills, glyph blits
+    /// and image blits. The mask is pixmap-sized — i.e. GUTTER-LOCAL — so it is
+    /// a scene where an undersized overscan corrupts the mask itself, not just
+    /// the fill fringe.
+    ClipIr,
+    /// The chart fixture: grid + polyline + per-point markers over a bar chart.
+    /// **The binding scene for the overscan measurement** — its thin diagonal
+    /// polyline segments and 2 px markers carry AA coverage further from a seam
+    /// than any disc edge does, so it is the last scene to go clean.
+    ChartIr,
+    /// The text fixture: three glyph runs (A8 masks, two sizes) crossing seams.
+    TextIr,
+    /// The image fixture: four RGBA blits with a transparent hole, over the
+    /// backdrop and over a frame fill.
+    ImageIr,
 }
 
-/// The hand-built `demo_scene` (the ONLY scene with a `fill_linear_gradient`,
-/// plus rounded fills and a stroked rounded border) at an explicit tier,
-/// stitched from `band_h`-row bands.
-fn scene_banded(quality: Quality, band_h: u32) -> Vec<u8> {
-    let stride = (W * 3) as usize;
-    let mut out = vec![0u8; stride * H as usize];
-    let mut y = 0;
-    while y < H {
-        let h = band_h.min(H - y);
-        let mut c = TinySkiaCanvas::new_with_quality(
-            Rect {
+impl Scene {
+    fn label(self) -> &'static str {
+        match self {
+            Scene::DemoIr => "DEMO_IR",
+            Scene::DemoCanvas => "demo_scene",
+            Scene::ClipIr => "CLIP_IR",
+            Scene::ChartIr => "CHART_IR",
+            Scene::TextIr => "TEXT_IR",
+            Scene::ImageIr => "IMAGE_IR",
+        }
+    }
+
+    /// The IR body, or `None` for the hand-built canvas scene.
+    fn ir(self) -> Option<&'static str> {
+        match self {
+            Scene::DemoIr => Some(DEMO_IR),
+            Scene::ClipIr => Some(CLIP_IR),
+            Scene::ChartIr => Some(CHART_IR),
+            Scene::TextIr => Some(TEXT_IR),
+            Scene::ImageIr => Some(IMAGE_IR),
+            Scene::DemoCanvas => None,
+        }
+    }
+}
+
+/// Every scene the sweep runs, in the order a failure is most informative.
+const SCENES: [Scene; 6] = [
+    Scene::DemoIr,
+    Scene::DemoCanvas,
+    Scene::ClipIr,
+    Scene::ChartIr,
+    Scene::TextIr,
+    Scene::ImageIr,
+];
+
+/// Fonts + assets built ONCE per sweep. `CLIP_IR` needs roboto and the checker
+/// PNG, and re-parsing them per band height (120 heights × 3 scenes) would
+/// dominate the test. Registering roboto is inert for the other two scenes:
+/// `DEMO_IR` carries no text node and `demo_scene` is hand-built canvas ops.
+struct Bench {
+    fonts: Fonts,
+    assets: Assets,
+}
+
+impl Bench {
+    fn new() -> Self {
+        let mut fonts = Fonts::new();
+        fonts
+            .register("roboto", include_bytes!("../../fonts/roboto.ttf").to_vec())
+            .expect("roboto registers");
+        let mut reader = png::Decoder::new(std::io::Cursor::new(include_bytes!(
+            "assets/checker-24.png"
+        )))
+        .read_info()
+        .expect("png header");
+        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).expect("png decode");
+        buf.truncate(info.buffer_size());
+        let img = RgbaImage::new(info.width, info.height, buf).expect("valid dims");
+        let mut assets = Assets::new();
+        assets.register(IMAGE_ASSET, img).expect("register");
+        Self { fonts, assets }
+    }
+
+    /// One scene at one tier, stitched from `band_h`-row bands (`band_h == H`
+    /// is the full-frame render — the reference every split is compared to).
+    fn banded(&mut self, scene: Scene, quality: Quality, band_h: u32) -> Vec<u8> {
+        let stride = (W * 3) as usize;
+        let mut out = vec![0u8; stride * H as usize];
+        let mut y = 0;
+        while y < H {
+            let h = band_h.min(H - y);
+            let area = Rect {
                 x: 0,
                 y: y as i32,
                 w: W,
                 h,
-            },
-            quality,
-        )
-        .expect("pixmap");
-        demo_scene(&mut c);
-        let band = &mut out[y as usize * stride..(y + h) as usize * stride];
-        c.finish_into_rgb888(band, stride);
-        y += h;
+            };
+            let band = &mut out[y as usize * stride..(y + h) as usize * stride];
+            match scene.ir() {
+                Some(ir) => {
+                    vyr_core::render_with_quality(
+                        ir,
+                        &mut self.fonts,
+                        &self.assets,
+                        area,
+                        band,
+                        stride,
+                        quality,
+                    )
+                    .expect("band renders");
+                }
+                None => {
+                    let mut c = TinySkiaCanvas::new_with_quality(area, quality).expect("pixmap");
+                    demo_scene(&mut c);
+                    c.finish_into_rgb888(band, stride);
+                }
+            }
+            y += h;
+        }
+        out
     }
-    out
+}
+
+/// One-shot form of [`Bench::banded`] for the handful of callers that render a
+/// couple of band heights and do not care about the setup cost.
+fn banded(scene: Scene, quality: Quality, band_h: u32) -> Vec<u8> {
+    Bench::new().banded(scene, quality, band_h)
+}
+
+fn render_banded(quality: Quality, band_h: u32) -> Vec<u8> {
+    banded(Scene::DemoIr, quality, band_h)
+}
+
+fn scene_banded(quality: Quality, band_h: u32) -> Vec<u8> {
+    banded(Scene::DemoCanvas, quality, band_h)
 }
 
 fn dump_png(name: &str, buf: &[u8]) {
@@ -171,9 +279,12 @@ fn pixel_delta(a: &[u8], b: &[u8]) -> (usize, u8) {
     (n, worst)
 }
 
-fn assert_band_equal(label: &str, full: &[u8], banded: &[u8], band_h: u32) {
+/// `None` when the two frames are byte-identical; otherwise a one-line
+/// description of the divergence (byte count + where it starts + the two RGB
+/// triples), which is what makes an overscan verdict readable.
+fn band_diff(full: &[u8], banded: &[u8]) -> Option<String> {
     if full == banded {
-        return;
+        return None;
     }
     let stride = (W * 3) as usize;
     let mut diffs = 0usize;
@@ -188,13 +299,65 @@ fn assert_band_equal(label: &str, full: &[u8], banded: &[u8], band_h: u32) {
     }
     let i = first.unwrap();
     let (row, col) = (i / stride, (i % stride) / 3);
-    dump_png(&format!("fast-band-fail-full-{band_h}.png"), full);
-    dump_png(&format!("fast-band-fail-banded-{band_h}.png"), banded);
-    panic!(
-        "Fast {label} band_h={band_h}: {diffs} differing bytes, first at row {row} col {col} \
-         (full rgb {:?} vs banded {:?}) — the AA curve path is NOT band-exact",
+    Some(format!(
+        "{diffs} differing bytes, first at row {row} col {col} (full rgb {:?} vs banded {:?})",
         &full[i - i % 3..i - i % 3 + 3],
         &banded[i - i % 3..i - i % 3 + 3]
+    ))
+}
+
+fn assert_band_equal(quality: Quality, label: &str, full: &[u8], banded: &[u8], band_h: u32) {
+    if let Some(d) = band_diff(full, banded) {
+        dump_png(&format!("band-fail-{quality:?}-full-{band_h}.png"), full);
+        dump_png(
+            &format!("band-fail-{quality:?}-banded-{band_h}.png"),
+            banded,
+        );
+        panic!("{quality:?} {label} band_h={band_h}: {d} — the AA curve path is NOT band-exact");
+    }
+}
+
+/// **The overscan measurement rig (#38).** Renders one tier's scenes at EVERY
+/// band height from 1 to the full frame and demands byte equality with the
+/// full-frame render. A band seam therefore lands on every row of every curve,
+/// every glyph and every clip arc in turn — which is what it takes to see the
+/// failure mode an undersized [`GUTTER`](vyr_core) produces: a handful of
+/// differing bytes at SPECIFIC heights, invisible to a two-height sample.
+///
+/// It is deliberately tier-agnostic: the gutter is a per-tier constant, and
+/// the only defensible way to pick one is to run the same sweep for each tier
+/// and read off the smallest overscan that still passes.
+fn band_equivalence_sweep(quality: Quality) {
+    band_equivalence_sweep_over(quality, &SCENES);
+}
+
+fn band_equivalence_sweep_over(quality: Quality, scenes: &[Scene]) {
+    let mut b = Bench::new();
+    // EVERY failing split is collected, not just the first: "which heights
+    // fail, on which scene, by how many bytes" is the measurement. Stopping at
+    // the first one turns a spectrum into an anecdote and hides whether a
+    // bigger gutter is closing the gap or merely moving it.
+    let mut fails: Vec<String> = Vec::new();
+    for &scene in scenes {
+        let full = b.banded(scene, quality, H);
+        for band_h in 1..=H {
+            let split = b.banded(scene, quality, band_h);
+            if let Some(d) = band_diff(&full, &split) {
+                if fails.is_empty() {
+                    dump_png(&format!("band-fail-{quality:?}-full.png"), &full);
+                    dump_png(&format!("band-fail-{quality:?}-split.png"), &split);
+                }
+                fails.push(format!("  {} band_h={band_h}: {d}", scene.label()));
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{quality:?}: {} of the {} (scene, band_h) splits are NOT band-exact — the \
+         overscan gutter is too small for this tier (#38):\n{}",
+        fails.len(),
+        scenes.len() * H as usize,
+        fails.join("\n")
     );
 }
 
@@ -218,6 +381,7 @@ fn fast_band_equivalence() {
     let full = render_banded(Quality::Fast, H); // one big band == full frame
     for band_h in [30u32, 17u32] {
         assert_band_equal(
+            Quality::Fast,
             "DEMO_IR",
             &full,
             &render_banded(Quality::Fast, band_h),
@@ -230,25 +394,91 @@ fn fast_band_equivalence() {
 fn fast_band_equivalence_stress() {
     // How much overscan the AA path actually needs is a MEASURED question
     // (gutter 0 fails; see the module note), so the evidence has to be more
-    // than two band heights. Every height from 1 to the full frame, on both
-    // scenes, puts a band seam through every row of every curve in turn — if
-    // any residual clip-position sensitivity survives, one of these finds it.
-    let ir_full = render_banded(Quality::Fast, H);
-    let scene_full = scene_banded(Quality::Fast, H);
-    for band_h in 1..=H {
-        assert_band_equal(
-            "DEMO_IR",
-            &ir_full,
-            &render_banded(Quality::Fast, band_h),
-            band_h,
-        );
-        assert_band_equal(
-            "demo_scene",
-            &scene_full,
-            &scene_banded(Quality::Fast, band_h),
-            band_h,
-        );
-    }
+    // than two band heights. `FAST_GUTTER = 4` is this sweep's answer, doubled:
+    // 0 fails at band_h=30, 1 at band_h=1, 2 passes clean.
+    band_equivalence_sweep(Quality::Fast);
+}
+
+#[test]
+fn exact_band_equivalence_stress() {
+    // The SAME sweep for the oracle tier (#38). Exact's gutter was inherited,
+    // not measured, while Fast's was measured on the very same tiny-skia
+    // rasterizer — the tiers differ in WHICH primitives reach it, not in how it
+    // rasterizes. This arm is what makes `GUTTER` an evidenced constant: the
+    // table in its doc comment is the output of running this test against a
+    // patched constant, one overscan value at a time.
+    //
+    // CHART_IR is EXCLUDED here and swept by the `#[ignore]`d test below,
+    // because at the shipped `GUTTER = 8` it does not pass and cannot be made
+    // to: the smallest sufficient overscan is 16 and the M4's 122,880 B arena
+    // runs out at 10. Excluding it in the green test and stating exactly why,
+    // with numbers, next to a runnable test that reproduces it, is the honest
+    // shape for a known gap; deleting the scene from the rig is not.
+    let scenes: Vec<Scene> = SCENES
+        .iter()
+        .copied()
+        .filter(|&s| s != Scene::ChartIr)
+        .collect();
+    band_equivalence_sweep_over(Quality::Exact, &scenes);
+}
+
+/// **A known gap, measured, not a flaky test** (#38 found it, #40 tracks it).
+/// `Quality::Exact` is NOT
+/// band-exact on `CHART_IR` at the shipped `GUTTER = 8`: 25 of the 120 band
+/// heights differ, by ≤3 bytes each, every one of them on the chart's diagonal
+/// AA polyline. The sweep table in [`GUTTER`](vyr_core)'s doc comment has the
+/// full curve; the two facts that make this an `#[ignore]` rather than a fix:
+///
+/// - overscan 16 passes and overscan 10 already exhausts the M4's 122,880 B
+///   heap arena, so no affordable value closes it;
+/// - the required overscan tracks the vertical extent of the polygon the
+///   pixmap edge cuts (`scripts/gutter-reach-probe.py`: a 109-row diagonal
+///   still fails at overscan 88), so a bigger constant is not a fix in
+///   principle either — deterministic world-space polygon pre-clipping is.
+///
+/// Run it with `cargo test -p vyr-core --test fast_golden -- --ignored`; when
+/// #40's pre-clip lands, this becomes a plain `#[test]` and CHART_IR goes back
+/// into the green sweep above.
+#[test]
+#[ignore = "#40: Exact is not band-exact on CHART_IR at GUTTER=8; 16 fixes it and does not fit the M4 arena"]
+fn exact_chart_band_equivalence_known_gap() {
+    band_equivalence_sweep_over(Quality::Exact, &[Scene::ChartIr]);
+}
+
+#[test]
+fn draft_band_equivalence_stress() {
+    // Draft's gutter is 0, and the claim is structural rather than measured:
+    // every Draft op is a pure function of WORLD position written through the
+    // exact-integer band offset, so there is no AA fringe to bleed across a
+    // seam. Structural claims still get swept — this is what would catch a new
+    // Draft op that quietly grew a clip-relative decision.
+    //
+    // CLIP_IR is excluded for the reason the structural claim itself names: the
+    // rounded-clip fallback is the ONE Draft op that reaches tiny-skia. See the
+    // `#[ignore]`d test below.
+    let scenes: Vec<Scene> = SCENES
+        .iter()
+        .copied()
+        .filter(|&s| s != Scene::ClipIr)
+        .collect();
+    band_equivalence_sweep_over(Quality::Draft, &scenes);
+}
+
+/// **A known gap, measured (#38 found it, #41 tracks it).** `Quality::Draft`
+/// renders with no overscan
+/// because no Draft op touches tiny-skia — except one: an op overlapping a
+/// ROUNDED clip (`ClipFate::Masked`) routes to the shared AA mask path, which
+/// is clip-seeded like every other AA draw. On `CLIP_IR` that costs band
+/// exactness: 34 of 120 heights differ at overscan 0, 19 at 1, 6 at 2, none
+/// from 3 up. Draft keeps the 0 — a gutter would cost it the per-band pixmap
+/// (30,720 B → 46,848 B at the reference 480×16 band) and the demul/convert
+/// pass over it, which is the entire point of the tier — so the fix is either
+/// a lazily-gutter-ed pixmap on the first rounded clip push, or the same
+/// polygon pre-clip the Exact gap wants. Run with `-- --ignored`.
+#[test]
+#[ignore = "#41: Draft's rounded-clip AA fallback is not band-exact at gutter 0 (needs 3)"]
+fn draft_rounded_clip_band_equivalence_known_gap() {
+    band_equivalence_sweep_over(Quality::Draft, &[Scene::ClipIr]);
 }
 
 #[test]
@@ -260,6 +490,7 @@ fn fast_gradient_scene_band_equivalence() {
     dump_png("fast-demo-scene.png", &full);
     for band_h in [30u32, 17u32] {
         assert_band_equal(
+            Quality::Fast,
             "demo_scene",
             &full,
             &scene_banded(Quality::Fast, band_h),

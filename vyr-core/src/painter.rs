@@ -125,27 +125,90 @@ use tiny_skia::{
 const SUBPX: f32 = 64.0;
 
 /// Overscan gutter, in pixels, rasterized around every band and discarded.
-/// Belt-and-braces for AA in the clip-adjacent rows (the polygon discipline
-/// above is the load-bearing fix). Cost: (w+16)×(h+16) raster for a w×h
-/// band — a per-band fixed cost the I4 scaling assertion tracks (F2).
+/// Bounds the tiny-skia AA fringe in the clip-adjacent rows (the polygon
+/// discipline above is the load-bearing fix). Cost: (w+16)×(h+16) raster for a
+/// w×h band — a per-band fixed cost the I4 scaling assertion tracks (F2).
+///
+/// **MEASURED (#38), and the measurement says this value is a CEILING, not a
+/// bound.** `tests/fast_golden.rs::exact_band_equivalence_stress` renders all
+/// six committed 120×120 fixtures at EVERY band height 1..=120 — 720 (scene,
+/// band_h) splits — and demands byte equality with the full-frame render:
+///
+/// | overscan | failing splits | where |
+/// |---|---|---|
+/// | 0 | 177 | DEMO_IR 57 · demo_scene 34 · CLIP_IR 34 · CHART_IR 44 · TEXT_IR 8 |
+/// | 1 | 89 | DEMO_IR 19 · demo_scene 11 · CLIP_IR 19 · CHART_IR 40 |
+/// | 2 | 44 | CLIP_IR 6 · CHART_IR 38 |
+/// | 3 | 34 | CHART_IR only — every other fixture is clean from here up |
+/// | 4 | 31 | CHART_IR |
+/// | 6 | 32 | CHART_IR |
+/// | 8 | 25 | CHART_IR — **shipped** |
+/// | 12 | 15 | CHART_IR |
+/// | 16 | 0 | passes, all 720 splits |
+/// | 24 / 32 / 64 | 0 | passes |
+///
+/// So 8 is NOT sufficient: 25 splits still differ, by ≤3 bytes each, all of
+/// them on `CHART_IR`'s diagonal AA polyline. 16 is sufficient — and **does
+/// not fit the target**. Measured on the M4 workload (480×270 in 480×16 bands,
+/// 122,880 B arena, `./dev.py qemu-m4`):
+///
+/// | GUTTER | band pixmap | M4 heap peak | insns/frame |
+/// |---|--:|--:|--:|
+/// | 4 | 46,848 B | 89,913 B | 42.2 M |
+/// | 8 | 63,488 B | 112,473 B | 51.3 M |
+/// | 10 | 72,000 B | **allocation failure** (5,280 B alloc, peak 101,777 B) | — |
+/// | 16 | 98,304 B | **allocation failure** (5,120 B alloc) | — |
+///
+/// The largest overscan the arena admits is 8; the smallest that clears the
+/// fixtures is 16. **The two sets do not intersect**, so this constant is a
+/// documented compromise and the residue is a known gap, not a bound — #40,
+/// held open by `exact_chart_band_equivalence_known_gap` (`#[ignore]`d, with
+/// the numbers).
+///
+/// And growing the number is not the fix even where RAM allows it:
+/// `scripts/gutter-reach-probe.py` sweeps ONE diagonal `line` op of controlled
+/// vertical extent and finds the required overscan tracks the extent of the
+/// polygon the pixmap edge CUTS — a 109-row line still fails 31 of 120 splits
+/// at overscan 88 and only goes clean at 96. tiny-skia's edge walker is seeded
+/// at the rasterization clip, so a cut edge accumulates coverage from a
+/// different starting row; overscan only helps by making the cut rarer. **The
+/// fix is to stop handing the rasterizer a polygon it has to cut** — clip our
+/// own polygons to the pixmap in world space, on the same 1/64 grid, so every
+/// band feeds tiny-skia an identical uncut path. That done, the other five
+/// fixtures measure a minimum of 3, and dropping to 4 is worth 22,560 B of
+/// arena (18.4 %) and 9.2 M insns/frame (17.9 %) at Exact — both measured
+/// above, not projected. That is #40's payoff, not a separate optimisation.
 const GUTTER: u32 = 8;
 
 /// Overscan for the `Fast` tier (#27). Fast runs the same AA rasterizer as
 /// Exact, so it needs SOME overscan — but how much is a MEASURED question, not
 /// a copied constant, because Fast also carries Draft's `rgb` band buffer and
 /// the two together overran the M4's 122,880 B heap arena at [`GUTTER`].
-/// `tests/fast_golden.rs::fast_band_equivalence_stress` renders both fixtures
-/// at EVERY band height from 1 to the full frame and demands byte equality:
+/// `tests/fast_golden.rs::fast_band_equivalence_stress` renders every committed
+/// fixture at EVERY band height from 1 to the full frame — 720 (scene, band_h)
+/// splits — and demands byte equality. Re-derived over all six fixtures in #38
+/// (the original table saw only DEMO_IR + demo_scene and read the minimum as 2;
+/// CLIP_IR's rounded-clip mask needs one more):
 ///
-/// | overscan | verdict |
-/// |---|---|
-/// | 0 | fails at band_h=30 (4 differing bytes) |
-/// | 1 | fails at band_h=1 (27 differing bytes) |
-/// | 2 | passes, all 120 heights, both scenes |
-/// | 4 | passes — **chosen**, 2x the measured minimum |
+/// | overscan | failing splits | where |
+/// |---|---|---|
+/// | 0 | 144 | DEMO_IR 57 · demo_scene 34 · CLIP_IR 34 · CHART_IR 11 · TEXT_IR 8 |
+/// | 1 | 49 | DEMO_IR 19 · demo_scene 11 · CLIP_IR 19 |
+/// | 2 | 6 | CLIP_IR |
+/// | 3 | 0 | passes — the measured minimum |
+/// | 4 | 0 | passes — **shipped**, one px of margin |
 ///
 /// At the reference 480x16 band that is 46,848 B of pixmap instead of 63,488,
 /// which is what lets Fast run on the F405-class part at all.
+///
+/// **Fast is band-exact where Exact is not, and that is structural, not luck**
+/// (#38): every CHART_IR failure in [`GUTTER`]'s table is the diagonal AA
+/// polyline, and Fast routes `line` to Draft's integer span path — a
+/// straight-edged quad whose per-pixel verdict is a pure function of world
+/// position. So the two constants stay separate: they differ because the tiers
+/// differ in WHICH primitives reach the rasterizer, which is the definition of
+/// the tiers. One constant would have to be the max of the two, and 16 does not
+/// fit the arena (see [`GUTTER`]).
 const FAST_GUTTER: u32 = 4;
 
 /// Quantize a world-space scalar to the 1/64-px grid (deterministic libm
@@ -538,6 +601,19 @@ impl TinySkiaCanvas {
         // Exact's per-band pixmap and Draft's per-band `rgb` — the honest
         // price of AA'ing curves at all, recorded here so nobody "optimises"
         // it back off.
+        //
+        // **Draft's 0 has one measured exception (#38).** The integer-span
+        // argument covers every Draft op EXCEPT the rounded-clip fallback: an
+        // op meeting `ClipFate::Masked` routes to the shared tiny-skia mask
+        // path, which is AA and is therefore clip-seeded like any other. On
+        // CLIP_IR the sweep finds 34 of 120 splits differ at overscan 0, 19 at
+        // 1, 6 at 2, and none from 3 up — i.e. Draft is band-exact on every
+        // fixture that never pushes a ROUNDED clip, and not on the one that
+        // does. The 0 stands (a gutter costs Draft its whole reason to exist:
+        // 30,720 B of band pixmap becomes 46,848 B at overscan 4, plus the
+        // demul/convert pass over it), and the gap is recorded as a `#[ignore]`d
+        // test carrying these numbers rather than papered over — #41, held open
+        // by `tests/fast_golden.rs::draft_rounded_clip_band_equivalence_known_gap`.
         let gutter = match quality {
             Quality::Exact => GUTTER,
             Quality::Fast => FAST_GUTTER,

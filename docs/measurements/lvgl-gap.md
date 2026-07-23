@@ -334,10 +334,27 @@ change**. Draft render-only would land at ≈ 3.6 M/frame — parity with LVGL's
 | suspect | measured | verdict |
 |---|--:|---|
 | premultiply/demultiply round-trip | 1,418,064 insns/frame (2.2 % of Exact); `demultiply` is 129,600 calls at **10.0 insns each** | Not a problem. tiny-skia already short-circuits `alpha == 255` (`tiny-skia-0.11.4/src/color.rs:155`), so the "float round-trip" is a byte copy in practice. |
-| the 8 px gutter | pixmap zeroing is 853,267 insns/frame **total**; the gutter's share is ≈ 440 k (0.7 % of Exact) | Costs **RAM** (63,488 B vs 30,720 B per band), not time. Not a perf lever. |
+| the 8 px gutter | ~~pixmap zeroing is 853,267 insns/frame **total**; the gutter's share is ≈ 440 k (0.7 % of Exact)~~ **superseded — see the correction below** | ~~Costs **RAM** (63,488 B vs 30,720 B per band), not time. Not a perf lever.~~ It costs both: **9.2 M insns/frame (17.9 %)** and 22,560 B of arena. |
 | per-band pixmap allocation/zeroing generally | 853 k insns/frame at Exact | 1.3 % of Exact — matters only at Draft (§2.3), where it is 12 % of a much smaller number |
 | tiny-skia computing coverage over solid interiors | slope 0.91 (§4) | Falsified. |
 | path flattening *density* | `4·ceil(r/2)` vertices; halving it was already superseded in #27 | The vertices are not the cost — the **trig per vertex** is (§2.2), and that is fixable without changing vertex count |
+
+**Correction, #38 (2026-07-23): the gutter IS a lever, by 26×.** The 440 k
+figure priced only the extra *zeroing*. Rebuilding the same tier with the
+constant changed and counting with the same tool (`scripts/tier-insns.py`,
+plugin-exact, `--profile release-mcu`, same commit) prices the whole thing:
+
+| GUTTER | M4 heap peak | insns/frame |
+|---|--:|--:|
+| 8 (shipped) | 112,473 B | 51,349,644 |
+| 4 | 89,913 B | 42,156,216 |
+
+**−9,193,428 insns/frame (−17.9 %) and −22,560 B (−18.4 % of the 122,880 B
+arena)**, frame hash unchanged (`0x24dcaff531c6eb01`). The rasterization and
+the per-band clip/edge work over the overscan rows were never counted, only the
+memset. It is not a free win today — 4 is not a sufficient overscan (see
+`GUTTER`'s table in `vyr-core/src/painter.rs`, and #40) — but it is the size of
+the prize for fixing the reason the overscan exists.
 
 ---
 
