@@ -220,12 +220,14 @@ QEMU_M4_INSNS_PER_CS = 10_000_000
 QEMU_M4_TIMED_FRAMES = 20  # keep in sync with TIMED_FRAMES in vyr-size/src/workload.rs
 # F16 (#16) gap-recovery anchors for `qemu-m4 --draft`. The Exact figure is
 # THIS vehicle's own measured Quality::Exact insns/frame (docs/measurements/
-# f9-static.md, "~75.0 M insns/frame"); the LVGL figure is the ~10 M
-# insns/frame the M4 benchmark measured for an LVGL equivalent (the 7.4x
-# per-pixel gap that motivated F16). Both are anchors for the recovered-gap %,
-# not measured by this run — Draft's own insns/frame IS what the run measures.
-QEMU_M4_EXACT_INSNS = 75_000_000
-QEMU_M4_LVGL_INSNS = 10_000_000
+# scripts/qemu-insn.py). BOTH are now EXACT instruction counts from a QEMU
+# built with --enable-plugins + the libinsn TCG plugin, verified
+# bit-identical across idle and host-loaded runs. They replace the previous
+# SYS_CLOCK-derived guesses (75 M / 10 M), which were host WALL TIME and read
+# 16.9% / 8.5% high. Both are anchors for the recovered-gap %, not measured by
+# this run — Draft's own insns/frame IS what the run measures.
+QEMU_M4_EXACT_INSNS = 64_178_227
+QEMU_M4_LVGL_INSNS = 9_220_422
 # The committed per-tier M4 baseline (insns/frame + workload frame hash + heap),
 # the perf safety net: `qemu-m4` gates the measured number against it — a
 # regression beyond QEMU_M4_TOL FAILS, an improvement beyond it prompts a
