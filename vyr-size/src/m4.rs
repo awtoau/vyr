@@ -608,7 +608,7 @@ fn main() -> ! {
     // all, because the controller holds the frame memory. This block is
     // entirely outside the DWT window opened later inside `workload::run`,
     // and the frame hash / cycle count that follow are unchanged by it.
-    #[cfg(feature = "lcd")]
+    #[cfg(all(feature = "lcd", not(feature = "ltdc")))]
     {
         let n = crate::lcd::PANEL_BAND_BYTES;
         match crate::lcd::show_panel_scene(
@@ -620,6 +620,26 @@ fn main() -> ! {
             // Honest failure, but NOT fatal: the measurement half of this
             // vehicle is the load-bearing part and still has to report.
             Err(e) => write_line(&alloc::format!("ERROR [vyr-size] lcd scene failed: {e:?}")),
+        }
+    }
+
+    // #30, `--features ltdc`: the same scene on the same panel, but through
+    // FMC/SDRAM + PLLSAI + LTDC hardware scan-out instead of SPI5 pixel
+    // pushes. It borrows the same 240x16 CCM prefix for the RENDER band; the
+    // framebuffer it blits into lives in external SDRAM at 0xD0000000, so no
+    // internal RAM is spent on it. Like the `lcd` block above this is
+    // entirely outside the DWT window opened later in `workload::run` — it
+    // opens its own, and reports render and blit cycles separately.
+    #[cfg(feature = "ltdc")]
+    {
+        let n = crate::lcd::PANEL_BAND_BYTES;
+        match crate::ltdc::show_scene(
+            &mut emit,
+            &mut band_buf[..n],
+            crate::workload::WORKLOAD_QUALITY,
+        ) {
+            Ok(_) => {}
+            Err(e) => write_line(&alloc::format!("ERROR [vyr-size] ltdc scene failed: {e:?}")),
         }
     }
 

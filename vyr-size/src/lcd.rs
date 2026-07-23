@@ -1,8 +1,17 @@
-//! `--features lcd` — put vyr's pixels on the STM32F429I-DISC1's own panel
-//! (#28). Measurement scaffolding in the vyr-size sense: `unsafe` register
-//! pokes live here, vyr-core stays `no_std + alloc` and `forbid(unsafe_code)`
-//! and is used through exactly the same `render(tree, area, buf, stride)`
-//! entry point as every other leg.
+//! `--features lcd` / `--features ltdc` — put vyr's pixels on the
+//! STM32F429I-DISC1's own panel (#28, #30). Measurement scaffolding in the
+//! vyr-size sense: `unsafe` register pokes live here, vyr-core stays
+//! `no_std + alloc` and `forbid(unsafe_code)` and is used through exactly the
+//! same `render(tree, area, buf, stride)` entry point as every other leg.
+//!
+//! This module owns the **command channel and the panel**: SPI5, the three
+//! control pins, ST's ILI9341 init sequence, the read-back probe, the
+//! 240×320 scene, and the RGB565 conversion. Both display paths use it —
+//! `lcd` streams pixels through SPI5 into the controller's GRAM, `ltdc`
+//! (see the `ltdc` module) keeps SPI5 for registers only and lets the LTDC
+//! peripheral scan a framebuffer out of external SDRAM over the parallel RGB
+//! bus. The single register that decides which is [`panel_init`]'s `rgb`
+//! argument.
 //!
 //! # What the hardware actually is (verified, not assumed)
 //!
@@ -26,43 +35,51 @@
 //!   LTDC alternate functions and the three control pins above and nothing
 //!   else, so there is no enable line to forget.
 //!
-//! # Why SPI-to-GRAM and not LTDC
-//!
-//! ST's BSP drives this panel the other way: SPI5 for registers, and the
-//! parallel RGB (DPI) path from LTDC scanning a framebuffer out of the
-//! external SDRAM. That is the higher-bandwidth answer and the right one for
-//! animation. It is also FMC/SDRAM bring-up plus PLLSAI plus ~28 alternate-
-//! function pins before a single pixel exists.
+//! # SPI-to-GRAM vs LTDC — one register
 //!
 //! The ILI9341 has its own 240×320×18bpp frame memory and refreshes the glass
 //! from it with no host involvement. Whether that memory is fed from the host
 //! interface or from the RGB bus is ONE register: `0xF6` (Interface Control)
 //! bit RM and field DM. ST's init sets the third parameter to `0x06` — RM=1
 //! (GRAM written from the RGB interface), DM=01 (RGB interface display
-//! operation), i.e. "LTDC owns the pixels". This driver sends the same init
-//! with `0x00` instead — RM=0 (GRAM written from the system/serial
-//! interface), DM=00 (internal-clock display operation), i.e. "the SPI port
-//! owns the pixels". Everything else in the sequence — the power/VCOM/gamma
-//! block and MADCTL `0xC8` — is ST's, byte for byte, so the panel is driven
-//! at the operating point its vendor specified.
+//! operation), i.e. "LTDC owns the pixels". The `lcd` path sends `0x00`
+//! instead — RM=0 (GRAM written from the system/serial interface), DM=00
+//! (internal-clock display operation), i.e. "the SPI port owns the pixels".
+//! Everything else in the sequence — the power/VCOM/gamma block and MADCTL
+//! `0xC8` — is ST's, byte for byte, so the panel is driven at the operating
+//! point its vendor specified.
 //!
-//! Consequences, stated plainly: a full-screen flush is 153,600 bytes at
-//! 5.625 MHz ≈ 220 ms, so this path is for static frames, and it is NOT in
-//! the timed window (see [`show_panel_scene`]). Nothing about the existing
-//! 480×270 measurement changes — `--features board` alone still builds and
-//! behaves exactly as before.
+//! Consequences, stated plainly: over SPI a full-screen flush is 153,600
+//! bytes at 5.625 MHz ≈ 220 ms, so that path is for static frames. Neither
+//! path is in the DWT-timed measurement window (see `show_panel_scene` and
+//! `ltdc::show_scene`). Nothing about the existing 480×270
+//! measurement changes — `--features board` alone still builds and behaves
+//! exactly as before.
 //!
-//! # Deltas from ST's sequence, and why each one
+//! # [`panel_init`]'s two sequences, and every delta from ST's
 //!
-//! | Step | ST / Trezor | here | why |
-//! |------|-------------|------|-----|
-//! | `0xB0` RGB Interface Signal Control | `0xC2` | omitted | configures the DPI path this driver does not use |
-//! | `0xF6` Interface Control | `01 00 06` | `01 00 00` | RM/DM: GRAM fed from the serial port, displayed on the internal clock |
-//! | `0x3A` COLMOD | (never set) | `0x55` | ST leaves DBI pixel format alone because LTDC sets the DPI format; writing GRAM over SPI needs 16 bpp DBI declared |
-//! | `0x01` SWRESET | (never sent) | sent first | the panel's RESX is not on a GPIO, so a re-flash without a power cycle would otherwise inherit the previous run's register state |
+//! `rgb = true` reproduces ST's sequence for this board EXACTLY (source:
+//! `STMicroelectronics/stm32-ili9341` → `ili9341.c` `ili9341_Init()`,
+//! byte-for-byte identical to `trezor-firmware`
+//! `core/embed/io/display/stm32f429i-disc1/ili9341_spi.c` `ili9341_init()`),
+//! plus the one addition marked below. `rgb = false` is the `lcd` path's
+//! serial-GRAM variant:
+//!
+//! | Step | ST / Trezor | `rgb=true` (ltdc) | `rgb=false` (lcd) | why |
+//! |------|-------------|-------------------|-------------------|-----|
+//! | `0xB0` RGB Interface Signal Control | `0xC2` | `0xC2` (ST's) | omitted | configures the DPI path only the LTDC leg uses |
+//! | `0xF6` Interface Control | `01 00 06` | `01 00 06` (ST's) | `01 00 00` | RM/DM: RGB bus vs serial port feeds GRAM |
+//! | `0x3A` COLMOD | (never set) | (not set — ST's) | `0x55` | ST leaves DBI pixel format alone because LTDC sets the DPI format; writing GRAM over SPI needs 16 bpp DBI declared |
+//! | `0x2C` trailing RAMWR | sent | sent (ST's) | not sent | ST leaves the panel in "memory write"; the serial path re-issues it per band anyway |
+//! | `0x01` SWRESET | (never sent) | sent first | sent first | the panel's RESX is not on a GPIO, so a re-flash without a power cycle would otherwise inherit the previous run's register state |
+//! | `0x28` DISPLAY_OFF | Trezor sends, ST does not | sent | sent | Trezor's addition, kept: configure a quiet panel |
 
+// Only the SPI pixel path renders; with `ltdc` the scene comes from
+// `crate::ltdc` instead and this module is the command channel alone.
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 use vyr_core::{Assets, Fonts, Quality, Rect, RenderError};
 
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 use crate::opaque;
 
 // --- board addresses (RM0090; the F429 memory map) --------------------------
@@ -104,12 +121,12 @@ const SPIN_LIMIT: u32 = 100_000;
 
 // --- tiny volatile helpers --------------------------------------------------
 
-fn rd(addr: u32) -> u32 {
+pub(crate) fn rd(addr: u32) -> u32 {
     // SAFETY: fixed peripheral address, 4-aligned, read-only.
     unsafe { core::ptr::read_volatile(addr as *const u32) }
 }
 
-fn wr(addr: u32, v: u32) {
+pub(crate) fn wr(addr: u32, v: u32) {
     // SAFETY: fixed peripheral address, 4-aligned.
     unsafe { core::ptr::write_volatile(addr as *mut u32, v) }
 }
@@ -125,7 +142,7 @@ fn gpio_output(port: u32, pin: u32) {
 }
 
 /// Set a pin to alternate function `af`, push-pull, high speed.
-fn gpio_af(port: u32, pin: u32, af: u32) {
+pub(crate) fn gpio_af(port: u32, pin: u32, af: u32) {
     let os = rd(port + 0x08) & !(0b11 << (pin * 2));
     wr(port + 0x08, os | (0b10 << (pin * 2))); // OSPEEDR: high
     wr(port + 0x04, rd(port + 0x04) & !(1 << pin)); // OTYPER: push-pull
@@ -153,7 +170,7 @@ fn gpio_set(port: u32, pin: u32, high: bool) {
 /// 120 ms after SLPOUT before the next command), and there is no other clock
 /// on this vehicle. Reads the clock the part actually reached rather than
 /// assuming 180 MHz, so a fallback-clock boot still waits long enough.
-fn delay_ms(ms: u32) {
+pub(crate) fn delay_ms(ms: u32) {
     let per_ms = crate::m4::sysclk_hz() / 1000;
     let target = per_ms.saturating_mul(ms);
     let t0 = crate::m4::clock_cycles() as u32;
@@ -226,18 +243,20 @@ fn data(d: u8) {
 
 /// Open a long data burst: /CS stays low for the whole run (the normal way to
 /// stream GRAM; per-byte framing would triple the wire time).
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 fn burst_begin() {
     dc_data();
     cs(true);
 }
 
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 fn burst_end() {
     spi_drain();
     cs(false);
 }
 
 /// Bring up SPI5 + the three control pins exactly as ST's BSP does.
-fn spi_init() {
+pub(crate) fn spi_init() {
     // GPIOC (/CS, gyro /CS), GPIOD (D/CX, RDX), GPIOF (SPI5) clocks.
     wr(
         RCC_AHB1ENR as u32,
@@ -386,7 +405,7 @@ fn bb_read_raw(reg: u8, n: usize) -> [u8; 5] {
 /// INCONCLUSIVE rather than a failure — it says the panel did not answer on
 /// this wire, not that it did not receive. Either way this runs after the
 /// frame has been flushed and changes nothing on screen.
-fn panel_probe(emit: &mut dyn FnMut(&str)) {
+pub(crate) fn panel_probe(emit: &mut dyn FnMut(&str)) {
     let hex = |b: &[u8; 5]| {
         alloc::format!(
             "{:02x} {:02x} {:02x} {:02x} {:02x}",
@@ -421,12 +440,21 @@ pub const PANEL_W: u32 = 240;
 /// Panel geometry.
 pub const PANEL_H: u32 = 320;
 
-/// ST's init for this exact panel, with the four documented deltas in the
-/// module header. The magic numbers are ST's — `ili9341.c` in
+/// ST's init for this exact panel, with the deltas tabulated in the module
+/// header. The magic numbers are ST's — `ili9341.c` in
 /// `STMicroelectronics/stm32-ili9341`, mirrored by `trezor-firmware`'s
 /// `core/embed/io/display/stm32f429i-disc1/ili9341_spi.c` — and are NOT
 /// re-derived here from the datasheet.
-fn panel_init() {
+///
+/// `rgb` selects who feeds the controller's GRAM:
+///
+/// * `true` — the parallel RGB (DPI) bus, i.e. LTDC scan-out. This is ST's
+///   own configuration for this board, reproduced exactly.
+/// * `false` — the serial (DBI) port, i.e. `0x2C` writes over SPI5.
+///
+/// Passing a compile-time-constant `rgb` from each leg's entry point means
+/// the branch folds away and neither build carries the other's bytes.
+pub(crate) fn panel_init(rgb: bool) {
     cmd(0x01); // SWRESET — RESX is not on a GPIO; start from a known state
     delay_ms(150); // datasheet: 120 ms minimum before the next command
     cmd(0x28); // display off while the panel is being configured
@@ -479,8 +507,15 @@ fn panel_init() {
     data(0xC8);
     cmd(0xF2); // 3GAMMA_EN
     data(0x00);
-    // DELTA vs ST: 0xB0 (RGB Interface Signal Control) = 0xC2 is omitted; the
-    // DPI path is unused here.
+    if rgb {
+        // ST's `LCD_RGB_INTERFACE` step: RGB interface signal control. Bit 7
+        // = ByPass_MODE (memory), bit 6 = RCM (DE mode, i.e. VSYNC/HSYNC/DE
+        // all used), bits 1:0 = VSPL/HSPL polarity — 0xC2 is what ST ships
+        // for this panel and what the LTDC timing below is matched to.
+        cmd(0xB0);
+        data(0xC2);
+    }
+    // DELTA vs ST when !rgb: 0xB0 is omitted, because that DPI path is unused.
     cmd(0xB6); // DFC again, ST's four-parameter form
     for b in [0x0A, 0xA7, 0x27, 0x04] {
         data(b);
@@ -495,19 +530,24 @@ fn panel_init() {
         data(b);
     }
 
-    // DELTA vs ST: third parameter 0x00, not 0x06. RM=0 => GRAM is written
-    // from the system (serial) interface; DM=00 => the panel refreshes from
-    // GRAM on its internal clock. This single byte is what makes SPI pixels
-    // appear without LTDC.
+    // THE register. Third parameter 0x06 (ST's) => RM=1, GRAM is written from
+    // the RGB interface and DM=01 selects RGB-interface display operation:
+    // LTDC owns the pixels. 0x00 => RM=0/DM=00, GRAM written from the system
+    // (serial) interface and refreshed on the panel's internal clock: the SPI
+    // port owns the pixels.
     cmd(0xF6); // Interface Control
-    for b in [0x01, 0x00, 0x00] {
+    for b in [0x01, 0x00, if rgb { 0x06 } else { 0x00 }] {
         data(b);
     }
 
-    // DELTA vs ST: declare the DBI pixel format. ST never sets COLMOD because
-    // the DPI format comes from LTDC; a serial GRAM write must say 16 bpp.
-    cmd(0x3A);
-    data(0x55); // DPI 16 bpp | DBI 16 bpp
+    if !rgb {
+        // DELTA vs ST: declare the DBI pixel format. ST never sets COLMOD
+        // because the DPI format comes from LTDC; a serial GRAM write must
+        // say 16 bpp. Sending it in RGB mode would be a deviation from ST's
+        // sequence for no gain, so the LTDC leg does not.
+        cmd(0x3A);
+        data(0x55); // DPI 16 bpp | DBI 16 bpp
+    }
 
     cmd(0x2C); // ST's sequence pokes GRAM here, then settles
     delay_ms(200);
@@ -530,10 +570,17 @@ fn panel_init() {
     cmd(0x11); // SLEEP_OUT
     delay_ms(200);
     cmd(0x29); // DISPLAY_ON
+    if rgb {
+        // ST's sequence ends here: "GRAM start writing". In RGB mode the
+        // writer is the DPI bus, so this arms the controller to accept the
+        // LTDC scan-out that is about to start.
+        cmd(0x2C);
+    }
 }
 
 /// Point the GRAM address window at `[x, x+w) x [y, y+h)` and leave the panel
 /// in "memory write" so the caller can stream pixels.
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 fn set_window(x: u32, y: u32, w: u32, h: u32) {
     let (x1, y1) = (x + w - 1, y + h - 1);
     cmd(0x2A);
@@ -551,7 +598,7 @@ fn set_window(x: u32, y: u32, w: u32, h: u32) {
 /// scene is flat-shaded UI, and a dither would put pixels on the glass that
 /// the renderer never produced.
 #[inline]
-fn rgb565(r: u8, g: u8, b: u8) -> u16 {
+pub(crate) fn rgb565(r: u8, g: u8, b: u8) -> u16 {
     ((r as u16 & 0xF8) << 8) | ((g as u16 & 0xFC) << 3) | (b as u16 >> 3)
 }
 
@@ -559,6 +606,7 @@ fn rgb565(r: u8, g: u8, b: u8) -> u16 {
 /// purpose: if the scene render later fails, a uniformly coloured panel is
 /// still proof that clocks, SPI5, the control pins and the ILI9341's init all
 /// work, and separates "pixel path broken" from "renderer broken" by looking.
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 fn fill(color: u16) {
     set_window(0, 0, PANEL_W, PANEL_H);
     let (hi, lo) = ((color >> 8) as u8, color as u8);
@@ -575,6 +623,7 @@ fn fill(color: u16) {
 /// `band` is exactly the buffer vyr-core just rendered into — no copy, no
 /// intermediate framebuffer. This is the whole reason banding maps onto this
 /// panel: the controller holds the frame memory, so the host never needs one.
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 fn flush_band(y: u32, h: u32, band: &[u8]) {
     set_window(0, y, PANEL_W, h);
     burst_begin();
@@ -645,10 +694,10 @@ pub const PANEL_IR: &str = r##"{
 /// to the 480×270 frame. The panel scene is a different scene so it has its
 /// own hash; what matters is that it is STABLE and that the bytes hashed are
 /// the bytes sent to the glass.
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+pub(crate) const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x100_0000_01b3;
 
-fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
+pub(crate) fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
     for &b in data {
         h ^= b as u64;
         h = h.wrapping_mul(FNV_PRIME);
@@ -670,6 +719,7 @@ fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
 /// driver property and pricing it as render cost would be a lie. `delay_ms`
 /// reads DWT_CYCCNT but only ever as a stopwatch for the panel's own settling
 /// requirements.
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 pub fn show_panel_scene(
     emit: &mut dyn FnMut(&str),
     band_buf: &mut [u8],
@@ -681,7 +731,7 @@ pub fn show_panel_scene(
          GRAM fed from the serial port (0xF6 RM=0 DM=00)"
     ));
     spi_init();
-    panel_init();
+    panel_init(false); // serial GRAM: this leg's whole point
 
     // Milestone 1: a solid colour. If the render below dies, THIS is what the
     // board shows, and it says "SPI, control pins and panel init are fine".

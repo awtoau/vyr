@@ -49,11 +49,17 @@ mod m4;
 #[cfg(feature = "run-qemu")]
 mod workload;
 
-/// #28: the STM32F429I-DISC1's own ILI9341 panel. Board-only (it pokes F429
+/// #28/#30: the STM32F429I-DISC1's own ILI9341 panel — SPI5 command channel,
+/// ST's init sequence, the 240x320 scene. Board-only (it pokes F429
 /// peripheral registers), and additive — `--features board` alone links none
-/// of it.
-#[cfg(all(target_os = "none", feature = "lcd"))]
+/// of it. Shared by BOTH display paths.
+#[cfg(all(target_os = "none", any(feature = "lcd", feature = "ltdc")))]
 mod lcd;
+
+/// #30: FMC/SDRAM + PLLSAI + LTDC hardware scan-out over the panel's 16-bit
+/// parallel RGB bus. Uses [`lcd`] for the command channel and the scene.
+#[cfg(all(target_os = "none", feature = "ltdc"))]
+mod ltdc;
 
 #[cfg(not(feature = "run-qemu"))]
 use alloc::vec;

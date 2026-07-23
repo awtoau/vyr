@@ -52,6 +52,17 @@ board = ["run-qemu"]
 # flushes before the timed loop starts, and flush cost is never priced as
 # render cost. Runner: scripts/board-lcd.py.
 lcd = ["board"]
+# #30: the SAME 240x320 panel, driven the way ST drives it — FMC/SDRAM
+# framebuffer, PLLSAI pixel clock, LTDC scanning it out over the ILI9341's
+# 16-bit parallel RGB bus, SPI5 demoted to the register channel. Strictly
+# ADDITIVE to `board` exactly as `lcd` is, and MUTUALLY EXCLUSIVE with `lcd`
+# in practice (they set the controller's 0xF6 to opposite values; if both are
+# enabled the LTDC path runs and the SPI pixel path is skipped). The
+# measurement build (`--no-default-features --features board`) compiles none
+# of it. Nothing here enters the DWT-timed 480x270 window; this leg opens its
+# own and reports render and blit cycles separately.
+# Runner: scripts/board-ltdc.py.
+ltdc = ["board"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
