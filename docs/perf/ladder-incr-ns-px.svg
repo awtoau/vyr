@@ -14,37 +14,44 @@
 <line x1="64" y1="34.0" x2="592" y2="34.0" stroke="#dddddd" stroke-width="1"/>
 <text x="58" y="38.0" text-anchor="end" fill="#555">31.60</text>
 <text x="64.0" y="300" text-anchor="middle" fill="#555">0</text>
-<text x="592.0" y="300" text-anchor="middle" fill="#555">1</text>
+<text x="328.0" y="300" text-anchor="middle" fill="#555">1</text>
+<text x="592.0" y="300" text-anchor="middle" fill="#555">2</text>
 <text x="328.0" y="314" text-anchor="middle" fill="#555">run # (history order)</text>
 <text x="14" y="159.0" text-anchor="middle" fill="#555" transform="rotate(-90 14 159.0)">ns / dirty px</text>
-<polyline points="64.0,72.4 592.0,66.6" fill="none" stroke="#5b8def" stroke-width="1.8"/>
+<polyline points="64.0,72.4 328.0,66.6 592.0,73.6" fill="none" stroke="#5b8def" stroke-width="1.8"/>
 <circle cx="64.0" cy="72.4" r="3" fill="#5b8def"><title>120x68 run 0: 26.75</title></circle>
-<circle cx="592.0" cy="66.6" r="3" fill="#5b8def"><title>120x68 run 1: 27.48</title></circle>
+<circle cx="328.0" cy="66.6" r="3" fill="#5b8def"><title>120x68 run 1: 27.48</title></circle>
+<circle cx="592.0" cy="73.6" r="3" fill="#5b8def"><title>120x68 run 2: 26.59</title></circle>
 <rect x="606" y="34" width="10" height="10" fill="#5b8def"/>
 <text x="622" y="43" fill="#333">120x68</text>
-<polyline points="64.0,154.5 592.0,151.7" fill="none" stroke="#44b07b" stroke-width="1.8"/>
+<polyline points="64.0,154.5 328.0,151.7 592.0,150.4" fill="none" stroke="#44b07b" stroke-width="1.8"/>
 <circle cx="64.0" cy="154.5" r="3" fill="#44b07b"><title>240x135 run 0: 16.37</title></circle>
-<circle cx="592.0" cy="151.7" r="3" fill="#44b07b"><title>240x135 run 1: 16.72</title></circle>
+<circle cx="328.0" cy="151.7" r="3" fill="#44b07b"><title>240x135 run 1: 16.72</title></circle>
+<circle cx="592.0" cy="150.4" r="3" fill="#44b07b"><title>240x135 run 2: 16.89</title></circle>
 <rect x="606" y="50" width="10" height="10" fill="#44b07b"/>
 <text x="622" y="59" fill="#333">240x135</text>
-<polyline points="64.0,227.7 592.0,227.3" fill="none" stroke="#e0a03c" stroke-width="1.8"/>
+<polyline points="64.0,227.7 328.0,227.3 592.0,227.2" fill="none" stroke="#e0a03c" stroke-width="1.8"/>
 <circle cx="64.0" cy="227.7" r="3" fill="#e0a03c"><title>480x270 run 0: 7.12</title></circle>
-<circle cx="592.0" cy="227.3" r="3" fill="#e0a03c"><title>480x270 run 1: 7.17</title></circle>
+<circle cx="328.0" cy="227.3" r="3" fill="#e0a03c"><title>480x270 run 1: 7.17</title></circle>
+<circle cx="592.0" cy="227.2" r="3" fill="#e0a03c"><title>480x270 run 2: 7.18</title></circle>
 <rect x="606" y="66" width="10" height="10" fill="#e0a03c"/>
 <text x="622" y="75" fill="#333">480x270</text>
-<polyline points="64.0,258.1 592.0,258.0" fill="none" stroke="#d9534f" stroke-width="1.8"/>
+<polyline points="64.0,258.1 328.0,258.0 592.0,258.3" fill="none" stroke="#d9534f" stroke-width="1.8"/>
 <circle cx="64.0" cy="258.1" r="3" fill="#d9534f"><title>960x540 run 0: 3.28</title></circle>
-<circle cx="592.0" cy="258.0" r="3" fill="#d9534f"><title>960x540 run 1: 3.28</title></circle>
+<circle cx="328.0" cy="258.0" r="3" fill="#d9534f"><title>960x540 run 1: 3.28</title></circle>
+<circle cx="592.0" cy="258.3" r="3" fill="#d9534f"><title>960x540 run 2: 3.24</title></circle>
 <rect x="606" y="82" width="10" height="10" fill="#d9534f"/>
 <text x="622" y="91" fill="#333">960x540</text>
-<polyline points="64.0,269.6 592.0,269.6" fill="none" stroke="#9a6fd0" stroke-width="1.8"/>
+<polyline points="64.0,269.6 328.0,269.6 592.0,269.6" fill="none" stroke="#9a6fd0" stroke-width="1.8"/>
 <circle cx="64.0" cy="269.6" r="3" fill="#9a6fd0"><title>1920x1080 run 0: 1.82</title></circle>
-<circle cx="592.0" cy="269.6" r="3" fill="#9a6fd0"><title>1920x1080 run 1: 1.82</title></circle>
+<circle cx="328.0" cy="269.6" r="3" fill="#9a6fd0"><title>1920x1080 run 1: 1.82</title></circle>
+<circle cx="592.0" cy="269.6" r="3" fill="#9a6fd0"><title>1920x1080 run 2: 1.82</title></circle>
 <rect x="606" y="98" width="10" height="10" fill="#9a6fd0"/>
 <text x="622" y="107" fill="#333">1920x1080</text>
-<polyline points="64.0,274.3 592.0,274.2" fill="none" stroke="#3fb6c4" stroke-width="1.8"/>
+<polyline points="64.0,274.3 328.0,274.2 592.0,274.3" fill="none" stroke="#3fb6c4" stroke-width="1.8"/>
 <circle cx="64.0" cy="274.3" r="3" fill="#3fb6c4"><title>3840x2160 run 0: 1.23</title></circle>
-<circle cx="592.0" cy="274.2" r="3" fill="#3fb6c4"><title>3840x2160 run 1: 1.24</title></circle>
+<circle cx="328.0" cy="274.2" r="3" fill="#3fb6c4"><title>3840x2160 run 1: 1.24</title></circle>
+<circle cx="592.0" cy="274.3" r="3" fill="#3fb6c4"><title>3840x2160 run 2: 1.23</title></circle>
 <rect x="606" y="114" width="10" height="10" fill="#3fb6c4"/>
 <text x="622" y="123" fill="#333">3840x2160</text>
 </svg>
