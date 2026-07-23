@@ -534,7 +534,11 @@ fn panel_init() {
 
 /// Point the GRAM address window at `[x, x+w) x [y, y+h)` and leave the panel
 /// in "memory write" so the caller can stream pixels.
-fn set_window(x: u32, y: u32, w: u32, h: u32) {
+///
+/// An ARBITRARY window is the whole mechanism behind [`crate::anim`]: the wire
+/// cost becomes the dirty area's rather than the screen's, and every pixel
+/// outside the window keeps whatever the controller's GRAM already holds.
+pub(crate) fn set_window(x: u32, y: u32, w: u32, h: u32) {
     let (x1, y1) = (x + w - 1, y + h - 1);
     cmd(0x2A);
     for b in [(x >> 8) as u8, x as u8, (x1 >> 8) as u8, x1 as u8] {
@@ -570,20 +574,34 @@ fn fill(color: u16) {
     burst_end();
 }
 
-/// Push one rendered RGB888 band to the panel at `(0, y)`.
+/// Push one rendered RGB888 **sub-rectangle** to the panel at `(x, y)`.
 ///
-/// `band` is exactly the buffer vyr-core just rendered into — no copy, no
-/// intermediate framebuffer. This is the whole reason banding maps onto this
-/// panel: the controller holds the frame memory, so the host never needs one.
-fn flush_band(y: u32, h: u32, band: &[u8]) {
-    set_window(0, y, PANEL_W, h);
+/// `buf` is exactly the buffer vyr-core just rendered into — no copy, no
+/// intermediate framebuffer. This is the whole reason banding (and, in
+/// [`crate::anim`], dirty-rect repaint) maps onto this panel: the controller
+/// holds the frame memory, so the host never needs one. `stride` is the source
+/// buffer's row pitch in bytes, which for a dirty rect is `w * 3` and NOT the
+/// screen pitch — the buffer's origin is the rect's top-left, never the
+/// screen's (invariant I1).
+pub(crate) fn flush_rect(x: u32, y: u32, w: u32, h: u32, buf: &[u8], stride: usize) {
+    set_window(x, y, w, h);
     burst_begin();
-    for px in band[..(PANEL_W * h * 3) as usize].chunks_exact(3) {
-        let c = rgb565(px[0], px[1], px[2]);
-        spi_byte((c >> 8) as u8);
-        spi_byte(c as u8);
+    let row_bytes = (w * 3) as usize;
+    for row in 0..h as usize {
+        let off = row * stride;
+        for px in buf[off..off + row_bytes].chunks_exact(3) {
+            let c = rgb565(px[0], px[1], px[2]);
+            spi_byte((c >> 8) as u8);
+            spi_byte(c as u8);
+        }
     }
     burst_end();
+}
+
+/// Push one full-width rendered RGB888 band to the panel at `(0, y)` — the
+/// static path's flush, a [`flush_rect`] whose rect happens to span the screen.
+fn flush_band(y: u32, h: u32, band: &[u8]) {
+    flush_rect(0, y, PANEL_W, h, band, (PANEL_W * 3) as usize);
 }
 
 // --- the panel-native scene -------------------------------------------------
@@ -645,10 +663,10 @@ pub const PANEL_IR: &str = r##"{
 /// to the 480×270 frame. The panel scene is a different scene so it has its
 /// own hash; what matters is that it is STABLE and that the bytes hashed are
 /// the bytes sent to the glass.
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+pub(crate) const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x100_0000_01b3;
 
-fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
+pub(crate) fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
     for &b in data {
         h ^= b as u64;
         h = h.wrapping_mul(FNV_PRIME);
