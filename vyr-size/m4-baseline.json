@@ -6,7 +6,7 @@
   },
   "Exact": {
     "frame_fnv1a": "0x24dcaff531c6eb01",
-    "heap_peak": 106409,
-    "insns_per_frame": 80000000
+    "heap_peak": 112473,
+    "insns_per_frame": 68000000
   }
 }

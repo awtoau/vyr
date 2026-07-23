@@ -257,7 +257,10 @@ QEMU_M4_TIMED_FRAMES = 20  # keep in sync with TIMED_FRAMES in vyr-size/src/work
 # tick-marked lv_scale + value arc + knob where vyr draws a plain ring). The
 # Exact anchor moved 64,178,227 -> 37,832,925 over the same period. Superseding
 # both here rather than leaving a stale anchor to be quoted (performance.md §5).
-QEMU_M4_EXACT_INSNS = 64_422_179
+# 2026-07-23, #32: 64,422,179 -> 51,349,644 when curve flattening stopped
+# re-running libm's f32 trig (computed in software f64 on an M4F) once per
+# vertex per BAND per frame — a pure memo, every tier's frame hash unchanged.
+QEMU_M4_EXACT_INSNS = 51_349_644
 QEMU_M4_LVGL_INSNS = 7_112_541
 # The committed per-tier M4 baseline (insns/frame + workload frame hash + heap),
 # the perf safety net: `qemu-m4` gates the measured number against it — a

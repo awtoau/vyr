@@ -120,6 +120,31 @@ sub-0.3 % symbols.)
 
 ### 2.2 The `f64` is trigonometry, and the trigonometry is flattening
 
+> **FIXED 2026-07-23 (#32) — this section describes the state BEFORE the fix.**
+> The contours are now memoised per caller-owned `Shapes` cache
+> (`vyr-core/src/shapes.rs`), so each distinct shape flattens once instead of
+> once per band per frame. Same `f32` in, same `f32` out — a pure memo, so
+> **every tier's frame hash is unchanged** (`Exact` still
+> `0x24dcaff531c6eb01`, identical on x86-64 and the emulated M4).
+> Re-measured with the same tool (`scripts/tier-insns.py`, plugin QEMU,
+> `release-mcu`):
+>
+> | tier | before | after | Δ |
+> |---|--:|--:|--:|
+> | Exact | 64,422,179 | **51,349,644** | −13,072,535 (−20.3 %) |
+> | Fast | 49,585,035 | **36,618,969** | −12,966,066 (−26.2 %) |
+> | Draft | 8,604,184 | 8,621,557 | +17,373 (+0.2 %, `-Oz` layout drift — Draft caches nothing because it flattens nothing) |
+>
+> The soft-`f64` group below (11,296,843 insns/frame) is now **208,258** — a
+> 98.2 % cut — and `cosf`/`sinf`/`k_sinf`/`k_cosf` have left the top-symbol
+> table entirely. Cost: 6,064 B of M4 heap at Exact, 7,984 B at Fast, against
+> a `Shapes::DEFAULT_BUDGET` ceiling of 8,192 B and a 122,880 B arena.
+>
+> The rejected alternative — an f32-native `sinf`/`cosf` — is still rejected
+> and now worth much less: the residue it could reach is ~208 k insns/frame
+> (0.4 % of Exact), and it would produce different values, hence different
+> polygons, hence a re-bless of every golden.
+
 Call counts, per frame, from the same run (entry-block execution counts):
 
 | symbol | calls/frame | insns/frame | insns/call |
