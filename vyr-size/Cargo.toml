@@ -34,6 +34,12 @@ run-qemu = ["dep:linked_list_allocator"]
 # adds this feature; the M4 binary has no env, so the tier is a build-time
 # selection (deterministic per build). Both legs (host + M4) pick it up.
 draft = []
+# #27: render the run-qemu workload at Quality::Fast (Draft's integer spans,
+# but curves anti-aliased through the Exact tiny-skia path). Same build-time
+# rule as `draft` — the M4 binary has no env. `./dev.py qemu-m4 --fast`.
+# Mutually exclusive with `draft` (draft wins if both are somehow enabled,
+# and the cfg below says so explicitly rather than silently).
+fast = []
 # F9 BOARD half (#9): the same runnable vehicle on REAL silicon — an
 # STM32F429I-DISC1 (F429ZI, M4F @ up to 180 MHz, 2 M flash / 192 K SRAM +
 # 64 K CCM). Implies run-qemu's runtime (vector table, crt0, semihosting,

@@ -29,14 +29,18 @@ use vyr_core::{Assets, Fonts, Quality, Rect, RenderError, RenderStats};
 use crate::opaque;
 
 /// F16 (#16): the quality tier this build renders at. `Quality::Exact` by
-/// default (the 75 M-insn oracle frame); `--features draft` selects
-/// `Quality::Draft` (integer no-AA fast path) — a build-time choice because
-/// the M4 binary has no env. `./dev.py qemu-m4 --draft` flips it.
-#[cfg(not(feature = "draft"))]
+/// default (the oracle frame); `--features draft` selects `Quality::Draft`
+/// (integer no-AA fast path), `--features fast` selects `Quality::Fast` (#27:
+/// integer spans, anti-aliased curves) — a build-time choice because the M4
+/// binary has no env. `./dev.py qemu-m4 --draft` / `--fast` flips it.
+#[cfg(not(any(feature = "draft", feature = "fast")))]
 pub const WORKLOAD_QUALITY: Quality = Quality::Exact;
-/// See [`WORKLOAD_QUALITY`].
+/// See [`WORKLOAD_QUALITY`]. `draft` wins if both tier features are enabled.
 #[cfg(feature = "draft")]
 pub const WORKLOAD_QUALITY: Quality = Quality::Draft;
+/// #27 middle tier — see [`WORKLOAD_QUALITY`].
+#[cfg(all(feature = "fast", not(feature = "draft")))]
+pub const WORKLOAD_QUALITY: Quality = Quality::Fast;
 
 /// Fixture frame size — the 480×270 the vyvanse memory profiles use.
 pub const FIXTURE_W: u32 = 480;
@@ -191,6 +195,7 @@ pub fn run(
     }
     let qname = match quality {
         Quality::Exact => "Exact",
+        Quality::Fast => "Fast",
         Quality::Draft => "Draft",
     };
     emit(&format!(

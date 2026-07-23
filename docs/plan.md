@@ -402,9 +402,15 @@ awto-vyvanse). Format: goal / deliverables / acceptance / depends.
 - **Knob candidates (each lands with its bench so the trade is PRICED):**
   - **AA off** (`Draft`): opaque non-AA fills become span writes — the
     single biggest ns/px lever; tiny-skia supports it per-paint already.
-  - **Flattening density**: halve the fixed-step segment counts (`Fast`) —
-    sagitta error rises from ~0.09 px to ~0.35 px, invisible at panel DPI,
-    fewer edges to walk.
+  - ~~**Flattening density**: halve the fixed-step segment counts (`Fast`)~~ —
+    **superseded (#27).** `Fast` shipped with different semantics: Draft's
+    integer span fills everywhere they apply, plus the Exact AA path for
+    CURVED geometry only. Halving the flattening density was never built,
+    because the measurement said the gap Draft leaves is entirely *edge
+    blending*, not *segment count* — Draft has literally 0 blend pixels in the
+    gauge region against Exact's 567. Fast recovers all 567. It costs 4.4x
+    Draft on the M4 (docs/performance.md §3.1), so the knob is real but the
+    price is not the one this line assumed.
   - **Gutter off** (`Fast`/`Draft`): the overscan exists for clip-adjacent
     AA cleanliness; without AA (or accepting LSB seams) the (w+16)(h+16)
     overscan cost — visible in the F2 scaling table — disappears.

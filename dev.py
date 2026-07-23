@@ -27,7 +27,7 @@ COMMANDS = {
     "bench": "perf gate: release vyr-bench check vs committed baseline + scaling-law assertion",
     "bench-record": "re-record vyr-bench/baseline.json (a reviewed act — commit it separately)",
     "size-mcu": "F9 static numbers: build the vyr-size matrix for thumbv7em + arm-none-eabi-size table",
-    "qemu-m4": "F9 dynamic half: boot vyr-size (run-qemu) on qemu-system-arm netduinoplus2 (M4), banded 480x270 + subset font; cross-ISA hash vs the host leg; icount virtual-time numbers. GATES insns/frame + frame hash vs vyr-size/m4-baseline.json (--draft = Draft tier; --bless re-records — commit separately)",
+    "qemu-m4": "F9 dynamic half: boot vyr-size (run-qemu) on qemu-system-arm netduinoplus2 (M4), banded 480x270 + subset font; cross-ISA hash vs the host leg; icount virtual-time numbers. GATES insns/frame + frame hash vs vyr-size/m4-baseline.json (--draft = Draft tier, --fast = Fast tier #27; --bless re-records — commit separately)",
     "anim": "F18 rig acceptance: 600-frame run @480 — per-frame incremental==full + committed hash chain + PNG seq + ffmpeg lossless video (--bless re-bless; --arm qemu cross-ISA rung; --size/--frames override; --no-video)",
     "ci": "THE single comprehensive gate (run after every change): gate + M4 insn-count gate + bench + size-mcu + anim(+ARM) + ladder + track, run-all-collect-all, one summary. --quick (~1-2 min): Draft-only M4, 60 anim frames, no video/ARM. Full run = nightly unit.",
     "ladder": "F18 resolution ladder 120→4K: ns/px full+incremental, 60fps headroom, dirty %; gates vs vyr-rig/baseline.json when present (--record re-records — commit separately)",
@@ -251,8 +251,14 @@ QEMU_M4_TIMED_FRAMES = 20  # keep in sync with TIMED_FRAMES in vyr-size/src/work
 # SYS_CLOCK-derived guesses (75 M / 10 M), which were host WALL TIME and read
 # 16.9% / 8.5% high. Both are anchors for the recovered-gap %, not measured by
 # this run — Draft's own insns/frame IS what the run measures.
-QEMU_M4_EXACT_INSNS = 64_178_227
-QEMU_M4_LVGL_INSNS = 9_220_422
+# Re-measured 2026-07-23 in one session (scripts/tier-insns.py + one
+# qemu-insn.py run for LVGL). The LVGL anchor moved 9,220,422 -> 7,112,541
+# because the harness stopped drawing content vyr never had (#27 Task B: a
+# tick-marked lv_scale + value arc + knob where vyr draws a plain ring). The
+# Exact anchor moved 64,178,227 -> 37,832,925 over the same period. Superseding
+# both here rather than leaving a stale anchor to be quoted (performance.md §5).
+QEMU_M4_EXACT_INSNS = 64_422_179
+QEMU_M4_LVGL_INSNS = 7_112_541
 # The committed per-tier M4 baseline (insns/frame + workload frame hash + heap),
 # the perf safety net: `qemu-m4` gates the measured number against it — a
 # regression beyond QEMU_M4_TOL FAILS, an improvement beyond it prompts a
@@ -274,8 +280,9 @@ def cmd_qemu_m4(rest: list[str]) -> int:
     # fast path) — a build-time feature (the M4 binary has no env). The
     # headline insns/frame then compares Draft vs the Exact 75 M / LVGL 10 M.
     draft = "--draft" in rest
-    tier = "Draft" if draft else "Exact"
-    feats = "run-qemu,draft" if draft else "run-qemu"
+    fast = "--fast" in rest and not draft
+    tier = "Draft" if draft else ("Fast" if fast else "Exact")
+    feats = "run-qemu,draft" if draft else ("run-qemu,fast" if fast else "run-qemu")
     flags = ["--no-default-features", "--features", feats]
     _log(f"qemu-m4 quality tier: {tier}")
 
@@ -375,7 +382,7 @@ def cmd_qemu_m4(rest: list[str]) -> int:
         ]
         # F16 (#16) headline: Draft insns/frame vs the Exact 75 M anchor and
         # the LVGL ~10 M anchor — "how much of the 7.4x gap does Draft recover".
-        if draft:
+        if draft or fast:
             exact_anchor = QEMU_M4_EXACT_INSNS
             lvgl_anchor = QEMU_M4_LVGL_INSNS
             saved = exact_anchor - per_frame
@@ -383,12 +390,16 @@ def cmd_qemu_m4(rest: list[str]) -> int:
             recovered = 100.0 * saved / gap if gap else 0.0
             speedup = exact_anchor / per_frame if per_frame else 0.0
             lines += [
-                f"  F16 Draft    {per_frame:,} insns/frame vs Exact {exact_anchor:,} "
+                f"  F16 {tier:<8} {per_frame:,} insns/frame vs Exact {exact_anchor:,} "
                 f"= {speedup:.2f}x; vs LVGL anchor {lvgl_anchor:,}",
-                f"  F16 GAP      Draft recovers {recovered:.0f}% of the Exact→LVGL gap "
-                f"({saved:,} of {gap:,} insns/frame) — v3 is fully integer + gutter-less "
-                "(no tiny-skia); the residue is the per-pixel demul+RGB888 convert + glyph blits",
+                f"  F16 GAP      {tier} recovers {recovered:.0f}% of the Exact->LVGL gap "
+                f"({saved:,} of {gap:,} insns/frame)",
             ]
+            if fast:
+                lines += [
+                    "  NOTE         the LVGL anchor is NOT quality-matched and NOT "
+                    "content-matched yet (#27) — do not publish a ratio against it",
+                ]
     for line in lines:
         print(line)
         _log(line)
@@ -453,7 +464,7 @@ def cmd_qemu_m4(rest: list[str]) -> int:
     if ref is None:
         _log(
             f"qemu-m4: no baseline for {tier} — run "
-            f"`./dev.py qemu-m4 {'--draft ' if draft else ''}--bless` to record it "
+            f"`./dev.py qemu-m4 {'--draft ' if draft else ('--fast ' if fast else '')}--bless` to record it "
             "(commit it). Not gating this run."
         )
         return rc

@@ -124,13 +124,26 @@ pub enum OpClass {
 /// AA spends — and because there is no AA fringe, Draft also drops the per-band
 /// overscan gutter. Draft pixels DIFFER from Exact (hard edges, no AA) — that is
 /// the tier's deliberate trade; Draft has its OWN goldens, never compared to
-/// Exact. Room is left for a future `Fast` (half-density flattening) — not
-/// built yet (#16).
+/// Exact. [`Quality::Fast`] sits between them: Draft's integer spans for
+/// everything straight-edged, the Exact AA path for CURVED geometry only (#27).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Quality {
     /// Float-AA tiny-skia path. The default everywhere oracle-facing.
     #[default]
     Exact,
+    /// **The middle tier (#27).** Draft's integer span fills everywhere they
+    /// apply — axis-aligned rects, straight-edged strokes, lines, gradients,
+    /// glyph + image blits, and the gutter-less RGB888 band surface — but
+    /// CURVED geometry (disc, ring/arc, rounded-rect and rounded-stroke and
+    /// rounded-gradient corners) routes back through the SAME tiny-skia
+    /// polygon path `Exact` uses, so curve edges are anti-aliased. No new
+    /// flattening and no new rasteriser: the quantized-polygon contract and
+    /// the exact-integer band translation are Exact's, unchanged — which is
+    /// why band equivalence still holds byte-exactly within the tier. Fast
+    /// pixels differ from BOTH neighbours (AA where Draft is hard; hard where
+    /// Exact would AA a straight edge that integer spans already get right,
+    /// plus Draft's integer gradient ramp), so it has its OWN goldens.
+    Fast,
     /// Fully integer, no-AA fast path, gutter-less. ALL ops (opaque +
     /// translucent rects, rounded fills + rounded strokes, disc/ring/line,
     /// gradient, glyph + image blits) rasterize as direct integer spans — no
@@ -162,9 +175,11 @@ pub struct RenderStats {
     pub glyphs_rasterized: u64,
     pub glyph_cache_entries: u64,
     pub glyph_cache_bytes: u64,
-    /// F16 (#16): pixels that took the [`Quality::Draft`] integer no-AA fast
-    /// path (direct span fills) rather than the tiny-skia/Exact fallback.
-    /// Always 0 under [`Quality::Exact`]. The honesty number for the Draft
+    /// F16 (#16): pixels that took the [`Quality::Draft`]/[`Quality::Fast`]
+    /// integer no-AA fast path (direct span fills) rather than the
+    /// tiny-skia/Exact fallback. Always 0 under [`Quality::Exact`]; under
+    /// [`Quality::Fast`] the shortfall IS the anti-aliased curve area, which
+    /// is exactly the number that tier is bought with. The honesty number for the Draft
     /// measurement: fast-path coverage % = `fastpath_pixels / pixels_written`
     /// (#21 honest-delta pattern — say exactly how much of the frame the fast
     /// path actually carried, and how much fell back).

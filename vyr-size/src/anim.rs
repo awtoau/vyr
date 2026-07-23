@@ -445,6 +445,7 @@ fn composite_hash(
 fn qname(q: Quality) -> &'static str {
     match q {
         Quality::Exact => "Exact",
+        Quality::Fast => "Fast",
         Quality::Draft => "Draft",
     }
 }

@@ -319,11 +319,13 @@ fn selftest_png(out: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `vyr-cli render <ir.json> <out.png> [--draft]` — the farm contract, at a
-/// chosen quality tier (docs/quality-tiers.md). `--draft` selects
-/// [`vyr_core::Quality::Draft`] (integer, no-AA, MCU-budgeted); the default is
-/// `Quality::Exact` (the oracle). The two tiers produce DIFFERENT pixels by
-/// design — that is what makes a host-side Exact-vs-Draft fidelity comparison
+/// `vyr-cli render <ir.json> <out.png> [--draft|--fast]` — the farm contract,
+/// at a chosen quality tier (docs/quality-tiers.md). `--draft` selects
+/// [`vyr_core::Quality::Draft`] (integer, no-AA, MCU-budgeted); `--fast`
+/// selects [`vyr_core::Quality::Fast`] (Draft's integer spans, but curves
+/// anti-aliased through the Exact path — #27); the default is
+/// `Quality::Exact` (the oracle). The tiers produce DIFFERENT pixels by
+/// design — that is what makes a host-side three-tier fidelity comparison
 /// possible without an MCU in the loop.
 fn render(ir_path: &str, out: &str, quality: vyr_core::Quality) -> ExitCode {
     log("INFO", &format!("render {ir_path} → {out} ({quality:?})"));
@@ -438,11 +440,14 @@ fn main() -> ExitCode {
         [cmd, ir, out, flag] if cmd == "render" && flag == "--draft" => {
             render(ir, out, vyr_core::Quality::Draft)
         }
+        [cmd, ir, out, flag] if cmd == "render" && flag == "--fast" => {
+            render(ir, out, vyr_core::Quality::Fast)
+        }
         [cmd, font, size, text] if cmd == "measure" => measure(font, size, text),
         _ => {
             eprintln!("usage: vyr-cli selftest-png <out.png>");
             eprintln!(
-                "       vyr-cli render <ir.json> <out.png> [--draft]   (env: VYR_FONTS=<dir>)"
+                "       vyr-cli render <ir.json> <out.png> [--draft|--fast]   (env: VYR_FONTS=<dir>)"
             );
             eprintln!("       vyr-cli measure <font> <size_px> <text>   → JSON on stdout");
             ExitCode::from(2)
