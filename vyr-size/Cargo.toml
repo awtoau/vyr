@@ -34,6 +34,24 @@ run-qemu = ["dep:linked_list_allocator"]
 # adds this feature; the M4 binary has no env, so the tier is a build-time
 # selection (deterministic per build). Both legs (host + M4) pick it up.
 draft = []
+# F9 BOARD half (#9): the same runnable vehicle on REAL silicon — an
+# STM32F429I-DISC1 (F429ZI, M4F @ up to 180 MHz, 2 M flash / 192 K SRAM +
+# 64 K CCM). Implies run-qemu's runtime (vector table, crt0, semihosting,
+# counted heap) and swaps ONLY the clock: DWT_CYCCNT counts real CPU cycles
+# instead of qemu's SYS_CLOCK, which measures host wall time on a qemu built
+# without TCG plugins and is therefore not an instruction count at all.
+# Cycles on real silicon include the things emulation cannot model — flash
+# wait states, the ART accelerator, bus contention — so this is the only
+# honest per-frame cost. Build with ./dev.py board (link-board.ld).
+board = ["run-qemu"]
+# #28: draw a panel-native vyr frame on the DISC1's own 240x320 ILI9341 over
+# SPI5. Strictly ADDITIVE to `board` — the measurement build
+# (`--no-default-features --features board`) compiles none of this and is
+# byte-for-byte the configuration the cycle/hash numbers were taken on.
+# Nothing here enters the DWT-timed window: the panel scene renders and
+# flushes before the timed loop starts, and flush cost is never priced as
+# render cost. Runner: scripts/board-lcd.py.
+lcd = ["board"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }

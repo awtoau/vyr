@@ -2,20 +2,28 @@
 //! crate are a plain std bin (the workspace gate runs them), so the custom
 //! memory maps must never leak into a host link.
 //!
-//! Two scripts, selected by feature:
+//! Three scripts, selected by feature (most specific first):
 //! - default (the F9 STATIC size matrix): `link.ld` — F427 map, NOT runnable.
 //! - `run-qemu` (the F9 RUNNABLE vehicle): `link-qemu.ld` — netduinoplus2
 //!   (STM32F405) map with vector table + crt0 symbols.
+//! - `board` (the F9 BOARD half): `link-board.ld` — STM32F429I-DISC1 map
+//!   (2 M flash / 192 K SRAM). `board` implies `run-qemu`, so it MUST be
+//!   tested before it.
 
 fn main() {
     println!("cargo:rerun-if-changed=link.ld");
     println!("cargo:rerun-if-changed=link-qemu.ld");
+    println!("cargo:rerun-if-changed=link-board.ld");
     // TARGET is the triple cargo is building FOR (host builds see the host
     // triple here): gate every link arg on the MCU target.
     let target = std::env::var("TARGET").unwrap_or_default();
     if target.starts_with("thumbv7em") {
         let dir = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
-        let script = if std::env::var("CARGO_FEATURE_RUN_QEMU").is_ok() {
+        // `board` implies `run-qemu`, so it must be checked FIRST or the
+        // board build would silently link the 128 KiB qemu map.
+        let script = if std::env::var("CARGO_FEATURE_BOARD").is_ok() {
+            "link-board.ld"
+        } else if std::env::var("CARGO_FEATURE_RUN_QEMU").is_ok() {
             "link-qemu.ld"
         } else {
             "link.ld"

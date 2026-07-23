@@ -61,7 +61,8 @@ pub const BAND_BYTES: usize = (FIXTURE_W as usize) * 3 * (BAND_H as usize);
 pub const SUBSET_FONT: &[u8] = include_bytes!("../assets/roboto-ascii.ttf");
 
 /// The 24×24 straight-RGBA checker (decode-at-build — the F15 model).
-const CHECKER: &[u8] = include_bytes!("../assets/checker-24.rgba");
+/// `pub` so the `lcd` leg's panel scene blits the SAME flash-resident asset.
+pub const CHECKER: &[u8] = include_bytes!("../assets/checker-24.rgba");
 
 /// 480×270 panel fixture — DEMO_IR/TEXT_IR-derived: text (both font sizes),
 /// an image blit, and one of each headline widget, all crossing several
@@ -265,10 +266,23 @@ pub fn run(
             }
         }
         let t1 = clock();
+        // Wrapping u32: on the board leg the clock is DWT_CYCCNT, a
+        // free-running 32-bit counter, and one Exact frame is ~1.1e8 cycles —
+        // 20 of them (~2.2e9) overflow an i32 and print NEGATIVE if the
+        // subtraction is done signed (measured: "-2044044886 cs"). Doing it in
+        // u32 also makes a counter wrap inside the window yield the right
+        // delta.
+        let delta = (t1 as u32).wrapping_sub(t0 as u32);
+        #[cfg(feature = "board")]
         emit(&format!(
-            "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {} cs virtual \
-             (SYS_CLOCK; icount shift=0 makes 1 virtual ns = 1 guest insn)",
-            t1 - t0
+            "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {delta} cycles \
+             (DWT_CYCCNT, REAL SILICON — {} cycles/frame)",
+            delta / TIMED_FRAMES
+        ));
+        #[cfg(not(feature = "board"))]
+        emit(&format!(
+            "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {delta} cs virtual \
+             (SYS_CLOCK; icount shift=0 makes 1 virtual ns = 1 guest insn)"
         ));
     }
 
