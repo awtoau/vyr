@@ -49,6 +49,12 @@ mod m4;
 #[cfg(feature = "run-qemu")]
 mod workload;
 
+/// #28: the STM32F429I-DISC1's own ILI9341 panel. Board-only (it pokes F429
+/// peripheral registers), and additive — `--features board` alone links none
+/// of it.
+#[cfg(all(target_os = "none", feature = "lcd"))]
+mod lcd;
+
 #[cfg(not(feature = "run-qemu"))]
 use alloc::vec;
 
