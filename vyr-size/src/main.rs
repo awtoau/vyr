@@ -55,6 +55,12 @@ mod workload;
 #[cfg(all(target_os = "none", feature = "lcd"))]
 mod lcd;
 
+/// #28 follow-on: dirty-rect ANIMATION on that same panel. Board-only and
+/// additive to `lcd` — `--features board` and `--features board,lcd` link none
+/// of it.
+#[cfg(all(target_os = "none", feature = "anim"))]
+mod anim;
+
 #[cfg(not(feature = "run-qemu"))]
 use alloc::vec;
 

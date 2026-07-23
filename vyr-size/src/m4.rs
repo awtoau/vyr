@@ -623,6 +623,18 @@ fn main() -> ! {
         }
     }
 
+    // #28 follow-on, `--features anim` only: now MOVE it. Runs on the panel the
+    // block above just brought up (SPI5 + ILI9341 are initialised), uses the
+    // WHOLE CCM band buffer, and is likewise entirely outside the DWT window
+    // `workload::run` opens below — the 480x270 hash and cycles/frame are
+    // unaffected by anything it does.
+    #[cfg(feature = "anim")]
+    {
+        if let Err(e) = crate::anim::run(&mut emit, band_buf) {
+            write_line(&alloc::format!("ERROR [vyr-size] anim failed: {e:?}"));
+        }
+    }
+
     match crate::workload::run(
         &mut emit,
         &heap,

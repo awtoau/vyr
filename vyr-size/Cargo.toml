@@ -52,6 +52,13 @@ board = ["run-qemu"]
 # flushes before the timed loop starts, and flush cost is never priced as
 # render cost. Runner: scripts/board-lcd.py.
 lcd = ["board"]
+# #28 follow-on: ANIMATE the panel by pushing only the pixels that changed —
+# vyr_core::dirty_rects + an arbitrary CASET/PASET GRAM window, so both render
+# and wire cost track dirty AREA rather than screen area. Strictly ADDITIVE to
+# `lcd` (which is itself additive to `board`): the measurement build
+# `--no-default-features --features board` compiles none of it, and nothing here
+# is inside the DWT-timed 480x270 window. Runner: scripts/board-anim.py.
+anim = ["lcd"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
