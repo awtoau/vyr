@@ -61,8 +61,17 @@ def extract_const(path, name):
     return m.group(1)
 
 
-def render(ir_path, out, draft):
-    cmd = [CLI, "render", ir_path, out] + (["--draft"] if draft else [])
+TIERS = ("exact", "fast", "draft")
+TIER_FLAG = {"exact": [], "fast": ["--fast"], "draft": ["--draft"]}
+TIER_LABEL = {
+    "exact": "vyr Exact — the oracle: float AA everywhere",
+    "fast": "vyr Fast — integer spans + anti-aliased curves (#27)",
+    "draft": "vyr Draft — integer spans, no AA anywhere",
+}
+
+
+def render(ir_path, out, tier):
+    cmd = [CLI, "render", ir_path, out] + TIER_FLAG[tier]
     env = dict(os.environ)
     env["VYR_FONTS"] = os.path.join(REPO, "fonts")
     env["VYR_ASSETS"] = os.path.join(REPO, "vyr-core", "tests", "assets")
@@ -169,25 +178,85 @@ def _font(size):
     return ImageFont.load_default()
 
 
-def strip(panels, path, scale=1, caption_h=26, gap=10, bg=(18, 18, 20)):
-    """Horizontal strip of labelled images, all the same size."""
+def strip(panels, path, scale=1, caption_h=26, gap=10, bg=(18, 18, 20),
+          vertical=True):
+    """Labelled images, one per ROW by default.
+
+    #27 Task C: these sheets used to lay panels out side by side, which on a
+    480x270 scene meant three ~1/3-width thumbnails that nobody can compare a
+    2-px AA fringe in. Stacking vertically gives every render the full sheet
+    width at 1:1, which is the whole point of a fidelity plate. `vertical=False`
+    is kept for the zoomed crops, where the panels are small and side-by-side
+    is genuinely easier to read.
+    """
     imgs = [Image.open(p).convert("RGB") if isinstance(p, str) else p
             for p, _ in panels]
     if scale != 1:
         imgs = [im.resize((im.width * scale, im.height * scale), Image.NEAREST)
                 for im in imgs]
-    w = sum(im.width for im in imgs) + gap * (len(imgs) + 1)
-    h = max(im.height for im in imgs) + caption_h + gap * 2
-    sheet = Image.new("RGB", (w, h), bg)
-    dr = ImageDraw.Draw(sheet)
     f = _font(15)
-    x = gap
-    for im, (_, label) in zip(imgs, panels):
-        sheet.paste(im, (x, gap + caption_h))
-        dr.text((x, gap + 4), label, font=f, fill=(235, 239, 244))
-        x += im.width + gap
+    dr_probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    if vertical:
+        # The sheet must be wide enough for the CAPTIONS too — a clipped label
+        # ("...anti-aliased curv") is exactly the kind of small wrongness that
+        # makes a plate untrustworthy.
+        cap_w = max(int(dr_probe.textlength(lbl, font=f)) for _, lbl in panels)
+        w = max(max(im.width for im in imgs), cap_w) + gap * 2
+        h = sum(im.height + caption_h + gap for im in imgs) + gap
+        sheet = Image.new("RGB", (w, h), bg)
+        dr = ImageDraw.Draw(sheet)
+        y = gap
+        for im, (_, label) in zip(imgs, panels):
+            dr.text((gap, y + 4), label, font=f, fill=(235, 239, 244))
+            sheet.paste(im, (gap, y + caption_h))
+            y += caption_h + im.height + gap
+    else:
+        w = sum(im.width for im in imgs) + gap * (len(imgs) + 1)
+        h = max(im.height for im in imgs) + caption_h + gap * 2
+        sheet = Image.new("RGB", (w, h), bg)
+        dr = ImageDraw.Draw(sheet)
+        x = gap
+        for im, (_, label) in zip(imgs, panels):
+            sheet.paste(im, (x, gap + caption_h))
+            dr.text((x, gap + 4), label, font=f, fill=(235, 239, 244))
+            x += im.width + gap
     sheet.save(path)
     return path
+
+
+# ---- the #27 quality metric -------------------------------------------------
+
+def edge_stats(png, box):
+    """Blend pixels and distinct values over `box` — the CORRECT #27 metric.
+
+    Counting distinct COLOURS over a region is the trap the issue's first
+    reading fell into: the count rises with how much CONTENT is in the region,
+    not with how well its edges are anti-aliased, so a renderer that draws tick
+    marks and numeric labels where another draws a plain ring wins the count
+    while being no smoother. A blend pixel is one whose value is neither of the
+    two dominant (flat) values present — something only edge blending creates.
+    """
+    arr = np.asarray(Image.open(png).convert("RGB"))
+    x0, y0, x1, y1 = box
+    sub = arr[y0:y1, x0:x1]
+    n = sub.shape[0] * sub.shape[1]
+    keys = (sub.astype(np.uint32) @ np.array([65536, 256, 1], np.uint32)).ravel()
+    vals, counts = np.unique(keys, return_counts=True)
+    order = np.argsort(-counts)
+    flat = int(counts[order[:2]].sum()) if len(order) >= 2 else int(counts.max())
+    return {
+        "region_px": int(n),
+        "blend_px": int(n - flat),
+        "blend_pct": round(100.0 * (n - flat) / n, 2),
+        "distinct_colours": int(len(vals)),
+    }
+
+
+def edge_scanline(png, y, x0, x1):
+    """The raw values along one scanline through a curve edge — the smallest
+    piece of evidence that settles "does this renderer blend or not"."""
+    arr = np.asarray(Image.open(png).convert("RGB"))
+    return [int(v) for v in arr[y, x0:x1, 1]]
 
 
 def lvgl_png(raw_path, out_png, w=480, h=270):
@@ -257,8 +326,9 @@ def main():
         ir = extract_const(path, const)
         ir_path = os.path.join(TMP, f"{scene}.json")
         open(ir_path, "w").write(ir)
-        ex = render(ir_path, os.path.join(DOCS, f"{scene}-exact.png"), False)
-        dr = render(ir_path, os.path.join(DOCS, f"{scene}-draft.png"), True)
+        pngs = {t: render(ir_path, os.path.join(DOCS, f"{scene}-{t}.png"), t)
+                for t in TIERS}
+        ex, fa, dr = pngs["exact"], pngs["fast"], pngs["draft"]
         stats, per_px, _ = compare(ex, dr, regions_from_ir(ir))
         stats["scene"] = scene
         stats["ir_source"] = f"{path}::{const}"
@@ -275,11 +345,26 @@ def main():
                 f"max Δ{r['max_channel_error']})")
         log(f"    outside declared widget rects: "
             f"{stats.get('differing_outside_declared_widgets')} px")
+        # #27: Fast against BOTH neighbours — same renderer, same scene, which
+        # is the only comparison that is sound without a content audit.
+        fe, _, _ = compare(ex, fa, None)
+        fd, _, _ = compare(fa, dr, None)
+        stats["fast_vs_exact"] = {k: fe[k] for k in
+                                  ("pixels_differing", "pixels_differing_pct",
+                                   "max_channel_error")}
+        stats["fast_vs_draft"] = {k: fd[k] for k in
+                                  ("pixels_differing", "pixels_differing_pct",
+                                   "max_channel_error")}
+        log(f"    Fast vs Exact: {fe['pixels_differing']} px differ "
+            f"({fe['pixels_differing_pct']}%), max Δ{fe['max_channel_error']}")
+        log(f"    Fast vs Draft: {fd['pixels_differing']} px differ "
+            f"({fd['pixels_differing_pct']}%), max Δ{fd['max_channel_error']}")
         sc = 3 if stats["w"] <= 160 else 1
-        strip([(os.path.join(DOCS, f"{scene}-exact.png"), "vyr Exact (float AA)"),
-               (os.path.join(DOCS, f"{scene}-draft.png"), "vyr Draft (integer, no AA)"),
+        strip([(ex, TIER_LABEL["exact"]),
+               (fa, TIER_LABEL["fast"]),
+               (dr, TIER_LABEL["draft"]),
                (os.path.join(DOCS, f"{scene}-diff.png"),
-                f"differing pixels: {stats['pixels_differing_pct']}%")],
+                f"Exact vs Draft: {stats['pixels_differing_pct']}% of pixels differ")],
               os.path.join(DOCS, f"{scene}-tiers.png"), scale=sc)
 
     # ---- the three-way plate, if a real LVGL frame is available -------------
@@ -295,35 +380,63 @@ def main():
                     "and Montserrat font — a SYSTEM comparison, not pixel-identical "
                     "input (see scripts/lvgl-m4-bench/compare.md).",
         }
-        strip([(os.path.join(DOCS, "panel-exact.png"), "vyr Exact — the oracle (float AA)"),
-               (os.path.join(DOCS, "panel-draft.png"), "vyr Draft — integer, no AA"),
-               (png, "LVGL 9.6.0-dev — same scene, LVGL's own widgets")],
+        strip([(os.path.join(DOCS, "panel-exact.png"), TIER_LABEL["exact"]),
+               (os.path.join(DOCS, "panel-fast.png"), TIER_LABEL["fast"]),
+               (os.path.join(DOCS, "panel-draft.png"), TIER_LABEL["draft"]),
+               (png, "LVGL 9.6.0-dev — its own widgets/theme/font (not "
+                     "content-identical)")],
               os.path.join(DOCS, "three-way.png"))
-        log(f"three-way plate written: {os.path.join(DOCS, 'three-way.png')}")
+        log(f"four-row plate written: {os.path.join(DOCS, 'three-way.png')}")
         # The claim "LVGL anti-aliases, Draft does not" is only worth making if
         # you can see it. The toggle knob is a circle all three engines draw.
         crop = (176, 190, 244, 228)
         strip([(Image.open(os.path.join(DOCS, "panel-exact.png")).crop(crop),
-                "vyr Exact — AA fringe"),
+                "vyr Exact"),
+               (Image.open(os.path.join(DOCS, "panel-fast.png")).crop(crop),
+                "vyr Fast"),
                (Image.open(os.path.join(DOCS, "panel-draft.png")).crop(crop),
-                "vyr Draft — hard stair-steps"),
-               (Image.open(png).crop(crop), "LVGL — AA fringe")],
-              os.path.join(DOCS, "zoom-toggle.png"), scale=6)
+                "vyr Draft"),
+               (Image.open(png).crop(crop), "LVGL")],
+              os.path.join(DOCS, "zoom-toggle.png"), scale=6, vertical=False)
         log(f"zoom plate written: {os.path.join(DOCS, 'zoom-toggle.png')}")
+        # The gauge ring — the curve #27 is entirely about. Zoomed on the LEFT
+        # edge of the ring, where a blend step is either present or it is not.
+        gcrop = (24, 118, 60, 146)
+        strip([(Image.open(os.path.join(DOCS, "panel-exact.png")).crop(gcrop), "vyr Exact"),
+               (Image.open(os.path.join(DOCS, "panel-fast.png")).crop(gcrop), "vyr Fast"),
+               (Image.open(os.path.join(DOCS, "panel-draft.png")).crop(gcrop), "vyr Draft"),
+               (Image.open(png).crop(gcrop), "LVGL")],
+              os.path.join(DOCS, "zoom-gauge.png"), scale=8, vertical=False)
+        log(f"gauge zoom written: {os.path.join(DOCS, 'zoom-gauge.png')}")
         # Where does LVGL SIT between the two tiers? Anti-aliasing manufactures
         # intermediate colours; a no-AA integer path cannot. Distinct-colour
         # count over the same scene is a crude but honest PROXY — it does not
         # measure geometric accuracy, only whether edge blending happened.
-        aa = {}
+        # #27 edge quality, over the GAUGE-RING region (x 24-134, y 76-186 —
+        # the fixture's vy_gauge rect, 12,100 px), which is where the curve is.
+        # BLEND-pixel count, not colour count: see edge_stats() for why the
+        # latter is a trap. The vyr rows are directly comparable to each other;
+        # the LVGL row is context only until the harness is content-audited.
+        box = (24, 76, 134, 186)
+        edges = {}
         for label, p in (("vyr Exact", os.path.join(DOCS, "panel-exact.png")),
+                         ("vyr Fast", os.path.join(DOCS, "panel-fast.png")),
                          ("vyr Draft", os.path.join(DOCS, "panel-draft.png")),
                          ("LVGL", png)):
-            arr = np.asarray(Image.open(p).convert("RGB")).reshape(-1, 3)
-            aa[label] = int(len(np.unique(
-                arr.astype(np.uint32) @ np.array([65536, 256, 1], np.uint32))))
-        results["aa_proxy_distinct_colours"] = aa
-        log("AA proxy — distinct colours in the same 480x270 scene: "
-            + ", ".join(f"{k} {v:,}" for k, v in aa.items()))
+            e = edge_stats(p, box)
+            e["ring_edge_scanline_y131_x24_36"] = edge_scanline(p, 131, 24, 36)
+            edges[label] = e
+            log(f"#27 gauge region {label:<10} blend {e['blend_px']:>5} px "
+                f"({e['blend_pct']:>5.2f}%)  distinct {e['distinct_colours']:>4}  "
+                f"scanline y=131 {e['ring_edge_scanline_y131_x24_36']}")
+        results["edge_quality_gauge_region"] = {
+            "box_xyxy": box,
+            "note": "blend_px = pixels whose value is neither of the two "
+                    "dominant flat values — the thing anti-aliasing creates. "
+                    "distinct_colours is reported alongside but is NOT the "
+                    "metric: it rises with content, not with edge quality.",
+            "tiers": edges,
+        }
     else:
         log(f"NO LVGL FRAME at {args.lvgl_raw} — shipping the Exact-vs-Draft "
             "half only. Run: python3 scripts/lvgl-m4-bench/run.py "

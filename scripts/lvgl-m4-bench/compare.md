@@ -94,27 +94,47 @@ same semihosting methodology.
   + 2.3 KB image ≈ 34 KB** — versus vyr's ~129 KB. Much of that gap is the
   tiny-skia gutter-pixmap architecture vs LVGL's direct-to-band blitter.
 
-### Divergences (this is NOT a pixel-identical comparison)
+### Divergences — the audited list (2026-07-23, #27 Task B)
 
 The two frame hashes **deliberately differ** — they are per-renderer
-determinism anchors, not a cross-check. Each is byte-stable across re-renders
-on its own side. The scenes diverge in ways the two vocabularies force:
+determinism anchors, not a cross-check. What follows is the *audit*: every
+content difference found by rendering both frames and diffing them per widget
+rect (`python3 scripts/fidelity-compare.py`, `docs/quality-tiers/`), ranked by
+how many pixels it moves. **9.6 % of the frame (12,459 / 129,600 px) still
+differs between vyr Exact and LVGL, and this list is why.** Until the entries
+marked OPEN are closed, no cross-renderer ratio taken from these frames is
+publishable as a like-for-like.
 
-- **Font face differs.** vyr renders a Roboto-ASCII subset (unhinted, vyr's
-  own AA). LVGL renders its built-in **Montserrat** bitmaps (12/14/20 px). The
-  glyph shapes, metrics, and AA are entirely different faces — text pixels
-  cannot match.
-- **Widget defaults / AA differ.** vyr's `vy_gauge` is a tiny-skia arc; the
-  LVGL analogue is `lv_scale` (round ticks) + an `lv_arc` indicator — a
-  different visual. Slider/switch/bar geometry, corner radii, border AA, and
-  default theme styling are LVGL's, not vyr's. The toggle is an `lv_switch`;
-  the progress is an `lv_bar`.
-- **Image content differs.** Both blit a 24×24 checker, but vyr's is the F6
-  test checker RGBA; LVGL's is a synthesized 6×6 grey checker built in the
-  harness (no PNG decoder linked — LODEPNG is OFF on bare metal).
-- **Color depth matched on purpose.** Both render RGB888 (24bpp) so the
-  per-pixel cost compares like-for-like. Real F4 panels are usually RGB565;
-  an RGB565 LVGL build would be cheaper still (noted, not measured here).
+**CLOSED — the two that were distorting the measurement**
+
+| what | was | now |
+|---|---|---|
+| **checker image** | the harness synthesised its OWN 6x6 checkerboard of two greys (0xC8/0x40) while vyr blitted the real coloured asset — a content difference sitting inside a renderer comparison | `checker-24.inc`, generated on every build from **`vyr-size/assets/checker-24.rgba`**, the same bytes vyr blits, in LVGL's ARGB8888 order. The widget now differs by **117 px with max channel delta 1** — LSB-level blend rounding, nothing else |
+| **gauge** | `lv_scale` (ROUND_INNER tick marks + 0/50/100 numeric labels) stacked with a value `lv_arc` (65 % sweep + drag knob), against vyr's plain full ring. This is the region every #27 quality number is taken in, and the extra elements inflated LVGL's distinct-colour count without any extra edge quality — the exact trap the issue's first reading fell into | one `lv_arc`, full 0-360 background ring, indicator and knob set to `LV_OPA_TRANSP`. Removing that content made LVGL **23 % cheaper** (9,220,422 → 7,112,541 insns/frame), so the previously published "vyr Draft beats LVGL by 8.05 %" had been scored against an LVGL doing more work |
+
+**OPEN — known, quantified, not fixed**
+
+| what | vyr | LVGL | px moved |
+|---|---|---|--:|
+| **slider / progress track colour** | `#E6E6E6` (vyr's own `TRACK` constant) | `#213C52` — its default dark theme's blended track | 3,302 + 2,042 + 660 |
+| **slider knob** | white disc + 1 px `#B0B0B0` ring | a filled accent-blue circle, no ring | (in the above) |
+| **frame border placement** | `stroke_rrect` is **centred** on the contour, so a 1 px border straddles the edge at half coverage each side | drawn fully **inside** the rect | 3,098 |
+| **font face + size** | Roboto ASCII subset, 14 px default / 20 px LCD; the footer label has no size attr so it renders at 14 | Montserrat 12/14/20 — the footer is explicitly 12 px, and lands 2 rows higher | 1,155 + 999 + 467 + 373 |
+| **arc radius** | ring centre radius 50, covering r ∈ [44.5, 55.5]; row 131 spans x 23-134 | `(min(w,h) - arc_width)/2` = 49.5 — **half a pixel inward**; row 131 spans x 24-133 | 932 |
+| **toggle knob** | disc + ring, as the slider | `lv_switch` knob, theme-styled | 262 |
+
+`vy_line` matches **exactly** (0 differing pixels), which is the useful control:
+where the two vocabularies agree on geometry and colour, the renderers agree on
+pixels.
+
+**Not closeable in this harness**
+
+- **Color depth matched on purpose.** Both render RGB888 (24bpp) so per-pixel
+  cost compares like-for-like. Real F4 panels are usually RGB565; an RGB565
+  LVGL build would be cheaper still (noted, not measured here).
+- **Text.** Matching the faces means porting Roboto into LVGL's bitmap font
+  format at three sizes. Worth doing before any text-heavy claim; it is the
+  single largest remaining px-mover after the theme colours.
 
 ## Reproduce
 

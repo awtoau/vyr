@@ -102,20 +102,69 @@ Independently verified: bit-identical across 3 idle and 3 host-loaded runs;
 doubling the frame count gives a marginal cost with **remainder exactly 0**;
 fixed window overhead 7-11 instructions (the clock-read call itself).
 
+**Re-measured 2026-07-23** — all four firmwares in one session, same tool, same
+day (`python3 scripts/tier-insns.py` + one `qemu-insn.py` run for LVGL). The
+previous table's figures are superseded and are kept in git history only; two
+things moved under them, and both matter:
+
+- the **`Fast` tier** landed (#27), so there are now three vyr rows;
+- the **LVGL harness was corrected** (#27 Task B) — it had been drawing a
+  tick-marked `lv_scale` + a value arc + a knob where vyr draws a plain ring,
+  and its own grey checkerboard where vyr blits the real asset. Removing the
+  content vyr never had made LVGL **23 % cheaper** (9,220,422 → 7,112,541).
+  The old "vyr Draft beats LVGL by 8.05 %" was measured against an LVGL that
+  was drawing more work than vyr.
+
 | Firmware | insns/frame | insn/px | vs LVGL |
 |---|--:|--:|--:|
-| vyr **Exact** | 64,178,227 | 495.2 | 6.96x |
-| vyr **Draft** | **8,478,137** | 65.4 | **0.9195x** |
-| LVGL 9.6.0-dev (`62f343b54`) | 9,220,422 | 71.1 | 1.00x |
+| vyr **Exact** | 64,422,179 | 291.9 | 5.32x |
+| vyr **Fast** (#27) | 49,585,035 | 230.9 | 4.21x |
+| vyr **Draft** | **8,604,184** | 52.4 | **0.954x** |
+| LVGL 9.6.0-dev (`62f343b54`), content-corrected | 7,112,541 | 54.9 | 1.00x |
 
-**vyr Draft costs 8.05 % fewer instructions than LVGL** on this scene, and Draft
-is 7.57x cheaper than Exact.
+vyr Draft costs **4.6 % fewer** instructions than LVGL on this scene (it was
+8.05 % against the uncorrected harness). Draft is 5.57x cheaper than Exact;
+Fast recovers only **25 %** of the Exact→Draft gap — see §3.1.
 
 > **Fidelity caveat — do not quote the above without it.** Draft has **no
-> anti-aliasing**, draws `radius > 0` **square**, and falls back to Exact for
-> gradients, glyphs and translucent fills. LVGL anti-aliases. This is an
-> instruction-count comparison, **not** an equal-output comparison. Tracked in
+> anti-aliasing** and draws `radius > 0` **square**. Fast and Exact both
+> anti-alias curves; on this fixture their output is **byte-identical**
+> (0 differing pixels). The two scenes are **still not content-identical**:
+> the LVGL harness uses its own theme colours for slider tracks and knobs and
+> its own Montserrat font, and its arc sits half a pixel inward. Those are
+> listed in `scripts/lvgl-m4-bench/compare.md`; until they are closed, treat
+> any vyr-vs-LVGL ratio as indicative. Tracked in
 > [#27](https://github.com/awtoau/vyr/issues/27).
+
+### 3.1 What the `Fast` tier costs, and why it is not near Draft
+
+`Quality::Fast` (#27) keeps Draft's integer span fills for everything
+straight-edged and routes only CURVED geometry — disc, ring/arc, rounded-rect
+and rounded-stroke corners — back through the same tiny-skia polygon path Exact
+uses. It buys the quality outright and almost none of the speed:
+
+| | Exact | Fast | Draft |
+|---|--:|--:|--:|
+| M4 insns/frame | 64,422,179 | 49,585,035 | 8,604,184 |
+| host ns, 480x270 panel | 243,596 | 237,973 | 58,059 |
+| blend px in the gauge region (12,100 px) | 567 | **567** | 0 |
+| differing px vs Exact, 480x270 | — | **0** | 3,408 |
+| M4 band heap, 480x16 | 63,488 B pixmap | 46,848 + 23,040 B | 30,720 + 23,040 B |
+
+The reason is measurable and not subtle: **tiny-skia's anti-aliased fill costs
+roughly 1.3k M4 instructions per curve pixel**, and the fixture's curve area
+(~17,000 px of 129,600) is therefore worth more than Draft's entire frame. A
+host profile of `scene/panel_fast` puts 40 % of the frame in tiny-skia and 15 %
+in the scratch round-trip that composites its output into Draft's RGB888 band.
+Sending tiny-skia less geometry helps a lot — the rounded rects are cut at
+integer scanlines into four AA corner squares plus integer spans, which takes a
+456x44 radius-8 frame from 20,064 AA pixels to 256 — but the ring and the discs
+have no flat part to cut away, and they dominate.
+
+**A tier that anti-aliases curves through tiny-skia cannot be near Draft's
+cost.** Getting there needs a coverage-aware integer curve rasteriser obeying
+the same 1/64-px quantization contract — a separate piece of work, not a
+routing change.
 
 ---
 
@@ -228,7 +277,9 @@ provenance — tool version, source commit, ELF SHA-256, every run's raw values.
 
 | Numbers | Command | Output |
 |---|---|---|
-| §3 instruction counts | `python3 scripts/qemu-insn.py --name <n> <elf> --repeat 3` | `tmp/qemu-insn-<n>.json` |
+| §3 instruction counts, ALL vyr tiers in one run | `python3 scripts/tier-insns.py --repeat 2` | `tmp/tier-insns.json` |
+| §3 instruction counts, one ELF | `python3 scripts/qemu-insn.py --name <n> <elf> --repeat 3` | `tmp/qemu-insn-<n>.json` |
+| §3.1 / #27 fidelity plates + edge-quality numbers | `python3 scripts/fidelity-compare.py --lvgl-raw tmp/fidelity/lvgl-frame.rgb888` | `docs/quality-tiers/`, `tmp/fidelity/fidelity.json` |
 | — build the plugin QEMU first | `python3 scripts/qemu-plugins-build.py` | `/mnt/2tb/git_debris/qemu-plugins-build/` |
 | — LVGL comparison ELF | `python3 scripts/lvgl-m4-bench/run.py` | `tmp/lvgl-m4-result.json` |
 | §4.1 silicon cycles | `python3 scripts/board-run.py` | `tmp/board-result.json` |
@@ -258,6 +309,6 @@ Notes that will cost time if forgotten:
 | Issue | Why it matters here |
 |---|---|
 | ~~[#25](https://github.com/awtoau/vyr/issues/25)~~ | **closed.** The two parallel ledgers are now one: `docs/perf/history.jsonl` (`"schema": 2`), written only by `./dev.py track`, with first-class sections for §3 (`insns`) and §4 (`silicon`, `board_anim`). Every number here now has a home in a time series; re-run the §6 command, then `./dev.py track`. |
-| [#27](https://github.com/awtoau/vyr/issues/27) | the Draft/LVGL comparison is not fidelity-normalised |
+| [#27](https://github.com/awtoau/vyr/issues/27) | partly addressed: the `Fast` tier exists and matches Exact's edge quality, but at 4.4x Draft's cost; the LVGL harness's checker and gauge are content-matched, its theme colours and font are not |
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |

@@ -100,29 +100,25 @@ static char *put_hex64(char *p, uint64_t v)
  * buffer; documented divergence). 4-aligned for LV_DRAW_BUF_ALIGN. */
 static uint8_t g_draw_buf[DRAW_BUF_BYTES] __attribute__((aligned(4)));
 
-/* ---- 24x24 checker image (the vyr scene's checker-24 analogue) ---- */
-/* Built at compile time as an XRGB8888 (LVGL's native true-color) descriptor:
- * a 6x6 checker of two greys, matching the spirit of vyr's 24x24 checker. */
-#define CK_W 24
-#define CK_H 24
-static uint8_t g_checker_px[CK_W * CK_H * 4];
+/* ---- 24x24 checker image: vyr's OWN asset, byte for byte (#27) ----
+ *
+ * This used to be a locally-invented 6x6 checkerboard of two greys, which
+ * meant the published side-by-side had LVGL drawing a grey mock-up where vyr
+ * drew the coloured 24x24 test asset — a CONTENT difference sitting inside a
+ * RENDERER comparison. checker-24.inc is generated on every build by
+ * run.py::gen_checker_header() straight from vyr-size/assets/checker-24.rgba,
+ * the same bytes vyr's FIXTURE_IR blits, converted to LVGL's ARGB8888 memory
+ * order. The asset carries real alpha (a semi-transparent quadrant and a fully
+ * transparent centre), so the format is ARGB8888, not XRGB8888 — otherwise
+ * LVGL would draw the transparent pixels opaque and the divergence would just
+ * move. */
+#include "checker-24.inc"
 static lv_image_dsc_t g_checker_dsc;
 
 static void checker_init(void)
 {
-    for (int y = 0; y < CK_H; y++) {
-        for (int x = 0; x < CK_W; x++) {
-            int      cell = ((x / 4) + (y / 4)) & 1;
-            uint8_t  g    = cell ? 0xC8 : 0x40;
-            uint8_t *p    = &g_checker_px[(y * CK_W + x) * 4];
-            p[0] = g;     /* B */
-            p[1] = g;     /* G */
-            p[2] = g;     /* R */
-            p[3] = 0xFF;  /* A/X */
-        }
-    }
     g_checker_dsc.header.magic  = LV_IMAGE_HEADER_MAGIC;
-    g_checker_dsc.header.cf     = LV_COLOR_FORMAT_XRGB8888;
+    g_checker_dsc.header.cf     = LV_COLOR_FORMAT_ARGB8888;
     g_checker_dsc.header.w      = CK_W;
     g_checker_dsc.header.h      = CK_H;
     g_checker_dsc.header.stride = CK_W * 4;
@@ -169,7 +165,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
  *   vy_frame  12,10  456x44   panel  bg #2E3440 r8 border #4C566A
  *   vy_label  28,22          "Compressor 2 - line B"  #ECEFF4
  *   vy_image  428,20  24x24   checker
- *   vy_gauge  24,76  110x110  value 65  -> lv_scale (round) + needle
+ *   vy_gauge  24,76  110x110           -> lv_arc, FULL RING, no knob/ticks
  *   vy_lcd    44,196  90x24  "1480"  #A3BE8C (20px)  -> styled label
  *   vy_slider 180,92  260x18  value 62
  *   vy_slider 180,128 260x18  value 35
@@ -216,18 +212,35 @@ static void build_scene(void)
     lv_image_set_src(img, &g_checker_dsc);
     lv_obj_set_pos(img, 428, 20);
 
-    /* Gauge (vy_gauge) -> a round scale + an arc to suggest the value */
-    lv_obj_t *scale = lv_scale_create(scr);
-    lv_obj_set_pos(scale, 24, 76);
-    lv_obj_set_size(scale, 110, 110);
-    lv_scale_set_mode(scale, LV_SCALE_MODE_ROUND_INNER);
-    lv_scale_set_range(scale, 0, 100);
+    /* Gauge (vy_gauge) -> a PLAIN FULL RING, because that is what vyr draws.
+     *
+     * #27 Task B: this was an lv_scale (ROUND_INNER: tick marks and 0/50/100
+     * numeric labels) stacked with a value lv_arc (a 65% sweep plus a drag
+     * knob). vyr's vy_gauge lowers to ONE full circular ring — no ticks, no
+     * labels, no knob, no partial sweep. The gauge region is where every
+     * quality measurement in #27 is taken, so a content mismatch THERE
+     * contaminated the whole comparison: extra elements inflate a colour
+     * count without any extra edge quality, which is precisely how the
+     * original "LVGL has 116 distinct colours" reading went wrong.
+     *
+     * vyr's geometry (ir.rs, vy_gauge): d = min(w,h) = 110, stroke = d/10 = 11,
+     * radius = d/2 - stroke/2 = 50, centred at (79, 131) — so the ring covers
+     * r in [44.5, 55.5]. LVGL places its arc at radius (min(w,h) - arc_width)/2
+     * = 49.5, i.e. HALF A PIXEL inward; that residual is documented, not
+     * fixable through the public style API. */
     lv_obj_t *arc = lv_arc_create(scr);
     lv_obj_set_pos(arc, 24, 76);
     lv_obj_set_size(arc, 110, 110);
-    lv_arc_set_range(arc, 0, 100);
-    lv_arc_set_value(arc, 65);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(0x88C0D0), LV_PART_INDICATOR);
+    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_arc_set_bg_angles(arc, 0, 360);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0x88C0D0), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 11, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_COVER, LV_PART_MAIN);
+    /* The value indicator and the knob are vyr-absent: switch them off rather
+     * than restyle them, so nothing of them can reach the pixels. */
+    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(arc, 0, LV_PART_KNOB);
 
     /* LCD-ish value (vy_lcd) — styled 20px label */
     mk_label(scr, 44, 196, "1480", 0xA3BE8C, &lv_font_montserrat_20);
