@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Draft fast-path coverage (emulated M4)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Draft fast-path coverage (emulated M4)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">22</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">45</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">67</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">89</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">111</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">%</text>
+<polyline class="s1" points="331.0,70.3 588.0,70.3" fill="none" stroke-width="2"/>
+<circle class="s1" cx="331.0" cy="70.3" r="4" stroke="none"><title>coverage @ f2f0724*: 97 %</title></circle>
+<circle class="s1" cx="588.0" cy="70.3" r="4" stroke="none"><title>coverage @ 3e7c620*: 97 %</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">coverage</text>
+</svg>

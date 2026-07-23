@@ -1,57 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="320" font-family="system-ui,sans-serif" font-size="11">
-<rect width="760" height="320" fill="#ffffff"/>
-<text x="64" y="20" font-size="13" font-weight="600" fill="#222">Incremental speedup vs full frame (higher is better)</text>
-<line x1="64" y1="284.0" x2="592" y2="284.0" stroke="#dddddd" stroke-width="1"/>
-<text x="58" y="288.0" text-anchor="end" fill="#555">0.0</text>
-<line x1="64" y1="234.0" x2="592" y2="234.0" stroke="#dddddd" stroke-width="1"/>
-<text x="58" y="238.0" text-anchor="end" fill="#555">3.1</text>
-<line x1="64" y1="184.0" x2="592" y2="184.0" stroke="#dddddd" stroke-width="1"/>
-<text x="58" y="188.0" text-anchor="end" fill="#555">6.1</text>
-<line x1="64" y1="134.0" x2="592" y2="134.0" stroke="#dddddd" stroke-width="1"/>
-<text x="58" y="138.0" text-anchor="end" fill="#555">9.2</text>
-<line x1="64" y1="84.0" x2="592" y2="84.0" stroke="#dddddd" stroke-width="1"/>
-<text x="58" y="88.0" text-anchor="end" fill="#555">12.2</text>
-<line x1="64" y1="34.0" x2="592" y2="34.0" stroke="#dddddd" stroke-width="1"/>
-<text x="58" y="38.0" text-anchor="end" fill="#555">15.3</text>
-<text x="64.0" y="300" text-anchor="middle" fill="#555">0</text>
-<text x="328.0" y="300" text-anchor="middle" fill="#555">1</text>
-<text x="592.0" y="300" text-anchor="middle" fill="#555">2</text>
-<text x="328.0" y="314" text-anchor="middle" fill="#555">run # (history order)</text>
-<text x="14" y="159.0" text-anchor="middle" fill="#555" transform="rotate(-90 14 159.0)">full ms / incremental ms</text>
-<polyline points="64.0,272.4 328.0,272.5 592.0,272.2" fill="none" stroke="#5b8def" stroke-width="1.8"/>
-<circle cx="64.0" cy="272.4" r="3" fill="#5b8def"><title>120x68 run 0: 0.7</title></circle>
-<circle cx="328.0" cy="272.5" r="3" fill="#5b8def"><title>120x68 run 1: 0.7</title></circle>
-<circle cx="592.0" cy="272.2" r="3" fill="#5b8def"><title>120x68 run 2: 0.7</title></circle>
-<rect x="606" y="34" width="10" height="10" fill="#5b8def"/>
-<text x="622" y="43" fill="#333">120x68</text>
-<polyline points="64.0,270.3 328.0,270.3 592.0,270.6" fill="none" stroke="#44b07b" stroke-width="1.8"/>
-<circle cx="64.0" cy="270.3" r="3" fill="#44b07b"><title>240x135 run 0: 0.8</title></circle>
-<circle cx="328.0" cy="270.3" r="3" fill="#44b07b"><title>240x135 run 1: 0.8</title></circle>
-<circle cx="592.0" cy="270.6" r="3" fill="#44b07b"><title>240x135 run 2: 0.8</title></circle>
-<rect x="606" y="50" width="10" height="10" fill="#44b07b"/>
-<text x="622" y="59" fill="#333">240x135</text>
-<polyline points="64.0,256.5 328.0,256.4 592.0,256.1" fill="none" stroke="#e0a03c" stroke-width="1.8"/>
-<circle cx="64.0" cy="256.5" r="3" fill="#e0a03c"><title>480x270 run 0: 1.7</title></circle>
-<circle cx="328.0" cy="256.4" r="3" fill="#e0a03c"><title>480x270 run 1: 1.7</title></circle>
-<circle cx="592.0" cy="256.1" r="3" fill="#e0a03c"><title>480x270 run 2: 1.7</title></circle>
-<rect x="606" y="66" width="10" height="10" fill="#e0a03c"/>
-<text x="622" y="75" fill="#333">480x270</text>
-<polyline points="64.0,235.8 328.0,234.6 592.0,235.9" fill="none" stroke="#d9534f" stroke-width="1.8"/>
-<circle cx="64.0" cy="235.8" r="3" fill="#d9534f"><title>960x540 run 0: 2.9</title></circle>
-<circle cx="328.0" cy="234.6" r="3" fill="#d9534f"><title>960x540 run 1: 3.0</title></circle>
-<circle cx="592.0" cy="235.9" r="3" fill="#d9534f"><title>960x540 run 2: 2.9</title></circle>
-<rect x="606" y="82" width="10" height="10" fill="#d9534f"/>
-<text x="622" y="91" fill="#333">960x540</text>
-<polyline points="64.0,207.5 328.0,208.8 592.0,210.0" fill="none" stroke="#9a6fd0" stroke-width="1.8"/>
-<circle cx="64.0" cy="207.5" r="3" fill="#9a6fd0"><title>1920x1080 run 0: 4.7</title></circle>
-<circle cx="328.0" cy="208.8" r="3" fill="#9a6fd0"><title>1920x1080 run 1: 4.6</title></circle>
-<circle cx="592.0" cy="210.0" r="3" fill="#9a6fd0"><title>1920x1080 run 2: 4.5</title></circle>
-<rect x="606" y="98" width="10" height="10" fill="#9a6fd0"/>
-<text x="622" y="107" fill="#333">1920x1080</text>
-<polyline points="64.0,66.6 328.0,70.5 592.0,84.1" fill="none" stroke="#3fb6c4" stroke-width="1.8"/>
-<circle cx="64.0" cy="66.6" r="3" fill="#3fb6c4"><title>3840x2160 run 0: 13.3</title></circle>
-<circle cx="328.0" cy="70.5" r="3" fill="#3fb6c4"><title>3840x2160 run 1: 13.0</title></circle>
-<circle cx="592.0" cy="84.1" r="3" fill="#3fb6c4"><title>3840x2160 run 2: 12.2</title></circle>
-<rect x="606" y="114" width="10" height="10" fill="#3fb6c4"/>
-<text x="622" y="123" fill="#333">3840x2160</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Incremental speedup vs full frame (higher is better)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Incremental speedup vs full frame (higher is better)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0.0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">3.1</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">6.1</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">9.2</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">12.2</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">15.3</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">×</text>
+<polyline class="s1" points="74.0,274.4 202.5,274.6 459.5,274.3 588.0,274.1" fill="none" stroke-width="2"/>
+<circle class="s1" cx="74.0" cy="274.4" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
+<circle class="s1" cx="202.5" cy="274.6" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
+<circle class="s1" cx="459.5" cy="274.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 0.7 ×</title></circle>
+<circle class="s1" cx="588.0" cy="274.1" r="4" stroke="none"><title>120x68 @ 3e7c620*: 0.7 ×</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">120x68</text>
+<polyline class="s2" points="74.0,272.4 202.5,272.4 459.5,272.7 588.0,272.7" fill="none" stroke-width="2"/>
+<circle class="s2" cx="74.0" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
+<circle class="s2" cx="202.5" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
+<circle class="s2" cx="459.5" cy="272.7" r="4" stroke="none"><title>240x135 @ 7b5a662: 0.8 ×</title></circle>
+<circle class="s2" cx="588.0" cy="272.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 0.8 ×</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">240x135</text>
+<polyline class="s3" points="74.0,258.8 202.5,258.6 459.5,258.4 588.0,258.6" fill="none" stroke-width="2"/>
+<circle class="s3" cx="74.0" cy="258.8" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
+<circle class="s3" cx="202.5" cy="258.6" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
+<circle class="s3" cx="459.5" cy="258.4" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.7 ×</title></circle>
+<circle class="s3" cx="588.0" cy="258.6" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.7 ×</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">480x270</text>
+<polyline class="s4" points="74.0,238.2 202.5,237.0 459.5,238.3 588.0,238.1" fill="none" stroke-width="2"/>
+<circle class="s4" cx="74.0" cy="238.2" r="4" stroke="none"><title>960x540 @ 21427f2: 2.9 ×</title></circle>
+<circle class="s4" cx="202.5" cy="237.0" r="4" stroke="none"><title>960x540 @ 21427f2: 3.0 ×</title></circle>
+<circle class="s4" cx="459.5" cy="238.3" r="4" stroke="none"><title>960x540 @ 7b5a662: 2.9 ×</title></circle>
+<circle class="s4" cx="588.0" cy="238.1" r="4" stroke="none"><title>960x540 @ 3e7c620*: 2.9 ×</title></circle>
+<rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="100">960x540</text>
+<polyline class="s5" points="74.0,210.1 202.5,211.4 459.5,212.6 588.0,209.9" fill="none" stroke-width="2"/>
+<circle class="s5" cx="74.0" cy="210.1" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.7 ×</title></circle>
+<circle class="s5" cx="202.5" cy="211.4" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.6 ×</title></circle>
+<circle class="s5" cx="459.5" cy="212.6" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 4.5 ×</title></circle>
+<circle class="s5" cx="588.0" cy="209.9" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 4.7 ×</title></circle>
+<rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="117">1920x1080</text>
+<polyline class="s6" points="74.0,70.3 202.5,74.2 459.5,87.7 588.0,93.5" fill="none" stroke-width="2"/>
+<circle class="s6" cx="74.0" cy="70.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.3 ×</title></circle>
+<circle class="s6" cx="202.5" cy="74.2" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.0 ×</title></circle>
+<circle class="s6" cx="459.5" cy="87.7" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 12.2 ×</title></circle>
+<circle class="s6" cx="588.0" cy="93.5" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 11.8 ×</title></circle>
+<rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="134">3840x2160</text>
 </svg>

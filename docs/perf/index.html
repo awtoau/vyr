@@ -2,64 +2,776 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>vyr perf history — the F18 rig ledger</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vyr measurement ledger</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 15px/1.5 system-ui, sans-serif; max-width: 880px;
-         margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
-  p.lede { opacity: .8; }
-  table { border-collapse: collapse; font-size: .85rem; }
-  th, td { border: 1px solid #8884; padding: .25rem .5rem; text-align: right; }
+  :root { color-scheme: light dark; --ink:#0b0b0b; --sec:#52514e; --line:#c3c2b7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#ffffff; --sec:#c3c2b7; --line:#383835; }
+  }
+  body { font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: var(--ink); }
+  h1 { font-size: 1.45rem; } h2 { font-size: 1.05rem; margin-top: 2.2rem; }
+  p.lede { color: var(--sec); }
+  table { border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  th, td { border: 1px solid var(--line); padding: .25rem .55rem; text-align: right; }
   th:first-child, td:first-child { text-align: left; }
-  img { max-width: 100%; border: 1px solid #8884; background: #fff; }
+  figure { margin: 1.2rem 0; }
+  figure svg { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; }
+  figcaption { color: var(--sec); font-size: .85rem; }
   code { font-size: .9em; }
 </style>
 </head>
 <body>
-<h1>vyr perf history — the rig ledger</h1>
-<p class="lede">The F18 rig (<a href="https://github.com/awtoau/vyr/issues/18">#18</a>)
-drives a frame-indexed parametric scene — slider sweep, toggle blink, a disc
-crossing clip boundaries, a digits-only frame counter, the checker asset
-translating — rendering every frame BOTH ways (full, and incrementally via
-dirty rects) with per-frame byte-equality asserted, at six resolutions from
-120×68 to 4K (3840×2160). Numbers are medians (vyr-bench methodology);
-the committed regression goldens are the FNV-1a frame-hash chain
-(<code>vyr-rig/hashchain.json</code>) and the ns/px baselines
-(<code>vyr-rig/baseline.json</code>). This page regenerates from the
-append-only <a href="history.jsonl"><code>history.jsonl</code></a> via
-<code>./dev.py perf-history</code>.</p>
+<h1>vyr measurement ledger</h1>
+<p class="lede">THE single measurement history for this project
+(<a href="https://github.com/awtoau/vyr/issues/25">#25</a>): host resolution
+ladder and anim acceptance, cross-ISA verdicts, static size, exact M4
+instruction counts (QEMU + <code>libinsn</code>), and real F429 silicon cycles —
+one append-only row per run in
+<a href="history.jsonl"><code>history.jsonl</code></a>, this page regenerated
+from it by <code>./dev.py track</code>. Sections are independent and optional:
+a run records what it measured and nothing else. <b>Rows are sparse where the
+measurement was never taken</b> — see the coverage matrix. Provenance for every
+number: <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 
-<h2>Latest run — <code>7b5a662</code> · 2026-06-12T13:34:16Z</h2>
-<table>
-<tr><th>rung</th><th>full ms</th><th>ns/px</th><th>×60fps</th>
-<th>incr ms</th><th>ns/dirty-px</th><th>×60fps</th><th>dirty</th><th>speedup</th></tr>
-<tr><td>120x68</td><td>0.062</td><td>7.54</td><td>270.83×</td><td>0.085</td><td>26.59</td><td>195.53×</td><td>39.3%</td><td>0.7×</td></tr>
-<tr><td>240x135</td><td>0.109</td><td>3.36</td><td>153.10×</td><td>0.133</td><td>16.89</td><td>125.53×</td><td>24.3%</td><td>0.8×</td></tr>
-<tr><td>480x270</td><td>0.233</td><td>1.80</td><td>71.46×</td><td>0.137</td><td>7.18</td><td>121.46×</td><td>14.8%</td><td>1.7×</td></tr>
-<tr><td>960x540</td><td>0.624</td><td>1.20</td><td>26.72×</td><td>0.212</td><td>3.24</td><td>78.44×</td><td>12.6%</td><td>2.9×</td></tr>
-<tr><td>1920x1080</td><td>2.020</td><td>0.97</td><td>8.25×</td><td>0.448</td><td>1.82</td><td>37.23×</td><td>11.8%</td><td>4.5×</td></tr>
-<tr><td>3840x2160</td><td>14.253</td><td>1.72</td><td>1.17×</td><td>1.169</td><td>1.23</td><td>14.26×</td><td>11.5%</td><td>12.2×</td></tr>
+<h2>Host resolution ladder — <code>3e7c620</code> · 2026-07-23T09:39:50Z</h2><table><tr><th>rung</th><th>full ms</th><th>ns/px</th><th>×60fps</th><th>incr ms</th><th>ns/dirty-px</th><th>×60fps</th><th>dirty</th><th>speedup</th></tr>
+<tr><td>120x68</td><td>0.060</td><td>7.41</td><td>275.64×</td><td>0.083</td><td>25.88</td><td>200.89×</td><td>39.3%</td><td>0.7×</td></tr>
+<tr><td>240x135</td><td>0.107</td><td>3.30</td><td>155.82×</td><td>0.131</td><td>16.61</td><td>127.64×</td><td>24.3%</td><td>0.8×</td></tr>
+<tr><td>480x270</td><td>0.229</td><td>1.76</td><td>72.91×</td><td>0.135</td><td>7.08</td><td>123.06×</td><td>14.8%</td><td>1.7×</td></tr>
+<tr><td>960x540</td><td>0.633</td><td>1.22</td><td>26.32×</td><td>0.215</td><td>3.28</td><td>77.59×</td><td>12.6%</td><td>2.9×</td></tr>
+<tr><td>1920x1080</td><td>2.079</td><td>1.00</td><td>8.02×</td><td>0.445</td><td>1.81</td><td>37.49×</td><td>11.8%</td><td>4.7×</td></tr>
+<tr><td>3840x2160</td><td>13.989</td><td>1.69</td><td>1.19×</td><td>1.182</td><td>1.24</td><td>14.11×</td><td>11.5%</td><td>11.8×</td></tr>
+</table><p class="lede">×60fps = headroom vs the 16.67 ms budget (&gt;1 fits). The incremental path is where 60 fps @ 4K lives.</p><p>Anim acceptance: <b>60 frames @ 480×270</b>, run hash <code>0x75f4a4e8bf96dfb3</code>, dirty 14.2%/step, 0.85 ms/frame (host wall clock).</p><h2>Exact instruction counts — <code>3e7c620</code></h2><table><tr><th>firmware</th><th>insns/frame</th><th>insn/px</th><th>vs LVGL</th><th>frames</th><th>elf / upstream</th></tr>
+<tr><td>vyr Exact</td><td>64,178,227</td><td>495.2</td><td>6.9604×</td><td>20</td><td><code>82f74036fab5</code></td></tr>
+<tr><td>vyr Draft</td><td>8,478,137</td><td>65.4</td><td>0.9195×</td><td>20</td><td><code>ccff508e1f22</code></td></tr>
+<tr><td>LVGL anchor</td><td>9,220,422</td><td>71.1</td><td>1.0000×</td><td>40</td><td><code>62f343b54</code> (9.6.0-dev)</td></tr>
+</table><p class="lede">QEMU emulator version 11.0.50, built with <code>--enable-plugins --enable-capstone</code> from <code>7f2007d19245</code>; plugin <code>tests/tcg/plugins/libinsn.so</code> <code>match=bkpt,trace=on</code>, machine <code>netduinoplus2</code>. Not an equal-output comparison — Draft has no anti-aliasing (<a href="https://github.com/awtoau/vyr/issues/27">#27</a>).</p><h2>Real silicon — <code>3e7c620</code></h2><table><tr><th>tier</th><th>cycles/frame</th><th>ms @180 MHz</th><th>heap peak</th><th>cycles/insn</th><th>spread</th><th>frame hash</th></tr>
+<tr><td>Exact</td><td>112,328,558</td><td>624.05</td><td>106,409 B</td><td>1.75</td><td>0 ppm</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+</table><p class="lede">STM32F429I-DISC1 (STM32F429ZI, Cortex-M4F), DWT_CYCCNT (real CPU cycles), 180 MHz (HSE crystal -&gt; PLL), 5 flash wait states, ART prefetch/I/D 1/1/1. cycles/insn is the cost emulation cannot model — it comes from this row's <code>insns</code> section.</p><h2>Emulated M4 (stock qemu) — <code>3e7c620</code></h2><table><tr><th>tier</th><th>heap peak</th><th>Draft fast-path</th><th>frame hash</th></tr>
+<tr><td>Draft</td><td>80.9 KiB</td><td>96.8%</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+</table><p class="lede">Deterministic quantities only. This vehicle's <code>SYS_CLOCK</code> reading is host wall time, not instructions (docs/performance.md §5); it is recorded but never charted.</p><h2>Static size — <code>3e7c620</code></h2><table><tr><th>config</th><th>flash KiB</th></tr>
+<tr><td>code</td><td>411.0</td></tr>
+<tr><td>font</td><td>571.6</td></tr>
+<tr><td>font+image</td><td>576.6</td></tr>
+</table><h2>Host bench medians — <code>3e7c620</code></h2><table><tr><th>case</th><th>ns/px</th></tr>
+<tr><td>fill_rrect</td><td>2.373</td></tr>
+<tr><td>disc</td><td>3.683</td></tr>
+<tr><td>gradient</td><td>6.787</td></tr>
+<tr><td>line</td><td>31.55</td></tr>
+<tr><td>scene_exact</td><td>5.756</td></tr>
+<tr><td>scene_draft</td><td>0.9708</td></tr>
 </table>
-<p class="lede">×60fps = headroom vs the 16.67 ms budget (&gt;1 fits).
-The 4K story the ladder exists to tell: the incremental path is where
-60 fps @ 4K lives.</p>
-<p>Latest anim acceptance: <b>60 frames @ 480×270</b>, run hash <code>0x75f4a4e8bf96dfb3</code>, dirty 14.2%/step, 0.84 ms/frame (full + incremental + byte-verify + PNG dump, host wall clock).</p><p>Cross-ISA rung (qemu-arm-static, ARMv7 musl static build): <b>✅ byte-identical</b> across 600 frames; TCG plugins unavailable on this host (no insn counts — emulated wall time is NON-target-indicative).</p>
 
-<h2>Trends over history</h2>
-<p><img src="ladder-full-ns-px.svg" alt="full-frame ns/px per rung over history"></p>
-<p><img src="ladder-incr-ns-px.svg" alt="incremental ns/dirty-px per rung over history"></p>
-<p><img src="ladder-incr-speedup.svg" alt="incremental speedup per rung over history"></p>
+<h2>Trends</h2>
+<p class="lede">A series is charted only where it has two or more observations;
+single observations stay in the tables above rather than being drawn as a
+one-point line.</p>
+<figure><a href="ladder-full-ns-px.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Full-frame render cost per rung (lower is better)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
 
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Full-frame render cost per rung (lower is better)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0.00</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.75</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">3.49</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">5.24</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">6.99</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">8.73</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
+<polyline class="s1" points="74.0,73.9 202.5,70.3 459.5,71.8 588.0,75.5" fill="none" stroke-width="2"/>
+<circle class="s1" cx="74.0" cy="73.9" r="4" stroke="none"><title>120x68 @ 21427f2: 7.47 ns / px</title></circle>
+<circle class="s1" cx="202.5" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 7.59 ns / px</title></circle>
+<circle class="s1" cx="459.5" cy="71.8" r="4" stroke="none"><title>120x68 @ 7b5a662: 7.54 ns / px</title></circle>
+<circle class="s1" cx="588.0" cy="75.5" r="4" stroke="none"><title>120x68 @ 3e7c620*: 7.41 ns / px</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">120x68</text>
+<polyline class="s2" points="74.0,191.5 202.5,189.8 459.5,190.6 588.0,192.2" fill="none" stroke-width="2"/>
+<circle class="s2" cx="74.0" cy="191.5" r="4" stroke="none"><title>240x135 @ 21427f2: 3.33 ns / px</title></circle>
+<circle class="s2" cx="202.5" cy="189.8" r="4" stroke="none"><title>240x135 @ 21427f2: 3.39 ns / px</title></circle>
+<circle class="s2" cx="459.5" cy="190.6" r="4" stroke="none"><title>240x135 @ 7b5a662: 3.36 ns / px</title></circle>
+<circle class="s2" cx="588.0" cy="192.2" r="4" stroke="none"><title>240x135 @ 3e7c620*: 3.30 ns / px</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">240x135</text>
+<polyline class="s3" points="74.0,236.1 202.5,235.4 459.5,234.9 588.0,235.9" fill="none" stroke-width="2"/>
+<circle class="s3" cx="74.0" cy="236.1" r="4" stroke="none"><title>480x270 @ 21427f2: 1.76 ns / px</title></circle>
+<circle class="s3" cx="202.5" cy="235.4" r="4" stroke="none"><title>480x270 @ 21427f2: 1.78 ns / px</title></circle>
+<circle class="s3" cx="459.5" cy="234.9" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.80 ns / px</title></circle>
+<circle class="s3" cx="588.0" cy="235.9" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.76 ns / px</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">480x270</text>
+<polyline class="s4" points="74.0,251.4 202.5,250.5 459.5,251.8 588.0,251.3" fill="none" stroke-width="2"/>
+<circle class="s4" cx="74.0" cy="251.4" r="4" stroke="none"><title>960x540 @ 21427f2: 1.22 ns / px</title></circle>
+<circle class="s4" cx="202.5" cy="250.5" r="4" stroke="none"><title>960x540 @ 21427f2: 1.25 ns / px</title></circle>
+<circle class="s4" cx="459.5" cy="251.8" r="4" stroke="none"><title>960x540 @ 7b5a662: 1.20 ns / px</title></circle>
+<circle class="s4" cx="588.0" cy="251.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 1.22 ns / px</title></circle>
+<rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="100">960x540</text>
+<polyline class="s5" points="74.0,257.5 202.5,257.9 459.5,258.3 588.0,257.5" fill="none" stroke-width="2"/>
+<circle class="s5" cx="74.0" cy="257.5" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.00 ns / px</title></circle>
+<circle class="s5" cx="202.5" cy="257.9" r="4" stroke="none"><title>1920x1080 @ 21427f2: 0.99 ns / px</title></circle>
+<circle class="s5" cx="459.5" cy="258.3" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 0.97 ns / px</title></circle>
+<circle class="s5" cx="588.0" cy="257.5" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.00 ns / px</title></circle>
+<rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="117">1920x1080</text>
+<polyline class="s6" points="74.0,232.9 202.5,233.4 459.5,237.2 588.0,238.1" fill="none" stroke-width="2"/>
+<circle class="s6" cx="74.0" cy="232.9" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.87 ns / px</title></circle>
+<circle class="s6" cx="202.5" cy="233.4" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.85 ns / px</title></circle>
+<circle class="s6" cx="459.5" cy="237.2" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.72 ns / px</title></circle>
+<circle class="s6" cx="588.0" cy="238.1" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.69 ns / px</title></circle>
+<rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="134">3840x2160</text>
+</svg>
+</a></figure>
+<figure><a href="ladder-incr-ns-px.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Incremental repaint cost per rung" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
 
-<h2>Runs</h2>
-<ol start="0">
-<li><code>2026-06-11T10:58:19Z</code> · <code>21427f2</code> · selwyn (x86_64)</li>
-<li><code>2026-06-11T11:03:51Z</code> · <code>21427f2</code> · selwyn (x86_64)</li>
-<li><code>2026-06-12T13:34:16Z</code> · <code>7b5a662</code> · selwyn (x86_64)</li>
-</ol>
-<p class="lede">Host wall-clock numbers are desktop-host numbers; the
-embedded story is measured separately (F9). Anything emulated is labelled
-NON-target-indicative — QEMU measures the host, never the F427.</p>
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Incremental repaint cost per rung</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0.00</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">6.32</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">12.64</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">18.96</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">25.28</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">31.60</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / dirty px</text>
+<polyline class="s1" points="74.0,76.1 202.5,70.3 459.5,77.3 588.0,82.9" fill="none" stroke-width="2"/>
+<circle class="s1" cx="74.0" cy="76.1" r="4" stroke="none"><title>120x68 @ 21427f2: 26.75 ns / dirty px</title></circle>
+<circle class="s1" cx="202.5" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 27.48 ns / dirty px</title></circle>
+<circle class="s1" cx="459.5" cy="77.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 26.59 ns / dirty px</title></circle>
+<circle class="s1" cx="588.0" cy="82.9" r="4" stroke="none"><title>120x68 @ 3e7c620*: 25.88 ns / dirty px</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">120x68</text>
+<polyline class="s2" points="74.0,157.5 202.5,154.8 459.5,153.5 588.0,155.7" fill="none" stroke-width="2"/>
+<circle class="s2" cx="74.0" cy="157.5" r="4" stroke="none"><title>240x135 @ 21427f2: 16.37 ns / dirty px</title></circle>
+<circle class="s2" cx="202.5" cy="154.8" r="4" stroke="none"><title>240x135 @ 21427f2: 16.72 ns / dirty px</title></circle>
+<circle class="s2" cx="459.5" cy="153.5" r="4" stroke="none"><title>240x135 @ 7b5a662: 16.89 ns / dirty px</title></circle>
+<circle class="s2" cx="588.0" cy="155.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 16.61 ns / dirty px</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">240x135</text>
+<polyline class="s3" points="74.0,230.2 202.5,229.8 459.5,229.7 588.0,230.4" fill="none" stroke-width="2"/>
+<circle class="s3" cx="74.0" cy="230.2" r="4" stroke="none"><title>480x270 @ 21427f2: 7.12 ns / dirty px</title></circle>
+<circle class="s3" cx="202.5" cy="229.8" r="4" stroke="none"><title>480x270 @ 21427f2: 7.17 ns / dirty px</title></circle>
+<circle class="s3" cx="459.5" cy="229.7" r="4" stroke="none"><title>480x270 @ 7b5a662: 7.18 ns / dirty px</title></circle>
+<circle class="s3" cx="588.0" cy="230.4" r="4" stroke="none"><title>480x270 @ 3e7c620*: 7.08 ns / dirty px</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">480x270</text>
+<polyline class="s4" points="74.0,260.3 202.5,260.2 459.5,260.5 588.0,260.3" fill="none" stroke-width="2"/>
+<circle class="s4" cx="74.0" cy="260.3" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
+<circle class="s4" cx="202.5" cy="260.2" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
+<circle class="s4" cx="459.5" cy="260.5" r="4" stroke="none"><title>960x540 @ 7b5a662: 3.24 ns / dirty px</title></circle>
+<circle class="s4" cx="588.0" cy="260.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 3.28 ns / dirty px</title></circle>
+<rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="100">960x540</text>
+<polyline class="s5" points="74.0,271.8 202.5,271.7 459.5,271.7 588.0,271.8" fill="none" stroke-width="2"/>
+<circle class="s5" cx="74.0" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="202.5" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="459.5" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="588.0" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.81 ns / dirty px</title></circle>
+<rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="117">1920x1080</text>
+<polyline class="s6" points="74.0,276.4 202.5,276.3 459.5,276.4 588.0,276.3" fill="none" stroke-width="2"/>
+<circle class="s6" cx="74.0" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.23 ns / dirty px</title></circle>
+<circle class="s6" cx="202.5" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.24 ns / dirty px</title></circle>
+<circle class="s6" cx="459.5" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.23 ns / dirty px</title></circle>
+<circle class="s6" cx="588.0" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.24 ns / dirty px</title></circle>
+<rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="134">3840x2160</text>
+</svg>
+</a></figure>
+<figure><a href="ladder-incr-speedup.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Incremental speedup vs full frame (higher is better)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Incremental speedup vs full frame (higher is better)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0.0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">3.1</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">6.1</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">9.2</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">12.2</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">15.3</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">×</text>
+<polyline class="s1" points="74.0,274.4 202.5,274.6 459.5,274.3 588.0,274.1" fill="none" stroke-width="2"/>
+<circle class="s1" cx="74.0" cy="274.4" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
+<circle class="s1" cx="202.5" cy="274.6" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
+<circle class="s1" cx="459.5" cy="274.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 0.7 ×</title></circle>
+<circle class="s1" cx="588.0" cy="274.1" r="4" stroke="none"><title>120x68 @ 3e7c620*: 0.7 ×</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">120x68</text>
+<polyline class="s2" points="74.0,272.4 202.5,272.4 459.5,272.7 588.0,272.7" fill="none" stroke-width="2"/>
+<circle class="s2" cx="74.0" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
+<circle class="s2" cx="202.5" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
+<circle class="s2" cx="459.5" cy="272.7" r="4" stroke="none"><title>240x135 @ 7b5a662: 0.8 ×</title></circle>
+<circle class="s2" cx="588.0" cy="272.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 0.8 ×</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">240x135</text>
+<polyline class="s3" points="74.0,258.8 202.5,258.6 459.5,258.4 588.0,258.6" fill="none" stroke-width="2"/>
+<circle class="s3" cx="74.0" cy="258.8" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
+<circle class="s3" cx="202.5" cy="258.6" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
+<circle class="s3" cx="459.5" cy="258.4" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.7 ×</title></circle>
+<circle class="s3" cx="588.0" cy="258.6" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.7 ×</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">480x270</text>
+<polyline class="s4" points="74.0,238.2 202.5,237.0 459.5,238.3 588.0,238.1" fill="none" stroke-width="2"/>
+<circle class="s4" cx="74.0" cy="238.2" r="4" stroke="none"><title>960x540 @ 21427f2: 2.9 ×</title></circle>
+<circle class="s4" cx="202.5" cy="237.0" r="4" stroke="none"><title>960x540 @ 21427f2: 3.0 ×</title></circle>
+<circle class="s4" cx="459.5" cy="238.3" r="4" stroke="none"><title>960x540 @ 7b5a662: 2.9 ×</title></circle>
+<circle class="s4" cx="588.0" cy="238.1" r="4" stroke="none"><title>960x540 @ 3e7c620*: 2.9 ×</title></circle>
+<rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="100">960x540</text>
+<polyline class="s5" points="74.0,210.1 202.5,211.4 459.5,212.6 588.0,209.9" fill="none" stroke-width="2"/>
+<circle class="s5" cx="74.0" cy="210.1" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.7 ×</title></circle>
+<circle class="s5" cx="202.5" cy="211.4" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.6 ×</title></circle>
+<circle class="s5" cx="459.5" cy="212.6" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 4.5 ×</title></circle>
+<circle class="s5" cx="588.0" cy="209.9" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 4.7 ×</title></circle>
+<rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="117">1920x1080</text>
+<polyline class="s6" points="74.0,70.3 202.5,74.2 459.5,87.7 588.0,93.5" fill="none" stroke-width="2"/>
+<circle class="s6" cx="74.0" cy="70.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.3 ×</title></circle>
+<circle class="s6" cx="202.5" cy="74.2" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.0 ×</title></circle>
+<circle class="s6" cx="459.5" cy="87.7" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 12.2 ×</title></circle>
+<circle class="s6" cx="588.0" cy="93.5" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 11.8 ×</title></circle>
+<rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="134">3840x2160</text>
+</svg>
+</a></figure>
+<figure><a href="size-flash.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Flash on the M4 (release-mcu, text+data)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Flash on the M4 (release-mcu, text+data)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">133</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">265</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">398</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">530</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">663</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
+<polyline class="s1" points="331.0,133.4 588.0,132.3" fill="none" stroke-width="2"/>
+<circle class="s1" cx="331.0" cy="133.4" r="4" stroke="none"><title>code-only @ f2f0724*: 408 KiB</title></circle>
+<circle class="s1" cx="588.0" cy="132.3" r="4" stroke="none"><title>code-only @ 3e7c620*: 411 KiB</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">code-only</text>
+<polyline class="s2" points="331.0,73.3 588.0,72.2" fill="none" stroke-width="2"/>
+<circle class="s2" cx="331.0" cy="73.3" r="4" stroke="none"><title>+font @ f2f0724*: 569 KiB</title></circle>
+<circle class="s2" cx="588.0" cy="72.2" r="4" stroke="none"><title>+font @ 3e7c620*: 572 KiB</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">+font</text>
+<polyline class="s3" points="331.0,71.5 588.0,70.3" fill="none" stroke-width="2"/>
+<circle class="s3" cx="331.0" cy="71.5" r="4" stroke="none"><title>+font+image @ f2f0724*: 574 KiB</title></circle>
+<circle class="s3" cx="588.0" cy="70.3" r="4" stroke="none"><title>+font+image @ 3e7c620*: 577 KiB</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">+font+image</text>
+</svg>
+</a></figure>
+<figure><a href="mem-heap.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 workload heap peak (emulated)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 workload heap peak (emulated)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">24</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">48</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">72</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">96</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">119</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
+<polyline class="s1" points="331.0,164.8 588.0,118.0" fill="none" stroke-width="2"/>
+<circle class="s1" cx="331.0" cy="164.8" r="4" stroke="none"><title>Draft @ f2f0724*: 58 KiB</title></circle>
+<circle class="s1" cx="588.0" cy="118.0" r="4" stroke="none"><title>Draft @ 3e7c620*: 81 KiB</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">Draft</text>
+<circle class="s2" cx="331.0" cy="70.3" r="4" stroke="none"><title>Exact @ f2f0724*: 104 KiB</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">Exact</text>
+</svg>
+</a></figure>
+<figure><a href="ladder-bridge.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Ladder cost — the bridge series (spans every run)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Ladder cost — the bridge series (spans every run)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0.00</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.66</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">3.31</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">4.97</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">6.62</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">8.28</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
+<polyline class="s1" points="74.0,233.3 202.5,232.6 331.0,231.9 459.5,232.1 588.0,233.2" fill="none" stroke-width="2"/>
+<circle class="s1" cx="74.0" cy="233.3" r="4" stroke="none"><title>480×270 full @ 21427f2: 1.76 ns / px</title></circle>
+<circle class="s1" cx="202.5" cy="232.6" r="4" stroke="none"><title>480×270 full @ 21427f2: 1.78 ns / px</title></circle>
+<circle class="s1" cx="331.0" cy="231.9" r="4" stroke="none"><title>480×270 full @ f2f0724*: 1.81 ns / px</title></circle>
+<circle class="s1" cx="459.5" cy="232.1" r="4" stroke="none"><title>480×270 full @ 7b5a662: 1.80 ns / px</title></circle>
+<circle class="s1" cx="588.0" cy="233.2" r="4" stroke="none"><title>480×270 full @ 3e7c620*: 1.76 ns / px</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">480×270 full</text>
+<polyline class="s2" points="74.0,72.9 202.5,71.3 331.0,70.3 459.5,71.0 588.0,73.8" fill="none" stroke-width="2"/>
+<circle class="s2" cx="74.0" cy="72.9" r="4" stroke="none"><title>480×270 incremental @ 21427f2: 7.12 ns / px</title></circle>
+<circle class="s2" cx="202.5" cy="71.3" r="4" stroke="none"><title>480×270 incremental @ 21427f2: 7.17 ns / px</title></circle>
+<circle class="s2" cx="331.0" cy="70.3" r="4" stroke="none"><title>480×270 incremental @ f2f0724*: 7.20 ns / px</title></circle>
+<circle class="s2" cx="459.5" cy="71.0" r="4" stroke="none"><title>480×270 incremental @ 7b5a662: 7.18 ns / px</title></circle>
+<circle class="s2" cx="588.0" cy="73.8" r="4" stroke="none"><title>480×270 incremental @ 3e7c620*: 7.08 ns / px</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">480×270 incremental</text>
+<polyline class="s3" points="74.0,230.1 202.5,230.6 331.0,236.7 459.5,234.5 588.0,235.5" fill="none" stroke-width="2"/>
+<circle class="s3" cx="74.0" cy="230.1" r="4" stroke="none"><title>4K full @ 21427f2: 1.87 ns / px</title></circle>
+<circle class="s3" cx="202.5" cy="230.6" r="4" stroke="none"><title>4K full @ 21427f2: 1.85 ns / px</title></circle>
+<circle class="s3" cx="331.0" cy="236.7" r="4" stroke="none"><title>4K full @ f2f0724*: 1.64 ns / px</title></circle>
+<circle class="s3" cx="459.5" cy="234.5" r="4" stroke="none"><title>4K full @ 7b5a662: 1.72 ns / px</title></circle>
+<circle class="s3" cx="588.0" cy="235.5" r="4" stroke="none"><title>4K full @ 3e7c620*: 1.69 ns / px</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">4K full</text>
+</svg>
+</a><figcaption>Projected from rungs[] where present; recorded flat by the retired docs/metrics harness. The only continuous series across the union of commits (#25).</figcaption></figure>
+<figure><a href="bench-prim.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Primitive cost (host, vyr-bench median)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Primitive cost (host, vyr-bench median)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">13</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">26</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">39</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">53</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">66</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
+<polyline class="s1" points="331.0,277.0 588.0,277.1" fill="none" stroke-width="2"/>
+<circle class="s1" cx="331.0" cy="277.0" r="4" stroke="none"><title>fill_rrect @ f2f0724*: 2.4 ns / px</title></circle>
+<circle class="s1" cx="588.0" cy="277.1" r="4" stroke="none"><title>fill_rrect @ 3e7c620*: 2.4 ns / px</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">fill_rrect</text>
+<polyline class="s2" points="331.0,261.7 588.0,272.1" fill="none" stroke-width="2"/>
+<circle class="s2" cx="331.0" cy="261.7" r="4" stroke="none"><title>disc @ f2f0724*: 6.4 ns / px</title></circle>
+<circle class="s2" cx="588.0" cy="272.1" r="4" stroke="none"><title>disc @ 3e7c620*: 3.7 ns / px</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">disc</text>
+<polyline class="s3" points="331.0,252.3 588.0,260.4" fill="none" stroke-width="2"/>
+<circle class="s3" cx="331.0" cy="252.3" r="4" stroke="none"><title>gradient @ f2f0724*: 8.9 ns / px</title></circle>
+<circle class="s3" cx="588.0" cy="260.4" r="4" stroke="none"><title>gradient @ 3e7c620*: 6.8 ns / px</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">gradient</text>
+<polyline class="s4" points="331.0,70.3 588.0,167.0" fill="none" stroke-width="2"/>
+<circle class="s4" cx="331.0" cy="70.3" r="4" stroke="none"><title>line @ f2f0724*: 57 ns / px</title></circle>
+<circle class="s4" cx="588.0" cy="167.0" r="4" stroke="none"><title>line @ 3e7c620*: 32 ns / px</title></circle>
+<rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="100">line</text>
+</svg>
+</a></figure>
+<figure><a href="bench-scene.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Scene cost (host, vyr-bench median)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Scene cost (host, vyr-bench median)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.4</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">2.7</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">4.1</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">5.5</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">6.9</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
+<polyline class="s1" points="331.0,70.3 588.0,78.1" fill="none" stroke-width="2"/>
+<circle class="s1" cx="331.0" cy="70.3" r="4" stroke="none"><title>ir Exact @ f2f0724*: 6 ns / px</title></circle>
+<circle class="s1" cx="588.0" cy="78.1" r="4" stroke="none"><title>ir Exact @ 3e7c620*: 5.8 ns / px</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">ir Exact</text>
+<polyline class="s2" points="331.0,247.1 588.0,250.9" fill="none" stroke-width="2"/>
+<circle class="s2" cx="331.0" cy="247.1" r="4" stroke="none"><title>ir Draft @ f2f0724*: 1.1 ns / px</title></circle>
+<circle class="s2" cx="588.0" cy="250.9" r="4" stroke="none"><title>ir Draft @ 3e7c620*: 0.97 ns / px</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">ir Draft</text>
+</svg>
+</a></figure>
+<figure><a href="fidelity-coverage.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Draft fast-path coverage (emulated M4)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Draft fast-path coverage (emulated M4)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">22</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">45</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">67</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">89</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">111</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
+<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
+<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
+<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">%</text>
+<polyline class="s1" points="331.0,70.3 588.0,70.3" fill="none" stroke-width="2"/>
+<circle class="s1" cx="331.0" cy="70.3" r="4" stroke="none"><title>coverage @ f2f0724*: 97 %</title></circle>
+<circle class="s1" cx="588.0" cy="70.3" r="4" stroke="none"><title>coverage @ 3e7c620*: 97 %</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">coverage</text>
+</svg>
+</a></figure>
+
+<h2>Coverage — what each run measured</h2>
+<table><tr><th>run</th><th>commit</th><th>when</th><th>ladder</th><th>anim</th><th>arm</th><th>bench</th><th>size</th><th>m4_qemu</th><th>insns</th><th>silicon</th><th>board_anim</th></tr>
+<tr><td>0</td><td><code>21427f2</code></td><td><code>2026-06-11T10:58:19Z</code></td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>1</td><td><code>21427f2</code></td><td><code>2026-06-11T11:03:51Z</code></td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>2</td><td><code>f2f0724*</code></td><td><code>2026-06-12T09:55:49Z</code></td><td>·</td><td>·</td><td>·</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>3</td><td><code>7b5a662</code></td><td><code>2026-06-12T13:34:16Z</code></td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>4</td><td><code>3e7c620*</code></td><td><code>2026-07-23T09:39:50Z</code></td><td>●</td><td>●</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>·</td></tr>
+</table>
+<p class="lede">● recorded · nothing recorded. <code>*</code> = measured against
+a dirty worktree. Host wall-clock numbers are desktop-host numbers; emulated
+numbers are labelled where they are not target-indicative.</p>
 </body>
 </html>

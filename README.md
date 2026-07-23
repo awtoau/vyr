@@ -30,7 +30,8 @@ emulated Cortex-M4** (`./dev.py qemu-m4` — real vector table + crt0,
 x86-64, heap peak 106 KB with an 8 KB ASCII-subset font
 ([measured numbers](docs/measurements/f9-static.md)). See the
 **[milestone gallery](docs/milestones/README.md)** — the renderer's history
-in its own golden pixels — and the **[perf history](docs/perf/index.html)**.
+in its own golden pixels — and the **[measurement ledger](docs/perf/index.html)**
+(host ladder, exact M4 instruction counts, real F429 silicon cycles).
 The full plan — architecture, day-1 invariants I1–I8, the feature tracks —
 is [`docs/plan.md`](docs/plan.md). Work is tracked as GitHub issues, one per
 feature track. Everything runs as ONE operation: `./dev.py ci`.
@@ -59,7 +60,7 @@ feature track. Everything runs as ONE operation: `./dev.py ci`.
 | `vyr-cli` | std shell: IR JSON in → PNG out (render-farm contract), text measure; decode/encode lives here |
 | `vyr-bench` | deterministic ns/px benches, committed baseline, the scaling-law assertion (run\|record\|check) |
 | `vyr-size` | the F9 measurement vehicle: real linked ELFs on the STM32F427 memory map (`./dev.py size-mcu`) |
-| `vyr-rig` | the F18 rig: deterministic 60 fps animation (hash-chain golden), resolution ladder to 4K, cross-ISA replay (`./dev.py anim` / `ladder` / `perf-history`) |
+| `vyr-rig` | the F18 rig: deterministic 60 fps animation (hash-chain golden), resolution ladder to 4K, cross-ISA replay (`./dev.py anim` / `ladder`, recorded by `./dev.py track`) |
 
 ## License
 

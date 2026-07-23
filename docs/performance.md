@@ -233,8 +233,9 @@ provenance — tool version, source commit, ELF SHA-256, every run's raw values.
 | — LVGL comparison ELF | `python3 scripts/lvgl-m4-bench/run.py` | `tmp/lvgl-m4-result.json` |
 | §4.1 silicon cycles | `python3 scripts/board-run.py` | `tmp/board-result.json` |
 | §4.2 dirty-rect animation | `python3 scripts/board-anim.py` | `tmp/board-anim.json` |
-| Host ladder / ns-px | `./dev.py ladder`, `./dev.py bench` | `docs/perf/` |
+| Host ladder / ns-px | `./dev.py ladder`, `./dev.py bench` | `tmp/rig-ladder.json` |
 | Register-level board debugging | `python3 scripts/board-diag.py` | `tmp/board-diag.json` |
+| **Record all of the above as one dated row** | `./dev.py track` | `docs/perf/history.jsonl` + `docs/perf/index.html` |
 
 Notes that will cost time if forgotten:
 
@@ -256,7 +257,7 @@ Notes that will cost time if forgotten:
 
 | Issue | Why it matters here |
 |---|---|
-| [#25](https://github.com/awtoau/vyr/issues/25) | two parallel perf ledgers, neither recording any of §3-§4. **No number in this document has a home in a time series.** |
+| ~~[#25](https://github.com/awtoau/vyr/issues/25)~~ | **closed.** The two parallel ledgers are now one: `docs/perf/history.jsonl` (`"schema": 2`), written only by `./dev.py track`, with first-class sections for §3 (`insns`) and §4 (`silicon`, `board_anim`). Every number here now has a home in a time series; re-run the §6 command, then `./dev.py track`. |
 | [#27](https://github.com/awtoau/vyr/issues/27) | the Draft/LVGL comparison is not fidelity-normalised |
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |

@@ -74,7 +74,7 @@ M4 frame hash is unchanged, every Draft + chart golden passes with no re-bless),
 it cost nothing in fidelity. Result: ~11.5 M → **~8.5–9.5 M insns/frame — under the
 10 M LVGL anchor**. The trade is heap: Draft's owned RGB band buffer takes it 60 → 83
 KB (still below Exact's). Full numbers: [`docs/measurements/f9-static.md`](../measurements/f9-static.md);
-the live tracked figure: [`docs/metrics/`](../metrics/index.html).
+the live tracked figure: [`docs/perf/`](../perf/index.html) (the measurement ledger).
 
 **The honest read:** integer-everything + gutter-off + direct-RGB took vyr from
 **7.4× LVGL to under 1.0× — it now BEATS LVGL on a scalar M4**, in safe integer Rust

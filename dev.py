@@ -29,10 +29,9 @@ COMMANDS = {
     "size-mcu": "F9 static numbers: build the vyr-size matrix for thumbv7em + arm-none-eabi-size table",
     "qemu-m4": "F9 dynamic half: boot vyr-size (run-qemu) on qemu-system-arm netduinoplus2 (M4), banded 480x270 + subset font; cross-ISA hash vs the host leg; icount virtual-time numbers. GATES insns/frame + frame hash vs vyr-size/m4-baseline.json (--draft = Draft tier; --bless re-records — commit separately)",
     "anim": "F18 rig acceptance: 600-frame run @480 — per-frame incremental==full + committed hash chain + PNG seq + ffmpeg lossless video (--bless re-bless; --arm qemu cross-ISA rung; --size/--frames override; --no-video)",
-    "ci": "THE single comprehensive gate (run after every change): gate + M4 insn-count gate + bench + size-mcu + anim(+ARM) + ladder + perf-history, run-all-collect-all, one summary. --quick (~1-2 min): Draft-only M4, 60 anim frames, no video/ARM. Full run = nightly unit.",
+    "ci": "THE single comprehensive gate (run after every change): gate + M4 insn-count gate + bench + size-mcu + anim(+ARM) + ladder + track, run-all-collect-all, one summary. --quick (~1-2 min): Draft-only M4, 60 anim frames, no video/ARM. Full run = nightly unit.",
     "ladder": "F18 resolution ladder 120→4K: ns/px full+incremental, 60fps headroom, dirty %; gates vs vyr-rig/baseline.json when present (--record re-records — commit separately)",
-    "perf-history": "append the latest rig run (tmp/rig-*.json) to docs/perf/history.jsonl + regenerate docs/perf/index.html SVG charts (--regen-only rebuilds pages without appending)",
-    "track": "snapshot the valuable numbers (size/memory/perf/fidelity) vs the current git commit (+dirty) → docs/metrics/history.jsonl + regenerate docs/metrics/index.html trend charts (--regen-only rebuilds without appending). Run regularly for long-term tracking.",
+    "track": "THE measurement ledger (#25): append one row for the current commit to docs/perf/history.jsonl from whatever measurement artifacts are in ./tmp (ladder/anim/arm, size, qemu-m4, exact insn counts, board silicon cycles) + committed bench medians, then regenerate docs/perf/index.html + its SVG charts. Measures nothing itself; sections absent from ./tmp are simply not recorded. --regen-only rebuilds the page without appending.",
     "gate": "the full pre-commit gate: fmt-check + clippy + test + check-mcu",
 }
 
@@ -202,6 +201,32 @@ def cmd_size_mcu(_rest: list[str]) -> int:
     for line in lines:
         print(line)
         _log(line)
+    # Sidecar for the ledger (#25): ./dev.py track INGESTS this rather than
+    # re-running the build, so one ci run measures the size exactly once.
+    flash_kib = {
+        key: round((text + data) / 1024, 1)
+        for label, key in (("code-only", "code"), ("font", "font"),
+                           ("font,image", "font_image"))
+        for lbl, profile, text, data, _bss in rows
+        if lbl == label and profile == "release-mcu"
+    }
+    (TMP / "size-mcu.json").write_text(
+        json.dumps(
+            {
+                "tool": "arm-none-eabi-size (Berkeley text+data)",
+                "target": SIZE_TARGET,
+                "profile": "release-mcu",
+                "flash_kib": flash_kib,
+                "configs": [
+                    {"label": lbl, "profile": profile, "text": text, "data": data, "bss": bss}
+                    for lbl, profile, text, data, bss in rows
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return 0
 
 
@@ -367,6 +392,32 @@ def cmd_qemu_m4(rest: list[str]) -> int:
     for line in lines:
         print(line)
         _log(line)
+
+    # Sidecar for the ledger (#25). DETERMINISTIC facts only: frame hash, heap
+    # peak, Draft fast-path coverage. sys_clock_cs is recorded raw and named
+    # for what it is — host wall time on a plugin-less qemu, NOT instructions
+    # (docs/performance.md §5) — so it can never be mistaken for an insn count.
+    (TMP / f"qemu-m4-{tier.lower()}.json").write_text(
+        json.dumps(
+            {
+                "tier": tier,
+                "machine": QEMU_M4_MACHINE,
+                "frame_hash": g_hash,
+                "cross_isa": "identical" if g_hash == host_hash else "MISMATCH",
+                "heap_peak_b": int(g_peak) if g_peak else None,
+                "heap_live_end_b": int(g_live) if g_live else None,
+                "fastpath_coverage_pct": float(g_cov) if g_cov else None,
+                "sys_clock_cs": int(g_cs) if g_cs else None,
+                "sys_clock_note": (
+                    "host wall time on a qemu without TCG plugins — NOT an "
+                    "instruction count; exact counts come from scripts/qemu-insn.py"
+                ),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     # --- baseline gate -------------------------------------------------------
     # HARD-gate only the DETERMINISTIC outputs: the frame hash (cross-ISA M4==x86
@@ -736,12 +787,9 @@ def cmd_ladder(rest: list[str]) -> int:
     return _run(args + rest)
 
 
-def cmd_perf_history(rest: list[str]) -> int:
-    return _run(["python3", "scripts/perf-history.py", *rest])
-
-
 def cmd_track(rest: list[str]) -> int:
-    return _run(["python3", "scripts/metrics-history.py", *rest])
+    # ONE writer, ONE ledger (#25): docs/perf/history.jsonl + docs/perf/index.html.
+    return _run(["python3", "scripts/ledger.py", *rest])
 
 
 def cmd_gate(_rest: list[str]) -> int:
@@ -785,12 +833,11 @@ def cmd_ci(rest: list[str]) -> int:
         ("size-mcu", cmd_size_mcu, []),
         ("anim", cmd_anim, anim_args),
         ("ladder", cmd_ladder, []),
-        ("perf-history", cmd_perf_history, []),
+        # The ledger row goes last: it ingests the artifacts every step above
+        # just wrote (#25). Pure ingest — it re-measures nothing, so it costs
+        # the same in --quick as in a full run.
+        ("track", cmd_track, []),
     ]
-    # The long-term metrics snapshot (size/memory/perf vs git commit + graphs).
-    # Full run only — it re-measures size + M4, ~10 s; --quick stays lean.
-    if not quick:
-        steps.append(("track", cmd_track, []))
     results: list[tuple[str, int, float]] = []
     t_all = time.monotonic()
     for name, fn, args in steps:
@@ -832,7 +879,6 @@ HANDLERS = {
     "qemu-m4": cmd_qemu_m4,
     "anim": cmd_anim,
     "ladder": cmd_ladder,
-    "perf-history": cmd_perf_history,
     "track": cmd_track,
     "gate": cmd_gate,
 }

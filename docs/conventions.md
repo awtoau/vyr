@@ -47,8 +47,35 @@ No bare `sleep`. (Agents have no concept of time; embedded operations are
 One discoverable entry point per repo; AI agents enumerate it via
 `./dev.py describe` (JSON). This repo's commands: `describe`, `test` (honours
 `VYR_BLESS=1`), `check`, `check-mcu` (the no_std/thumbv7em gate), `clippy`,
-`fmt-check`, `selftest` (demo PNG + ns/px to `./tmp/`). Return codes:
+`fmt-check`, `selftest` (demo PNG + ns/px to `./tmp/`), `track` (the one
+measurement-ledger writer — see below). Return codes:
 0 success, non-zero failure, 2 usage/unimplemented.
+
+## The measurement ledger — ONE file, ONE writer
+
+`docs/perf/history.jsonl` is **the** canonical measurement history: append-only,
+committed, one row per run, `"schema": 2`. `docs/perf/index.html` and the SVGs
+beside it are regenerated from it and are pure derived artifacts. There is no
+second ledger (`docs/metrics/` was retired in #25).
+
+- **One writer: `./dev.py track`** (`scripts/ledger.py`). Nothing else appends.
+  It *measures nothing* — it ingests the artifacts the measuring commands leave
+  in `./tmp` (`ladder`, `anim`, `size-mcu`, `qemu-m4`, `scripts/qemu-insn.py`,
+  `scripts/board-run.py`) plus the committed `vyr-bench/baseline.json`, so
+  `./dev.py ci` measures each quantity exactly once and records it once.
+- **Sections are independent and optional** — `ladder`, `anim`, `arm`, `bench`,
+  `size`, `m4_qemu`, `insns`, `silicon`, `board_anim`, `derived`. A row that
+  omits a section did not measure it. **Sparse rows are honest; a back-filled
+  or interpolated value is not.** Nothing is ever written that was not measured.
+- **Provenance travels with the number**: tool + version, ELF SHA-256, the
+  upstream commit behind the LVGL anchor, the emulated/real distinction. A
+  number whose source is not recorded is not an anchor.
+- **Discredited numbers are relabelled, never silently carried.** SYS_CLOCK
+  readings from a plugin-less qemu are host wall time; they live under
+  `superseded` and are never charted (`docs/performance.md` §5).
+- **The ledger has one format.** `ledger.py` refuses a row of any other schema
+  rather than growing a read-old-format path; a schema change is a one-shot
+  rewrite of the file, reviewed as a diff.
 
 ## Goldens & perf baselines
 
