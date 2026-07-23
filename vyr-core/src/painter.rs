@@ -31,6 +31,18 @@
 //! stays as belt-and-braces for clip-adjacent AA. Enforcement is
 //! `tests/golden.rs::band_equivalence` (even + uneven band heights).
 //!
+//! **That flattening is MEMOISED (#32, [`crate::Shapes`]).** Fixed-step
+//! flattening makes `circle_points`/`rrect_points` pure functions of their
+//! arguments — which also means a banded render re-ran them for every band a
+//! shape touches (17 at the reference `BAND_H = 16`), every frame, and on an
+//! M4F that is the most expensive thing in the frame: `libm` computes f32 trig
+//! in f64, the FPU is single-precision, so one `cosf` is ~1,145 instructions of
+//! soft-float builtins. The memo is caller-owned (`no_std` + `forbid(unsafe)`
+//! leaves no room for a global) and it is a memo and NOTHING else — same
+//! arguments, same `f32` vertices, bit for bit. It cannot move a pixel, and
+//! `tests/shapes.rs` proves it by rendering everything twice, cached against
+//! `Shapes::with_budget(0)`. All three tier frame hashes are unchanged.
+//!
 //! **Glyphs (F5) sit OUTSIDE the polygon rule, safely**: glyph outlines are
 //! rasterized once into A8 masks in glyph-local space (`text::raster_glyph`
 //! — no band, no clip), and [`Canvas::glyph_run`] here only BLITS those
@@ -99,6 +111,7 @@
 
 use alloc::vec::Vec;
 
+use crate::shapes::{Key, Shapes};
 use crate::{Canvas, OpClass, PlacedGlyph, Quality, Rect, RenderStats, Rgb, RgbaImage};
 use tiny_skia::{
     FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap, Point,
@@ -482,6 +495,17 @@ pub struct TinySkiaCanvas {
     /// actually needs `ClipFate::Masked` — scenes whose children stay
     /// inside their containers never pay for it.
     clip_mask: Option<Mask>,
+    /// Flattened-contour memo (#32). **Owned** by the canvas while it draws and
+    /// handed back out at the end ([`Self::take_cache`]) so it can outlive the
+    /// band — which is the whole point: `circle_points`/`rrect_points` are pure
+    /// functions of their arguments, and a banded render re-ran them for every
+    /// band a shape touches (17 at the reference `BAND_H = 16`), every frame,
+    /// at ~1,145 M4 instructions per `cosf` (see [`crate::shapes`]).
+    ///
+    /// Owned rather than borrowed (`&'a mut Shapes`) so `TinySkiaCanvas` keeps
+    /// its plain, lifetime-free type: every existing `new`/`new_with_quality`
+    /// caller is untouched and simply gets a private empty cache.
+    shapes: Shapes,
 }
 
 impl TinySkiaCanvas {
@@ -544,7 +568,83 @@ impl TinySkiaCanvas {
                 h: 0,
             },
             clip_mask: None,
+            shapes: Shapes::new(),
         })
+    }
+
+    /// Move a caller-owned contour memo into this band's canvas (#32). Pair
+    /// with [`Self::take_cache`] before the canvas is consumed — that round
+    /// trip is what lets one cache serve every band and every frame.
+    pub fn install_cache(&mut self, shapes: Shapes) {
+        self.shapes = shapes;
+    }
+
+    /// Take the contour memo back out (leaving the canvas an empty one).
+    pub fn take_cache(&mut self) -> Shapes {
+        core::mem::take(&mut self.shapes)
+    }
+
+    /// [`circle_points`] through the memo (#32) — same arguments, same `f32`
+    /// vertices, bit for bit.
+    fn circle_pts(&mut self, cx: i32, cy: i32, r: f32) -> Vec<(f32, f32)> {
+        self.shapes.fetch(
+            Key::Circle {
+                cx,
+                cy,
+                r: r.to_bits(),
+            },
+            || circle_points(cx, cy, r),
+        )
+    }
+
+    /// [`rrect_points`] through the memo (#32). A radius-0 rect is FOUR
+    /// corners and no trig at all, so it is not worth a cache slot — the
+    /// budget belongs to the arcs.
+    fn rrect_pts(&mut self, x: f32, y: f32, w: f32, h: f32, rad: f32) -> Vec<(f32, f32)> {
+        if rad <= 0.0 {
+            return rrect_points(x, y, w, h, rad);
+        }
+        self.shapes.fetch(
+            Key::Rrect {
+                x: x.to_bits(),
+                y: y.to_bits(),
+                w: w.to_bits(),
+                h: h.to_bits(),
+                rad: rad.to_bits(),
+            },
+            || rrect_points(x, y, w, h, rad),
+        )
+    }
+
+    /// [`rrect_corner_points`] through the memo (#32) — the Fast tier's
+    /// per-corner arc. The four integer cut lines are part of the identity
+    /// (they place the lead-in/lead-out vertices), never elided.
+    #[allow(clippy::too_many_arguments)] // mirrors `rrect_corner_points`
+    fn corner_pts(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        rad: f32,
+        corner: usize,
+        cx_l: i32,
+        cx_r: i32,
+        cy_t: i32,
+        cy_b: i32,
+    ) -> Vec<(f32, f32)> {
+        self.shapes.fetch(
+            Key::Corner {
+                x: x.to_bits(),
+                y: y.to_bits(),
+                w: w.to_bits(),
+                h: h.to_bits(),
+                rad: rad.to_bits(),
+                cuts: [cx_l, cx_r, cy_t, cy_b],
+                corner: corner as u8,
+            },
+            || rrect_corner_points(x, y, w, h, rad, corner, cx_l, cx_r, cy_t, cy_b),
+        )
     }
 
     /// This band's world-space rectangle (what the canvas will deliver) —
@@ -802,9 +902,14 @@ impl TinySkiaCanvas {
         let mut mask = Mask::new(self.pixmap.width(), self.pixmap.height())
             .expect("mask allocation (pixmap dimensions are valid by construction)");
         let mut first = true;
-        for clip in &self.clips {
+        // Indexed, over a COPY of the entry: the memo lookup below needs
+        // `&mut self`, which an iterator borrowing `self.clips` would deny.
+        // `Clip` is `Copy` and the stack is short (nesting depth), so this is
+        // the same work with a friendlier borrow shape.
+        for i in 0..self.clips.len() {
+            let clip = self.clips[i];
             let rad = Self::clamp_radius(clip.rect, clip.radius);
-            let pts = rrect_points(
+            let pts = self.rrect_pts(
                 clip.rect.x as f32,
                 clip.rect.y as f32,
                 clip.rect.w as f32,
@@ -1467,7 +1572,7 @@ impl TinySkiaCanvas {
                 w: (qx1 - qx0) as u32,
                 h: (qy1 - qy0) as u32,
             };
-            let pts = rrect_corner_points(fx, fy, fw, fh, rad, i, cx_l, cx_r, cy_t, cy_b);
+            let pts = self.corner_pts(fx, fy, fw, fh, rad, i, cx_l, cx_r, cy_t, cy_b);
             self.fill(&[&pts], color, alpha, bbox);
             self.count(Self::class_for(alpha), bbox);
         }
@@ -1736,7 +1841,7 @@ impl Canvas for TinySkiaCanvas {
                 return;
             }
         }
-        let pts = rrect_points(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
+        let pts = self.rrect_pts(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
         self.fill(&[&pts], color, alpha, r);
         self.count(Self::class_for(alpha), r);
     }
@@ -1762,14 +1867,14 @@ impl Canvas for TinySkiaCanvas {
         let w2 = width as f32 / 2.0;
         let (x, y, w, h) = (r.x as f32, r.y as f32, r.w as f32, r.h as f32);
         let outer_rad = if rad > 0.0 { rad + w2 } else { 0.0 };
-        let outer = rrect_points(x - w2, y - w2, w + 2.0 * w2, h + 2.0 * w2, outer_rad);
+        let outer = self.rrect_pts(x - w2, y - w2, w + 2.0 * w2, h + 2.0 * w2, outer_rad);
         let iw = w - 2.0 * w2;
         let ih = h - 2.0 * w2;
         if iw <= 0.0 || ih <= 0.0 {
             // Stroke swallows the interior — it's a fill of the outer shape.
             self.fill(&[&outer], color, alpha, bbox);
         } else {
-            let mut inner = rrect_points(x + w2, y + w2, iw, ih, (rad - w2).max(0.0));
+            let mut inner = self.rrect_pts(x + w2, y + w2, iw, ih, (rad - w2).max(0.0));
             inner.reverse(); // opposite winding cuts the hole
             // A stroke inks only its own band, never the interior: carry the
             // four strips, not the bbox. On a 456x44 frame border that is
@@ -1811,7 +1916,7 @@ impl Canvas for TinySkiaCanvas {
             w: d,
             h: d,
         };
-        let pts = circle_points(cx, cy, radius as f32);
+        let pts = self.circle_pts(cx, cy, radius as f32);
         self.fill(&[&pts], color, alpha, bbox);
         self.count(Self::class_for(alpha), bbox);
     }
@@ -1838,11 +1943,11 @@ impl Canvas for TinySkiaCanvas {
         let w2 = width as f32 / 2.0;
         let outer_r = radius as f32 + w2;
         let inner_r = radius as f32 - w2;
-        let outer = circle_points(cx, cy, outer_r);
+        let outer = self.circle_pts(cx, cy, outer_r);
         if inner_r <= 0.0 {
             self.fill(&[&outer], color, alpha, bbox);
         } else {
-            let mut inner = circle_points(cx, cy, inner_r);
+            let mut inner = self.circle_pts(cx, cy, inner_r);
             inner.reverse();
             // The annulus never inks its hole. The largest axis-aligned square
             // inside a circle of radius `inner_r` has half-side inner_r/sqrt2;
@@ -1930,7 +2035,7 @@ impl Canvas for TinySkiaCanvas {
         if fate == ClipFate::Skip {
             return;
         }
-        let pts = rrect_points(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
+        let pts = self.rrect_pts(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
         let Some(path) = self.path_from(&[&pts]) else {
             return;
         };

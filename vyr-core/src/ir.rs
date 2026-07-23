@@ -147,7 +147,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::{Assets, Canvas, Fonts, Quality, Rect, RenderError, RenderStats, Rgb, TinySkiaCanvas};
+use crate::{
+    Assets, Canvas, Fonts, Quality, Rect, RenderError, RenderStats, Rgb, Shapes, TinySkiaCanvas,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct Node {
@@ -218,8 +220,43 @@ impl Request {
         stride: usize,
         quality: Quality,
     ) -> Result<RenderStats, RenderError> {
+        // A throwaway memo: correct, and exactly as expensive as before #32.
+        // Callers that render more than one band (i.e. every real one) should
+        // hold their own — see [`Self::render_with_shapes`].
+        let mut shapes = Shapes::with_budget(0);
+        self.render_with_shapes(fonts, assets, &mut shapes, area, buf, stride, quality)
+    }
+
+    /// [`Request::render_with_quality`] with a CALLER-OWNED flattened-contour
+    /// memo (#32) — the bottom rung of the entry-point ladder, and the one a
+    /// banded renderer wants.
+    ///
+    /// `shapes` is to curve flattening what [`Fonts`] is to glyph rasterization
+    /// and [`Assets`] is to image decode: hold ONE across the band loop (and
+    /// across frames) and each distinct shape is flattened exactly once instead
+    /// of once per band per frame. On the M4 that flattening is the single
+    /// largest identified item in the `Exact` frame — `libm`'s f32 trig
+    /// evaluates in f64 and the M4F FPU is single-precision, so every vertex
+    /// costs soft-float library calls (see [`crate::shapes`] for the numbers).
+    ///
+    /// It is a **pure memo**: identical arguments in, bit-identical `f32`
+    /// vertices out, therefore identical polygons and identical pixels. Passing
+    /// a long-lived cache can never change what is drawn — `tests/shapes.rs`
+    /// asserts exactly that, against a `Shapes::with_budget(0)` render.
+    #[allow(clippy::too_many_arguments)] // one more caller-owned cache, like fonts/assets
+    pub fn render_with_shapes(
+        &self,
+        fonts: &mut Fonts,
+        assets: &Assets,
+        shapes: &mut Shapes,
+        area: Rect,
+        buf: &mut [u8],
+        stride: usize,
+        quality: Quality,
+    ) -> Result<RenderStats, RenderError> {
         let mut canvas = TinySkiaCanvas::new_with_quality(area, quality)
             .ok_or_else(|| RenderError::BadIr("pixmap allocation failed".into()))?;
+        canvas.install_cache(core::mem::take(shapes));
         // Screen backdrop: the root's background, else the near-white paper
         // default (see module docs) — painted across the whole screen.
         let backdrop = self.root.color("background").unwrap_or(Rgb {
@@ -234,9 +271,17 @@ impl Request {
             h: self.h,
         };
         canvas.fill_rrect(screen, 0, backdrop, 0xFF);
+        let mut walked = Ok(());
         for child in &self.root.children {
-            walk(child, screen, &mut canvas, fonts, assets, None)?;
+            walked = walk(child, screen, &mut canvas, fonts, assets, None);
+            if walked.is_err() {
+                break;
+            }
         }
+        // Hand the memo back BEFORE the honest-failure return: a hard error
+        // must not silently cost the caller its cache.
+        *shapes = canvas.take_cache();
+        walked?;
         let mut stats = canvas.finish_into_rgb888(buf, stride);
         stats.glyphs_rasterized = fonts.rasterized();
         stats.glyph_cache_entries = fonts.cache_entries();

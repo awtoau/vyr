@@ -21,10 +21,12 @@ pub mod demo;
 pub mod dirty;
 pub mod ir;
 mod painter;
+pub mod shapes;
 pub mod text;
 pub use assets::{Assets, RgbaImage};
 pub use dirty::dirty_rects;
 pub use painter::TinySkiaCanvas;
+pub use shapes::Shapes;
 pub use text::{Fonts, GlyphMask, PlacedGlyph};
 
 /// Integer pixel rectangle. `x`/`y` may be negative (a band fully above or
@@ -311,6 +313,25 @@ pub fn render_with_quality(
     quality: Quality,
 ) -> Result<RenderStats, RenderError> {
     ir::Request::parse(ir_json)?.render_with_quality(fonts, assets, area, buf, stride, quality)
+}
+
+/// [`render_with_quality`] with a caller-owned flattened-contour memo (#32) —
+/// see [`ir::Request::render_with_shapes`], which this forwards to. A pure
+/// memo: same pixels, one flattening per distinct shape instead of one per
+/// band per frame.
+#[allow(clippy::too_many_arguments)] // one more caller-owned cache, like fonts/assets
+pub fn render_with_shapes(
+    ir_json: &str,
+    fonts: &mut Fonts,
+    assets: &Assets,
+    shapes: &mut Shapes,
+    area: Rect,
+    buf: &mut [u8],
+    stride: usize,
+    quality: Quality,
+) -> Result<RenderStats, RenderError> {
+    ir::Request::parse(ir_json)?
+        .render_with_shapes(fonts, assets, shapes, area, buf, stride, quality)
 }
 
 /// [`render_with`] with an empty asset registry — convenience for image-free

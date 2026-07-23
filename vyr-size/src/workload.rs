@@ -24,7 +24,7 @@ use alloc::format;
 #[cfg(not(target_os = "none"))]
 use alloc::vec;
 
-use vyr_core::{Assets, Fonts, Quality, Rect, RenderError, RenderStats};
+use vyr_core::{Assets, Fonts, Quality, Rect, RenderError, RenderStats, Shapes};
 
 use crate::opaque;
 
@@ -133,6 +133,7 @@ fn render_frame_banded(
     req: &vyr_core::ir::Request,
     fonts: &mut Fonts,
     assets: &Assets,
+    shapes: &mut Shapes,
     band_buf: &mut [u8],
     quality: Quality,
     report: Option<(&mut dyn FnMut(&str), &dyn Fn() -> (usize, usize))>,
@@ -153,8 +154,20 @@ fn render_frame_banded(
             h,
         };
         let len = stride * h as usize;
-        stats =
-            req.render_with_quality(fonts, assets, band, &mut band_buf[..len], stride, quality)?;
+        // #32: `shapes` is held OUTSIDE this loop (and outside the frame
+        // loop), so each distinct contour is flattened once for the life of
+        // the run instead of once per band per frame. On this part that is
+        // the difference between paying `libm`'s f64-in-software trig 17
+        // times over and paying it once.
+        stats = req.render_with_shapes(
+            fonts,
+            assets,
+            shapes,
+            band,
+            &mut band_buf[..len],
+            stride,
+            quality,
+        )?;
         pixels += stats.pixels_written;
         fastpath += stats.fastpath_pixels;
         // black_box: the band bytes must be materialized before hashing.
@@ -221,10 +234,17 @@ pub fn run(
     let req = vyr_core::ir::Request::parse(opaque(FIXTURE_IR))?;
     phase(emit, heap, "parse");
 
+    // #32: ONE contour memo for the whole run — the curve flattening a banded
+    // renderer would otherwise repeat for every band it touches, every frame.
+    // Its heap cost is inside the phase/peak lines below, deliberately: a cache
+    // that did not fit the 122,880 B arena would be a regression, not a win.
+    let mut shapes = Shapes::new();
+
     let (hash, pixels, stats) = render_frame_banded(
         &req,
         &mut fonts,
         &assets,
+        &mut shapes,
         band_buf,
         quality,
         Some((&mut *emit, heap)),
@@ -251,6 +271,17 @@ pub fn run(
         "INFO  [vyr-size] glyph cache: rasterized={} entries={} bytes={}",
         stats.glyphs_rasterized, stats.glyph_cache_entries, stats.glyph_cache_bytes
     ));
+    // #32 honesty: what the contour memo actually held and how often it hit.
+    // `overflow` MUST be 0 — a non-zero value means the scene outgrew the
+    // budget and part of the frame is still re-flattening per band.
+    emit(&format!(
+        "INFO  [vyr-size] contour memo: entries={} bytes={} hits={} misses={} overflow={}",
+        shapes.cache_entries(),
+        shapes.cache_bytes(),
+        shapes.hits(),
+        shapes.misses(),
+        shapes.overflow()
+    ));
 
     if let Some(clock) = clock_cs {
         // Warmed steady state: glyph cache is full, so these frames are the
@@ -261,8 +292,15 @@ pub fn run(
         const TIMED_FRAMES: u32 = 20;
         let t0 = clock();
         for _ in 0..TIMED_FRAMES {
-            let (h2, _, _) =
-                render_frame_banded(&req, &mut fonts, &assets, band_buf, quality, None)?;
+            let (h2, _, _) = render_frame_banded(
+                &req,
+                &mut fonts,
+                &assets,
+                &mut shapes,
+                band_buf,
+                quality,
+                None,
+            )?;
             if h2 != hash {
                 emit(&format!(
                     "ERROR [vyr-size] warmed frame hash {h2:#018x} != first {hash:#018x}"
