@@ -450,6 +450,21 @@ impl Node {
         ((v - min) / (max - min)).clamp(0.0, 1.0)
     }
 
+    /// Parse a bool-ish attr used by chart tuning knobs.
+    /// Accepted true values: true/1/yes/on. False: false/0/no/off.
+    fn bool_attr(&self, key: &str, default: bool) -> Result<bool, RenderError> {
+        let Some(v) = self.str_attr(key) else {
+            return Ok(default);
+        };
+        match v.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(true),
+            "false" | "0" | "no" | "off" => Ok(false),
+            other => Err(RenderError::BadIr(format!(
+                "{key} {other:?} is not a boolean (accepted: true/false/1/0/yes/no/on/off)"
+            ))),
+        }
+    }
+
     /// The chart series: `points` parsed as a CSV of numbers (the single
     /// y-series). Empty tokens (a trailing comma, an empty string) are
     /// skipped; a non-empty non-numeric token is junk IR — a hard error, not
@@ -477,6 +492,25 @@ impl Node {
         }
         Ok(out)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChartDecimate {
+    None,
+    MinMax,
+}
+
+#[derive(Debug)]
+struct ChartParams {
+    bar: bool,
+    rmin: f32,
+    rmax: f32,
+    pts: Vec<f32>,
+    decimate: ChartDecimate,
+    show_markers: bool,
+    show_background: bool,
+    show_grid: bool,
+    show_frame: bool,
 }
 
 /// Box-family names: plain containers/shapes — IR-authoritative chrome only.
@@ -1042,14 +1076,47 @@ fn paint_box(n: &Node, r: Rect, c: &mut TinySkiaCanvas) {
 /// vy_chart parse + validation, shared by the paint and the band-invisible
 /// validation arm so a junk `points`/`chart_type`/`range` errors in EVERY band
 /// (banded and full-frame agree on errors, like every other widget). Returns
-/// `(bar?, range_min, range_max, series)`.
-fn chart_params(n: &Node) -> Result<(bool, f32, f32, Vec<f32>), RenderError> {
+/// typed parameters including optional scope-style tuning attrs.
+fn chart_params(n: &Node) -> Result<ChartParams, RenderError> {
     let bar = match n.str_attr("chart_type").as_deref() {
         None | Some("line") => false,
         Some("bar") => true,
         Some(other) => {
             return Err(RenderError::BadIr(format!(
                 "vy_chart chart_type {other:?} is not line|bar"
+            )));
+        }
+    };
+    let scope_mode = match n
+        .str_attr("mode")
+        .or_else(|| n.str_attr("render_mode"))
+        .map(|s| s.trim().to_ascii_lowercase())
+    {
+        None => false,
+        Some(m) if m == "chart" => false,
+        Some(m) if m == "scope" => true,
+        Some(other) => {
+            return Err(RenderError::BadIr(format!(
+                "vy_chart mode {other:?} is not chart|scope"
+            )));
+        }
+    };
+    let decimate = match n
+        .str_attr("decimate")
+        .map(|s| s.trim().to_ascii_lowercase())
+    {
+        None => {
+            if scope_mode {
+                ChartDecimate::MinMax
+            } else {
+                ChartDecimate::None
+            }
+        }
+        Some(m) if m == "none" => ChartDecimate::None,
+        Some(m) if m == "minmax" => ChartDecimate::MinMax,
+        Some(other) => {
+            return Err(RenderError::BadIr(format!(
+                "vy_chart decimate {other:?} is not none|minmax"
             )));
         }
     };
@@ -1061,7 +1128,19 @@ fn chart_params(n: &Node) -> Result<(bool, f32, f32, Vec<f32>), RenderError> {
             "vy_chart range_max ({rmax}) must exceed range_min ({rmin})"
         )));
     }
-    Ok((bar, rmin, rmax, n.chart_points()?))
+    Ok(ChartParams {
+        bar,
+        rmin,
+        rmax,
+        pts: n.chart_points()?,
+        decimate,
+        // Scope defaults: markers off, visual chrome optional; classic chart
+        // defaults preserve existing behaviour.
+        show_markers: n.bool_attr("show_markers", !scope_mode)?,
+        show_background: n.bool_attr("show_background", !scope_mode)?,
+        show_grid: n.bool_attr("show_grid", true)?,
+        show_frame: n.bool_attr("show_frame", true)?,
+    })
 }
 
 /// vy_chart (F4 composite) — a single-series line/bar chart painted from the
@@ -1082,15 +1161,18 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
     if w == 0 || h == 0 {
         return Ok(());
     }
-    let (bar, rmin, rmax, pts) = chart_params(n)?;
+    let params = chart_params(n)?;
 
-    // Plot background under everything.
-    c.fill_rrect(
-        r,
-        0,
-        n.color("background").unwrap_or(CHART_BG),
-        n.fill_alpha(),
-    );
+    // Plot background under everything (optional so a trace can overlay
+    // a pre-rendered graticule image/card beneath this widget).
+    if params.show_background {
+        c.fill_rrect(
+            r,
+            0,
+            n.color("background").unwrap_or(CHART_BG),
+            n.fill_alpha(),
+        );
+    }
 
     // Series stroke + marker radius; the interior is inset by the marker
     // radius (+1 to clear the 1 px frame) so points/strokes sit fully inside.
@@ -1107,41 +1189,43 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
     let ph = (h as i32 - 2 * pad).max(1);
 
     // Grid — evenly-spaced interior div-lines, crisp axis-aligned fill-rects.
-    let vdiv = n.u32_attr("div_count_x", 0);
-    for i in 1..=vdiv {
-        let gx = px0 + (i as i32 * (pw - 1)) / (vdiv as i32 + 1);
-        c.fill_rrect(
-            Rect {
-                x: gx,
-                y: py0,
-                w: 1,
-                h: ph as u32,
-            },
-            0,
-            GRID,
-            0xFF,
-        );
-    }
-    let hdiv = n.u32_attr("div_count_y", 0);
-    for i in 1..=hdiv {
-        let gy = py0 + (i as i32 * (ph - 1)) / (hdiv as i32 + 1);
-        c.fill_rrect(
-            Rect {
-                x: px0,
-                y: gy,
-                w: pw as u32,
-                h: 1,
-            },
-            0,
-            GRID,
-            0xFF,
-        );
+    if params.show_grid {
+        let vdiv = n.u32_attr("div_count_x", 0);
+        for i in 1..=vdiv {
+            let gx = px0 + (i as i32 * (pw - 1)) / (vdiv as i32 + 1);
+            c.fill_rrect(
+                Rect {
+                    x: gx,
+                    y: py0,
+                    w: 1,
+                    h: ph as u32,
+                },
+                0,
+                GRID,
+                0xFF,
+            );
+        }
+        let hdiv = n.u32_attr("div_count_y", 0);
+        for i in 1..=hdiv {
+            let gy = py0 + (i as i32 * (ph - 1)) / (hdiv as i32 + 1);
+            c.fill_rrect(
+                Rect {
+                    x: px0,
+                    y: gy,
+                    w: pw as u32,
+                    h: 1,
+                },
+                0,
+                GRID,
+                0xFF,
+            );
+        }
     }
 
     // The series.
-    if !pts.is_empty() {
-        let span = rmax - rmin;
-        let np = pts.len() as i32;
+    if !params.pts.is_empty() {
+        let span = params.rmax - params.rmin;
+        let np = params.pts.len() as i32;
         let map_x = |i: i32| -> i32 {
             if np == 1 {
                 px0 + (pw - 1) / 2
@@ -1150,16 +1234,16 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
             }
         };
         let map_y = |v: f32| -> i32 {
-            let t = ((v - rmin) / span).clamp(0.0, 1.0);
+            let t = ((v - params.rmin) / span).clamp(0.0, 1.0);
             // Round-half-up by integer truncation (t·(ph−1) ≥ 0) — no libm
             // `round`, deterministic across ISAs like the rest of the core.
             py0 + (ph - 1) - (t * (ph as f32 - 1.0) + 0.5) as i32
         };
-        if bar {
+        if params.bar {
             let base = py0 + ph - 1;
             let slot = (pw / np).max(1);
             let bw = (slot * 6 / 10).max(1) as u32;
-            for (i, &v) in pts.iter().enumerate() {
+            for (i, &v) in params.pts.iter().enumerate() {
                 let cx = map_x(i as i32);
                 let top = map_y(v);
                 let bh = (base - top + 1).max(0) as u32;
@@ -1178,46 +1262,94 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
                 }
             }
         } else {
-            // Polyline first, then a marker disc per point on top (clean joints).
-            let mut prev: Option<(i32, i32)> = None;
-            for (i, &v) in pts.iter().enumerate() {
-                let p = (map_x(i as i32), map_y(v));
-                if let Some((ax, ay)) = prev {
-                    c.line(ax, ay, p.0, p.1, lw, col, 0xFF);
+            let decimated = matches!(params.decimate, ChartDecimate::MinMax) && np > pw;
+            if decimated {
+                // Scope-style decimation: fold many samples into one x-column
+                // and draw min..max as a single vertical span. This keeps the
+                // per-frame series cost bounded by plot width instead of sample
+                // count while preserving extrema (key scope signal detail).
+                let cols = pw as usize;
+                let mut min_y = alloc::vec![i32::MAX; cols];
+                let mut max_y = alloc::vec![i32::MIN; cols];
+                let mut seen = alloc::vec![false; cols];
+                for (i, &v) in params.pts.iter().enumerate() {
+                    let cx = map_x(i as i32);
+                    let col_i = (cx - px0).clamp(0, pw - 1) as usize;
+                    let yy = map_y(v);
+                    if !seen[col_i] {
+                        min_y[col_i] = yy;
+                        max_y[col_i] = yy;
+                        seen[col_i] = true;
+                    } else {
+                        min_y[col_i] = min_y[col_i].min(yy);
+                        max_y[col_i] = max_y[col_i].max(yy);
+                    }
                 }
-                prev = Some(p);
+                for col_i in 0..cols {
+                    if !seen[col_i] {
+                        continue;
+                    }
+                    let xcol = px0 + col_i as i32;
+                    let y0 = min_y[col_i].min(max_y[col_i]);
+                    let y1 = min_y[col_i].max(max_y[col_i]);
+                    c.fill_rrect(
+                        Rect {
+                            x: xcol,
+                            y: y0,
+                            w: 1,
+                            h: (y1 - y0 + 1) as u32,
+                        },
+                        0,
+                        col,
+                        0xFF,
+                    );
+                }
+            } else {
+                // Polyline first, then a marker disc per point on top (clean joints).
+                let mut prev: Option<(i32, i32)> = None;
+                for (i, &v) in params.pts.iter().enumerate() {
+                    let p = (map_x(i as i32), map_y(v));
+                    if let Some((ax, ay)) = prev {
+                        c.line(ax, ay, p.0, p.1, lw, col, 0xFF);
+                    }
+                    prev = Some(p);
+                }
             }
-            for (i, &v) in pts.iter().enumerate() {
-                c.disc(map_x(i as i32), map_y(v), mr as u32, col, 0xFF);
+            if params.show_markers && !decimated {
+                for (i, &v) in params.pts.iter().enumerate() {
+                    c.disc(map_x(i as i32), map_y(v), mr as u32, col, 0xFF);
+                }
             }
         }
     }
 
     // The 1 px frame on top — four crisp axis-aligned edge-rects.
-    c.fill_rrect(Rect { x, y, w, h: 1 }, 0, CHART_FRAME, 0xFF);
-    c.fill_rrect(
-        Rect {
-            x,
-            y: y + h as i32 - 1,
-            w,
-            h: 1,
-        },
-        0,
-        CHART_FRAME,
-        0xFF,
-    );
-    c.fill_rrect(Rect { x, y, w: 1, h }, 0, CHART_FRAME, 0xFF);
-    c.fill_rrect(
-        Rect {
-            x: x + w as i32 - 1,
-            y,
-            w: 1,
-            h,
-        },
-        0,
-        CHART_FRAME,
-        0xFF,
-    );
+    if params.show_frame {
+        c.fill_rrect(Rect { x, y, w, h: 1 }, 0, CHART_FRAME, 0xFF);
+        c.fill_rrect(
+            Rect {
+                x,
+                y: y + h as i32 - 1,
+                w,
+                h: 1,
+            },
+            0,
+            CHART_FRAME,
+            0xFF,
+        );
+        c.fill_rrect(Rect { x, y, w: 1, h }, 0, CHART_FRAME, 0xFF);
+        c.fill_rrect(
+            Rect {
+                x: x + w as i32 - 1,
+                y,
+                w: 1,
+                h,
+            },
+            0,
+            CHART_FRAME,
+            0xFF,
+        );
+    }
     Ok(())
 }
 

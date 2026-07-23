@@ -26,6 +26,7 @@
 //!
 //! Run in RELEASE (dev.py bench does) — debug numbers are not baselines.
 
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use vyr_core::demo::{
@@ -47,6 +48,8 @@ const ROUNDS: usize = 7;
 const ITERS: u32 = 50;
 
 const GUTTER: u32 = 8; // mirrors painter::GUTTER (raster-area normalizer)
+const SCOPE_W: u32 = 320;
+const SCOPE_H: u32 = 240;
 
 fn timestamp() -> String {
     let now = std::time::SystemTime::now()
@@ -201,10 +204,10 @@ const BENCH_TEXT: &str = "Vyr glyph run 0123456789";
 const BENCH_TEXT_PX: u32 = 14;
 
 fn bench_fonts() -> Fonts {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fonts/roboto.ttf");
-    let bytes = std::fs::read(&path).expect("vendored fonts/roboto.ttf");
     let mut fonts = Fonts::new();
-    fonts.register("roboto", bytes).expect("roboto parses");
+    fonts
+        .register("roboto", include_bytes!("../../fonts/roboto.ttf").to_vec())
+        .expect("roboto parses");
     fonts
 }
 
@@ -291,12 +294,11 @@ fn bench_blit_image() -> f64 {
 /// (what `tests/image_golden.rs` renders — golden and baseline measure the
 /// SAME pixels).
 fn bench_assets() -> Assets {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../vyr-core/tests/assets/checker-24.png");
-    let file = std::fs::File::open(&path).expect("committed checker-24.png");
-    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
-        .read_info()
-        .expect("png header");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(include_bytes!(
+        "../../vyr-core/tests/assets/checker-24.png"
+    )))
+    .read_info()
+    .expect("png header");
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).expect("png decode");
     buf.truncate(info.buffer_size());
@@ -504,6 +506,95 @@ fn bench_ir_scene_exact() -> f64 {
 
 fn bench_ir_scene_draft() -> f64 {
     render_demo_quality(Quality::Draft)
+}
+
+// --- Scope benches ---------------------------------------------------------
+// Dedicated dense scope-like workload to compare decimation modes in the same
+// renderer path and quality tier.
+
+fn scope_points_csv() -> &'static str {
+    static CSV: OnceLock<String> = OnceLock::new();
+    CSV.get_or_init(|| {
+        let mut vals = Vec::with_capacity(2400);
+        for i in 0..2400i32 {
+            let base = (i * 37 + i / 7) % 101;
+            let spike = if i % 251 < 3 { 35 } else { 0 };
+            let dip = if i % 389 < 2 { -28 } else { 0 };
+            vals.push((base + spike + dip).clamp(0, 100).to_string());
+        }
+        vals.join(",")
+    })
+}
+
+fn scope_ir(decimate: &str) -> String {
+    format!(
+        r##"{{"w":320,"h":240,"root":{{"name":"view","attrs":{{"background":"#0B0F14"}},"children":[
+          {{"name":"vy_frame","attrs":{{"x":"6","y":"6","width":"308","height":"228",
+            "background":"#0F1620","border_width":"1","border_color":"#2A3E55","radius":"0"}}}},
+          {{"name":"vy_chart","attrs":{{"x":"10","y":"10","width":"300","height":"220",
+            "mode":"scope","decimate":"{}","show_background":"0","show_grid":"1","show_frame":"1",
+            "show_markers":"0","div_count_x":"9","div_count_y":"7","line_width":"1",
+            "line_color":"#65FF9B","range_min":"0","range_max":"100","points":"{}"}}}}
+        ]}}}}"##,
+        decimate,
+        scope_points_csv()
+    )
+}
+
+fn scope_ir_none() -> &'static str {
+    static IR: OnceLock<String> = OnceLock::new();
+    IR.get_or_init(|| scope_ir("none"))
+}
+
+fn scope_ir_minmax() -> &'static str {
+    static IR: OnceLock<String> = OnceLock::new();
+    IR.get_or_init(|| scope_ir("minmax"))
+}
+
+fn bench_scope_scene_draft_none() -> f64 {
+    let mut fonts = Fonts::new();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (SCOPE_W * SCOPE_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with_quality(
+            scope_ir_none(),
+            &mut fonts,
+            &assets,
+            Rect {
+                x: 0,
+                y: 0,
+                w: SCOPE_W,
+                h: SCOPE_H,
+            },
+            &mut buf,
+            (SCOPE_W * 3) as usize,
+            Quality::Draft,
+        )
+        .expect("scope none renders");
+    })
+}
+
+fn bench_scope_scene_draft_minmax() -> f64 {
+    let mut fonts = Fonts::new();
+    let assets = Assets::new();
+    let mut buf = vec![0u8; (SCOPE_W * SCOPE_H * 3) as usize];
+    measure(|| {
+        vyr_core::render_with_quality(
+            scope_ir_minmax(),
+            &mut fonts,
+            &assets,
+            Rect {
+                x: 0,
+                y: 0,
+                w: SCOPE_W,
+                h: SCOPE_H,
+            },
+            &mut buf,
+            (SCOPE_W * 3) as usize,
+            Quality::Draft,
+        )
+        .expect("scope minmax renders");
+    })
 }
 
 /// One opaque radius-0 rect at Draft — the pure integer span-fill cost, the
@@ -733,6 +824,16 @@ fn benches() -> Vec<Bench> {
             pixels: panel_dirty_pixels(),
             run: bench_panel_dirty_incr,
         },
+        Bench {
+            name: "scene/scope_full_none_draft",
+            pixels: (SCOPE_W * SCOPE_H) as f64,
+            run: bench_scope_scene_draft_none,
+        },
+        Bench {
+            name: "scene/scope_full_minmax_draft",
+            pixels: (SCOPE_W * SCOPE_H) as f64,
+            run: bench_scope_scene_draft_minmax,
+        },
     ]
 }
 
@@ -856,6 +957,16 @@ fn main() -> std::process::ExitCode {
              = {:.2}x faster (v3 — all ops integer: rects/rounded fills+strokes/curves/gradient, \
              gutter-off, 100% fast-path, no tiny-skia)",
             se / sd
+        ));
+    }
+    if let (Some(sn), Some(sm)) = (
+        raw_ns.get("scene/scope_full_none_draft"),
+        raw_ns.get("scene/scope_full_minmax_draft"),
+    ) {
+        let speedup = sn / sm;
+        log(&format!(
+            "scope decimation A/B (Draft, dense 320x240 scope): none {:.0} ns vs minmax {:.0} ns = {:.2}x faster with minmax",
+            sn, sm, speedup
         ));
     }
     log_draft_fidelity();
