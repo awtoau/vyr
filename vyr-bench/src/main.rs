@@ -33,7 +33,9 @@ use vyr_core::demo::{
     CLIP_FLAT_IR, CLIP_IR, DEMO_H, DEMO_IR, DEMO_W, IMAGE_ASSET, IMAGE_IR, PANEL_NEXT_IR,
     PANEL_PREV_IR, TEXT_IR, demo_scene,
 };
-use vyr_core::{Assets, Canvas, Fonts, Quality, Rect, Rgb, RgbaImage, TinySkiaCanvas, dirty_rects};
+use vyr_core::{
+    Assets, Canvas, Fonts, Quality, Rect, Rgb, RgbaImage, Shapes, TinySkiaCanvas, dirty_rects,
+};
 
 /// A check fails when a bench exceeds baseline × this. 1.5 = real regressions
 /// fire, day-to-day desktop noise (a few %) does not.
@@ -555,6 +557,66 @@ fn bench_panel_draft() -> f64 {
     render_panel_quality(Quality::Draft)
 }
 
+/// Band height for the #32 memo benches — the M4 workload's own
+/// (`vyr_size::workload::BAND_H`), so the host number is measuring the same
+/// repetition factor the MCU pays.
+const MEMO_BAND_H: u32 = 16;
+
+/// **#32: the flattened-contour memo, priced.** One 480x320 panel frame as
+/// 16-row bands, either carrying ONE `Shapes` across every band (`memo`) or
+/// handing each band a zero-budget one — which admits nothing and is therefore
+/// bit-for-bit the pre-#32 painter.
+///
+/// The host is the WEAK case on purpose: x86-64 has hardware f64, so `cosf`
+/// costs a few cycles here and ~1,145 instructions on an M4F, where `libm`
+/// promotes to f64 and the FPU is single-precision. Whatever this pair shows
+/// on a desktop, the MCU shows several times more — which is exactly why the
+/// bill went unnoticed until it was measured on the part
+/// (`docs/measurements/lvgl-gap.md` §2.2). Keeping both here means a future
+/// change that quietly stops the memo hitting shows up on the machine the
+/// gate runs on.
+fn render_panel_banded(memo: bool) -> f64 {
+    let mut fonts = bench_fonts();
+    let assets = Assets::new();
+    let stride = (PANEL_W * 3) as usize;
+    let mut buf = vec![0u8; stride * PANEL_H as usize];
+    let mut carried = Shapes::new();
+    measure(|| {
+        let mut y = 0;
+        while y < PANEL_H {
+            let h = MEMO_BAND_H.min(PANEL_H - y);
+            let band = &mut buf[y as usize * stride..(y + h) as usize * stride];
+            let mut fresh = Shapes::with_budget(0);
+            let shapes = if memo { &mut carried } else { &mut fresh };
+            vyr_core::render_with_shapes(
+                PANEL_NEXT_IR,
+                &mut fonts,
+                &assets,
+                shapes,
+                Rect {
+                    x: 0,
+                    y: y as i32,
+                    w: PANEL_W,
+                    h,
+                },
+                band,
+                stride,
+                Quality::Exact,
+            )
+            .expect("panel band renders");
+            y += h;
+        }
+    })
+}
+
+fn bench_panel_banded_memo() -> f64 {
+    render_panel_banded(true)
+}
+
+fn bench_panel_banded_plain() -> f64 {
+    render_panel_banded(false)
+}
+
 /// The gauge ring — the #27 curve — at one tier, on its own band canvas.
 /// `prim/ring_{exact,fast,draft}` is the per-op price list for the tier
 /// decision: Fast must equal Exact here (it routes the curve to the same
@@ -944,6 +1006,19 @@ fn benches() -> Vec<Bench> {
             pixels: (PANEL_W * PANEL_H) as f64,
             run: bench_panel_draft,
         },
+        // #32: the contour memo, both sides of it. `plain` is the pre-#32
+        // painter (zero-budget cache ⇒ re-flatten every band), `memo` is one
+        // cache carried across the 20 bands.
+        Bench {
+            name: "scene/panel_banded_plain",
+            pixels: (PANEL_W * PANEL_H) as f64,
+            run: bench_panel_banded_plain,
+        },
+        Bench {
+            name: "scene/panel_banded_memo",
+            pixels: (PANEL_W * PANEL_H) as f64,
+            run: bench_panel_banded_memo,
+        },
         Bench {
             name: "scene/ir_full_fast",
             pixels: (DEMO_W * DEMO_H) as f64,
@@ -1208,6 +1283,19 @@ fn main() -> std::process::ExitCode {
         log(&format!(
             "scope decimation A/B (Draft, dense 320x240 scope): none {:.0} ns vs minmax {:.0} ns = {:.2}x faster with minmax",
             sn, sm, speedup
+        ));
+    }
+    if let (Some(plain), Some(memo)) = (
+        raw_ns.get("scene/panel_banded_plain"),
+        raw_ns.get("scene/panel_banded_memo"),
+    ) {
+        log(&format!(
+            "#32 contour memo (PANEL 480x320 Exact, {MEMO_BAND_H}-row bands): \
+             re-flatten {plain:.0} ns vs memoised {memo:.0} ns = {:.2}x, {:+.1}% of the frame. \
+             Host only — x86-64 has hardware f64; on the M4F the same memo is worth \
+             13.1 M of 64.4 M insns/frame (20.3%) because libm computes f32 trig in f64",
+            plain / memo,
+            100.0 * (memo - plain) / plain,
         ));
     }
     log_draft_fidelity();

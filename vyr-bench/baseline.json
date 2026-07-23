@@ -19,6 +19,8 @@
   "scene/ir_full_draft": 1.0063305555555555,
   "scene/ir_full_exact": 5.674475,
   "scene/ir_full_fast": 6.7483208333333335,
+  "scene/panel_banded_memo": 4.7794,
+  "scene/panel_banded_plain": 5.2077,
   "scene/panel_dirty_incr": 15.488739583333334,
   "scene/panel_draft": 0.3863510416666667,
   "scene/panel_exact": 1.585123828125,
