@@ -68,6 +68,64 @@
 //! whole point of DMA here: the CPU currently spends ~512 of every 513 cycles
 //! per pixel waiting on a flag, and a render that happens inside that wait is
 //! a render that costs nothing.
+//!
+//! # The bring-up self-qualifier (#49): the read-back IS the specification
+//!
+//! Everything above is a *measurement* — numbers a human reads. [`qualify`]
+//! turns it into a *behaviour*: at bring-up, before the leg's real flush, it
+//! decides the rate THIS panel is actually flushed at, from the read-back and
+//! nothing else. The framing it stands on:
+//!
+//! * **No datasheet, so the read-back is the qualifier.** These are clone
+//!   ILI9341s with no authoritative timing spec — ST's "10 MHz write max" is
+//!   the number ST validated for ST's silicon, not a contract for whatever
+//!   fab produced this glass. A hardcoded rate is therefore either needlessly
+//!   slow or a gamble. The controller reading its own GRAM back bit-exact is
+//!   the only spec these parts have, and it is a MACHINE verdict — no human
+//!   glancing at a plausible-looking picture is in the loop.
+//! * **Per-unit, not per-batch.** Clone variance is worse than datasheet
+//!   parts: same marking, different fabs. A unit that qualifies at 45 MHz says
+//!   nothing about the next reel, so the verdict belongs at bring-up on the
+//!   actual hardware and is never baked into an image flashed elsewhere.
+//! * **The margin, since there is nothing to margin against.** [`qualify`]
+//!   ships **one rung slower than the fastest bit-exact rung**, floored at
+//!   /16. The rungs are octave-spaced (45, 22.5, 11.25, 5.625 MHz), so one
+//!   rung down is a full HALVING of the bit period — a setup/hold guardband an
+//!   order of magnitude past the few-percent a datasheet part would use, which
+//!   is the right size of margin precisely because there is no datasheet.
+//!   Chosen over "require two consecutive passing rungs": with an octave
+//!   ladder and a monotone pass/fail cliff, "two consecutive passes, ship the
+//!   slower" and "one rung slower than the fastest pass" are the SAME rate
+//!   whenever the passing set is contiguous (the physical case). They differ
+//!   only when a fast rung passes while a slower one fails — a non-monotone
+//!   result that means the instrument, not the rate, is untrustworthy — and
+//!   [`qualify`] treats exactly that as INCONCLUSIVE and drops to the /16
+//!   floor rather than trusting either rung. So the contiguity check captures
+//!   the strength of the two-consecutive policy, and the one-rung-slower step
+//!   supplies a margin two-consecutive on its own does not.
+//! * **Fail-safe.** If even /16 does not read back clean, that is a wiring or
+//!   panel fault, not a rate the qualifier can outrun. It reports the fault
+//!   loudly and does NOT accelerate — it never silently picks a rate that also
+//!   fails.
+//! * **Not a temperature guarantee, and not persisted.** A rate qualified cold
+//!   may fail hot; a single bring-up check is trusted for the session, not
+//!   forever. Periodic re-qualification is deliberately NOT implemented here,
+//!   and neither is remembering a result across boots — a cached qualification
+//!   is stale the moment the die temperature moves, and `vyr-size` has no
+//!   persistent store anyway (flash wear is its own question). Both are noted
+//!   out of scope, and this doc does not pretend a cold check is a warranty.
+//! * **The read ceiling is not in play.** Every read-back here is bit-banged
+//!   on GPIO ([`crate::lcd::gram_read`], ~1 MHz), governed by the panel's
+//!   6.66 MHz READ ceiling, which SPI5's write baud has nothing to do with —
+//!   the obvious objection, answered: sweeping the writer never moves the
+//!   reader.
+//!
+//! Where the result lives: [`qualify`] records `(chosen rung, status)` in
+//! [`QUALIFIED_BR`]/[`QUALIFIED_STATUS`] — the global the flush selection and
+//! the on-glass identity strip both read — and emits a `spirate qualify:` log
+//! line a host tool parses. Cost is bounded: it decides from the ladder the
+//! leg already walks, so it adds no read-back of its own; the decision itself
+//! is a handful of integer comparisons.
 
 use vyr_core::{Assets, Fonts, Quality, Rect, RenderError, ir::Request};
 
@@ -84,6 +142,148 @@ fn cyc() -> u32 {
 /// The rungs, slowest first. `BR` is SPI5 CR1's prescaler field: rate is
 /// `PCLK2 >> (BR + 1)` with PCLK2 = 90 MHz.
 const RUNGS: [u8; 4] = [3, 2, 1, 0];
+
+// --- the bring-up self-qualifier (#49) --------------------------------------
+
+use core::sync::atomic::{AtomicU8, Ordering};
+
+use crate::lcd::spi_hz_for;
+
+/// The qualified rate and its status, recorded where the flush selection, the
+/// on-glass identity strip and a host log can all read it. `BR` is the CR1
+/// prescaler rung the flush is run at.
+///
+/// This is the "record the chosen rate where the flush path can see it" of
+/// #49: [`qualify`] writes it once at bring-up and everything downstream reads
+/// it rather than a local, so there is one authority on the rate this unit was
+/// qualified at. It is NOT persisted across boots — see the module doc.
+pub(crate) static QUALIFIED_BR: AtomicU8 = AtomicU8::new(SPI_BR);
+/// Qualification status: [`QUAL_UNRUN`] until [`qualify`] runs, then
+/// [`QUAL_OK`] (the chosen rate is safe to flush at) or [`QUAL_FAULT`] (even
+/// the /16 floor did not read back clean — a wiring/panel fault, do not
+/// accelerate).
+pub(crate) static QUALIFIED_STATUS: AtomicU8 = AtomicU8::new(QUAL_UNRUN);
+
+pub(crate) const QUAL_UNRUN: u8 = 0;
+pub(crate) const QUAL_OK: u8 = 1;
+pub(crate) const QUAL_FAULT: u8 = 2;
+
+/// Compile-time fault injection for the two NEGATIVE demonstrations of #49, and
+/// for nothing else. `VYR_QUAL_FORCE_FAIL_HZ` names a wire rate at or above
+/// which a rung's read-back verdict is FORCED to fail for the qualifier's
+/// decision, no matter what the controller actually returned. Unset / `0`
+/// disables it, so a normal `spicheck` build folds the injection away and is
+/// byte-for-byte the one every earlier measurement was taken on.
+///
+/// * `=45000000` fails the /2 rung only → the fastest rung is rejected and the
+///   qualifier must step down (the "marginal rejected" demo).
+/// * `=1` fails every rung including the /16 floor → the fail-safe must fire
+///   (the "total read-back failure" demo).
+///
+/// It changes only the QUALIFIER's view; the per-rung `bit_exact=` verdict
+/// lines still report what the wire actually did, and the injected state is
+/// named on the `spirate qualify:` line, so the log stays honest about the
+/// fact that a fault was simulated rather than observed.
+const FORCE_FAIL_HZ: u32 = force_fail_hz();
+
+const fn force_fail_hz() -> u32 {
+    match option_env!("VYR_QUAL_FORCE_FAIL_HZ") {
+        None => 0,
+        Some(s) => {
+            let b = s.as_bytes();
+            let mut i = 0usize;
+            let mut v: u32 = 0;
+            while i < b.len() {
+                match b[i] {
+                    c @ b'0'..=b'9' => v = v * 10 + (c - b'0') as u32,
+                    _ => panic!("VYR_QUAL_FORCE_FAIL_HZ must be a decimal Hz value"),
+                }
+                i += 1;
+            }
+            v
+        }
+    }
+}
+
+/// The outcome of one qualification pass.
+struct Qualified {
+    /// The rung the flush is run at, margin applied.
+    chosen_br: u8,
+    /// The fastest bit-exact rung observed, before the margin. Equal to the
+    /// /16 floor when nothing faster passed.
+    fastest_pass_br: u8,
+    /// The /16 floor read back clean. `false` here is the fail-safe trigger.
+    floor_ok: bool,
+    /// The passing rungs form a contiguous block up from the floor. A
+    /// non-contiguous set (a fast pass above a slower failure) is non-monotone
+    /// and treated as inconclusive.
+    contiguous: bool,
+    /// Even /16 did not read back clean: a wiring/panel fault. Do not
+    /// accelerate.
+    failed: bool,
+}
+
+/// Turn per-rung bit-exact verdicts into ONE shipping rate, with the stated
+/// margin and the fail-safe. `pass[k]` is the verdict for `RUNGS[k]` — slowest
+/// first, so `pass[0]` is the /16 floor — already ANDed across the PIO and
+/// gapless-DMA engines (and, in a demo build, past [`FORCE_FAIL_HZ`]).
+///
+/// The policy, argued in full in the module doc: ship **one rung slower than
+/// the fastest bit-exact rung**, floored at /16; if the floor itself failed,
+/// FAIL SAFE; if the passing set is non-contiguous, drop to the floor as
+/// inconclusive rather than trust a non-monotone result.
+fn qualify(pass: &[bool; RUNGS.len()]) -> Qualified {
+    // `RUNGS` is slowest-first, so index 0 is the /16 floor and a higher index
+    // is a faster rung.
+    let floor_ok = pass[0];
+
+    // The fastest passing rung is the highest index that passed.
+    let mut top = 0usize;
+    let mut any = false;
+    for (k, &p) in pass.iter().enumerate() {
+        if p {
+            top = k;
+            any = true;
+        }
+    }
+
+    // Contiguity: every rung from the floor up to the fastest pass must also
+    // pass. A gap means a fast rung passed while a slower one failed — physical
+    // nonsense for a monotone setup/hold cliff, so the instrument is not to be
+    // trusted at the fast end.
+    let contiguous = !any || pass[..=top].iter().all(|&p| p);
+
+    if !floor_ok {
+        // Fail-safe: the slowest rung there is cannot be reached bit-exact.
+        return Qualified {
+            chosen_br: RUNGS[0],
+            fastest_pass_br: RUNGS[0],
+            floor_ok,
+            contiguous,
+            failed: true,
+        };
+    }
+    if !contiguous {
+        // Inconclusive: keep the proven floor, accelerate nothing.
+        return Qualified {
+            chosen_br: RUNGS[0],
+            fastest_pass_br: RUNGS[top],
+            floor_ok,
+            contiguous,
+            failed: false,
+        };
+    }
+    // One rung slower than the fastest pass, floored at /16 (index 0). When
+    // only the floor passed, `top == 0` and the margin keeps it there.
+    let chosen_idx = top.saturating_sub(1);
+    Qualified {
+        chosen_br: RUNGS[chosen_idx],
+        fastest_pass_br: RUNGS[top],
+        floor_ok,
+        contiguous,
+        failed: false,
+    }
+}
 
 /// Rows of the panel used as the check window: 240×160 = 38,400 px, i.e.
 /// **76,800 B written** per rung and 115,200 B read back.
@@ -554,6 +754,76 @@ pub fn run(
         verdict_dma[3],
     ));
 
+    // ---- the qualifier: turn the measurement into a shipping rate (#49) ------
+    //
+    // Everything above reports. This DECIDES. `pass_by_rung[k]` is rung
+    // `RUNGS[k]`'s bit-exact verdict — ANDed across the gapped PIO and gapless
+    // DMA engines, then, in a demo build only, past `FORCE_FAIL_HZ` — and
+    // `qualify` applies the one-rung-slower margin and the fail-safe. The result
+    // is recorded in the global the flush selection and the identity strip read,
+    // so there is one authority on this unit's rate rather than a local.
+    let conclusive = repeatable && sensitive && survive == ref_a;
+    // Raw per-rung bit-exact, ANDed across the two engines and (demo only) past
+    // the injected fault. The CONTROLS are a SEPARATE gate applied below, so a
+    // genuine /16 read-back failure and an untrustworthy instrument produce
+    // distinct verdicts rather than being conflated.
+    let mut pass_by_rung = [false; RUNGS.len()];
+    for (k, &br) in RUNGS.iter().enumerate() {
+        // `FORCE_FAIL_HZ` is a compile-time PARAMETER: at its default `0` the
+        // `!= 0` guard short-circuits and the injection is dead, but clippy
+        // const-folds `spi_hz >= 0` (u32) to always-true and flags it — exactly
+        // as it flags `MADCTL & bit` at the default `0x00` in `lcd.rs`. The `>=`
+        // is correct at every non-zero value the demo passes; allow it here for
+        // the same compile-time-parameter reason.
+        #[allow(clippy::absurd_extreme_comparisons)]
+        let forced = FORCE_FAIL_HZ != 0 && spi_hz_for(br) >= FORCE_FAIL_HZ;
+        pass_by_rung[k] = verdict[k] && verdict_dma[k] && !forced;
+    }
+    let q = qualify(&pass_by_rung);
+    // The chosen rate is only TRUSTED when the instrument is trustworthy AND the
+    // ladder was monotone. Otherwise fall to the /16 floor — accelerate nothing.
+    let trusted = conclusive && q.contiguous && !q.failed;
+    let chosen_br = if trusted { q.chosen_br } else { RUNGS[0] };
+    // FAULT = do not accelerate loudly: either the /16 floor itself failed
+    // (wiring/panel), or the controls say the verdict cannot be believed. OK =
+    // a trustworthy chosen rate (which may itself be /16 if only the floor
+    // passed).
+    let status = if trusted { QUAL_OK } else { QUAL_FAULT };
+    QUALIFIED_BR.store(chosen_br, Ordering::Relaxed);
+    QUALIFIED_STATUS.store(status, Ordering::Relaxed);
+    let qualified_ok = QUALIFIED_STATUS.load(Ordering::Relaxed) == QUAL_OK;
+    let chosen_br = QUALIFIED_BR.load(Ordering::Relaxed);
+    emit(&alloc::format!(
+        "INFO  [vyr-size] spirate qualify: chosen_br={chosen_br} chosen_spi_hz={} \
+         fastest_pass_br={} fastest_pass_spi_hz={} margin=one-rung-slower \
+         floor_ok={} contiguous={} conclusive={conclusive} trusted={trusted} \
+         floor_failed={} force_fail_hz={FORCE_FAIL_HZ} status={} \
+         chosen_full_frame_ms={} — no datasheet; read-back is the per-unit \
+         qualifier; not persisted; not a temperature guarantee",
+        spi_hz_for(chosen_br),
+        q.fastest_pass_br,
+        spi_hz_for(q.fastest_pass_br),
+        q.floor_ok,
+        q.contiguous,
+        q.failed,
+        if qualified_ok { "OK" } else { "FAULT" },
+        (PANEL_W as u64) * (PANEL_H as u64) * 16 * 1000 / spi_hz_for(chosen_br) as u64,
+    ));
+    if q.failed {
+        emit(
+            "ALERT [vyr-size] spirate qualify: FAIL-SAFE — even /16 did not read \
+             back bit-exact. This is a wiring or panel fault, not a rate the \
+             qualifier can outrun. Refusing to accelerate; the flush stays at the \
+             /16 floor and this fault is the verdict, NOT a chosen rate.",
+        );
+    } else if !trusted {
+        emit(
+            "ALERT [vyr-size] spirate qualify: INCONCLUSIVE — the controls failed \
+             or the passing rungs were non-contiguous, so no rung verdict can be \
+             believed. Staying at the /16 floor; accelerating nothing.",
+        );
+    }
+
     // ---- the flush engines --------------------------------------------------
     //
     // Registries built here rather than inherited: the caller's are whatever
@@ -571,15 +841,28 @@ pub fn run(
     let scene = crate::opaque(crate::lcd::PANEL_IR);
     let req = Request::parse(scene)?;
 
-    // Both ends of the ladder, so the engine comparison is not a single-rate
-    // anecdote: at /16 the wire dominates everything and DMA should hide the
-    // whole render; at the fastest bit-exact rung the render may be the
-    // limit instead, which is the crossover worth knowing about.
+    // Both ends: /16 (where the wire dominates and DMA hides the whole render)
+    // and the QUALIFIED rate (#49) — the rung `qualify` actually chose, margin
+    // applied, read from the global. This is where "the flush path runs at the
+    // qualified rate" is demonstrated: the real scene is flushed at `chosen_br`.
+    // On a fail-safe fault there is no faster rate to run — only /16, loudly
+    // flagged above — so nothing is accelerated.
     let mut rates = alloc::vec![3u8];
-    if best != 3 {
-        rates.push(best);
+    if qualified_ok && chosen_br != 3 {
+        rates.push(chosen_br);
     }
     for br in rates {
+        if br == chosen_br && qualified_ok && chosen_br != 3 {
+            emit(&alloc::format!(
+                "INFO  [vyr-size] spirate qualify-flush: flushing the real scene \
+                 at the QUALIFIED rate br={chosen_br} spi_hz={} (chosen by \
+                 read-back, one rung below the fastest bit-exact /{}) — the \
+                 wall/cpu/blocked numbers on the engine lines that follow are \
+                 this unit's flush cost at the rate it qualified at",
+                spi_hz_for(chosen_br),
+                1u32 << (q.fastest_pass_br as u32 + 1),
+            ));
+        }
         spi_set_br(br);
         let base = pass(&req, &mut fonts, &assets, band_buf, quality, Engine::None)?;
         report_pass(emit, br, Engine::None, &base, &base);
@@ -639,11 +922,19 @@ pub fn run(
         let stride = (PANEL_W * 3) as usize;
         let ident = Request::parse(&crate::testcard::identity_ir(
             "PATH lcd: SPI5 -> ILI9341 GRAM",
+            // The QUALIFIED rate on the glass, read from the recorded global —
+            // the rate this unit's flush was qualified at, or FAULT if even /16
+            // did not read back clean. A photograph is then self-describing.
             &alloc::format!(
-                "SPI {} kHz /{} best-bitexact /{}",
+                "SPI {} kHz /{} qual /{} {}",
                 crate::lcd::spi_hz_for(SPI_BR) / 1000,
                 1u32 << (SPI_BR as u32 + 1),
-                1u32 << (best as u32 + 1)
+                1u32 << (QUALIFIED_BR.load(Ordering::Relaxed) as u32 + 1),
+                if QUALIFIED_STATUS.load(Ordering::Relaxed) == QUAL_FAULT {
+                    "FAULT"
+                } else {
+                    "ok"
+                }
             ),
             &alloc::format!(
                 "flush {} / MADCTL {:#04x}",
