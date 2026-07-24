@@ -135,13 +135,14 @@ whole history into [`perf/history.jsonl`](perf/index.html).
 > more than an expensive one — it was 6.1 % of vyr Exact and **36.1 % of vyr
 > Draft, against 54.7 % of LVGL** — and a "total" comparison between a big
 > renderer and a small one is therefore substantially a comparison of two FNV
-> loops. Since **#44** vyr's fold runs in an *untimed verification pass* that
-> must reproduce the reference hash before the timed pass starts, so for vyr
-> **total is render-only, structurally, with nothing subtracted**. The LVGL
-> anchor still folds inside its `flush_cb`, so its render-only figure is
-> obtained by rebuilding it with the fold folding nothing and differencing —
-> in the same cell, at the same optimisation level. Every ledger cell records
-> which of the two it was (`fold_provenance`).
+> loops. Since **#44** — now on BOTH sides — the fold runs in an *untimed
+> verification pass* that must reproduce the reference hash before any timed
+> pass starts. vyr skips the fold behind a flag in its timed loop; LVGL's
+> `flush_cb` does the same. **Render-only is structural on both sides, with
+> nothing subtracted.** Each harness then runs a SECOND timed pass *with* the
+> fold, so `total` and `fold` are measured in the same cell rather than carried
+> over from another tier, optimisation level or compiler. Every ledger cell
+> still records `fold_provenance`, which now reads `structural` throughout.
 
 `insn/px` is **instructions per DELIVERED pixel** (`insns / 129,600`) on every
 row — the normaliser LVGL's row always used (`measurements/lvgl-gap.md` §0.2).
@@ -151,22 +152,27 @@ row — the normaliser LVGL's row always used (`measurements/lvgl-gap.md` §0.2)
 | vyr **Exact** | 48,239,550 | 0 *(absent by build)* | **48,239,550** | 372.2 | **14.96x** |
 | vyr **Fast** (#27) | 33,508,475 | 0 *(absent by build)* | **33,508,475** | 258.6 | 10.39x |
 | vyr **Draft** | 5,511,165 | 0 *(absent by build)* | **5,511,165** | 42.5 | **1.71x** |
-| LVGL 9.6.0-dev (`62f343b54`), content-corrected (`-Os`) | 7,112,541 | 3,888,238 *(measured)* | **3,224,303** | 24.9 | 1.00x |
+| LVGL 9.6.0-dev (`62f343b54`), content-corrected (`-Os`) | 7,112,592 | 3,888,188 *(measured, same cell)* | **3,224,404** | 24.9 | 1.00x |
 
 Draft is **8.75x** cheaper than Exact; Fast recovers only **25 %** of the
 Exact→Draft gap — see §3.1. **vyr Draft costs 71 % more than LVGL per frame
 while drawing less** (no AA, square corners). The old "Draft is 4.6 % cheaper
 than LVGL" compared two totals, i.e. substantially two FNV loops.
 
-> **Mixed provenance, stated.** vyr's render-only is structural (no fold in the
-> binary's timed path); LVGL's is a two-build difference. Both were taken by the
-> same instrument in the same session, and the differential is validated three
-> ways: it reproduces vyr's own pre-#44 numbers to **356 instructions in 48 M**
-> when checked against #44's structural removal; it agrees with
-> `scripts/m4-attribute.py`'s independent per-symbol attribution of LVGL's
-> `flush_cb` (3,888,238 vs 3,888,561, i.e. 323 instructions in 7.1 M); and
-> removing the fold moved all three vyr tiers by the same constant. It is still
-> a subtraction, and it stays flagged until #44's LVGL half lands.
+> **Same provenance on both sides (#44 complete).** Nothing in this table is a
+> subtraction across builds. Both harnesses are measured by the same instrument
+> — qemu + the `libinsn` TCG plugin, exact instruction counts — in the same
+> session, each reporting `render_only` / `total` / `fold` from two timed passes
+> of the same binary.
+>
+> The structural figures agree with the differential ones they replace to
+> **101 instructions in 3.2 M** (LVGL render-only) and **50 instructions in
+> 3.9 M** (the fold), and with `scripts/m4-attribute.py`'s independent
+> per-symbol attribution of `flush_cb` to **373 in 3.9 M**. vyr's fold is
+> **3,110,433 on all three tiers** — bit-identical, as a fixed cost per output
+> byte must be, which is itself a check that the flag is doing what it claims.
+>
+> Reproduce: `python3 scripts/fold-split-check.py`.
 
 ### 3.0 `opt-level` is a dimension, not a decision
 
@@ -536,6 +542,6 @@ Notes that will cost time if forgotten:
 | [#27](https://github.com/awtoau/vyr/issues/27) | partly addressed: the `Fast` tier exists and matches Exact's edge quality, but at 4.4x Draft's cost; the LVGL harness's checker and gauge are content-matched, its theme colours and font are not |
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |
-| [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **fixed on vyr's side.** The `insn/px` normaliser mismatch is gone (every row is per *delivered* pixel) and #44 removed vyr's fold from the timed window, so §3's vyr rows are render-only by construction. **Outstanding: the LVGL harness still folds in its `flush_cb`**, so its render-only figure is a two-build difference and the cross-renderer row is mixed provenance until #44's LVGL half lands. Full attribution in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
-| [#44](https://github.com/awtoau/vyr/issues/44) / [#45](https://github.com/awtoau/vyr/issues/45) | verification is becoming a **build type**, not a field to subtract: #44 moved the fold to an untimed pass, #45 would remove it from the perf binary entirely. The ledger already carries `build_type` and `fold_provenance` per cell so the two eras stay comparable — and so a derived value can never be mistaken for a measured one. |
+| [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **fixed on both sides.** The `insn/px` normaliser mismatch is gone (every row is per *delivered* pixel) and #44 removed the fold from the timed window in vyr AND in the LVGL harness, so every §3 row is render-only by construction — no subtraction, no mixed provenance. Full attribution in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
+| [#44](https://github.com/awtoau/vyr/issues/44) / [#45](https://github.com/awtoau/vyr/issues/45) | verification is a **build type**, not a field to subtract: #44 (closed) moved the fold to an untimed pass in both harnesses and added a second timed pass so `total`/`fold`/`render_only` are all measured per cell; #45 would remove the fold from the perf binary entirely. The ledger already carries `build_type` and `fold_provenance` per cell so the two eras stay comparable — and so a derived value can never be mistaken for a measured one. |
 | [#33](https://github.com/awtoau/vyr/issues/33) | **`opt-level` is a permanent matrix DIMENSION, not a settled default.** All four levels are measured and recorded every run — see [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) §0.3 for the numbers. `release-mcu` ships `"z"` as the value that fits the smallest part the plan contemplates, but that is a **starting point, not a verdict**: the right level is a per-application choice made from the matrix at deployment time, and `--config profile.release-mcu.opt-level=…` reproduces any column in ~12 s. Pixels, heap peak and stack depth are opt-level-invariant across all 24 builds, so the M4 gate holds at every level. |

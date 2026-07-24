@@ -367,16 +367,64 @@ fn run_static(
         // u32 also makes a counter wrap inside the window yield the right
         // delta.
         let delta = (t1 as u32).wrapping_sub(t0 as u32);
+
+        // #44: a SECOND timed pass, identical but WITH the fold, so `total`,
+        // `fold` and `render_only` are all MEASURED on this cell rather than
+        // derived from a fold figure taken on some other tier/opt-level/
+        // compiler — the arithmetic that once inverted the sign of a published
+        // result. `render_only` is the headline; `total` keeps old rows
+        // comparable; `fold` is their difference and is reported, not assumed.
+        let t2 = clock();
+        for _ in 0..TIMED_FRAMES {
+            render_frame_banded(
+                &req,
+                &mut fonts,
+                &assets,
+                &mut shapes,
+                band_buf,
+                quality,
+                None,
+                true,
+            )?;
+        }
+        let t3 = clock();
+        let total = (t3 as u32).wrapping_sub(t2 as u32);
+        // Saturating: the two passes are separately quantized (1 cs on the
+        // qemu leg), so a short run can read total slightly BELOW render_only.
+        // That is quantization noise, not a negative fold — clamp at 0 rather
+        // than wrapping to ~4e9 and reporting a spectacular fake.
+        let fold = total.saturating_sub(delta);
+
+        // Dead-code sanity gate. Removing the fold risks the compiler
+        // eliminating the render itself, which would look like an enormous
+        // speedup. The fold's largest measured share of a frame is 54.7%
+        // (LVGL), i.e. render_only was 45% of total at its worst; a 10% floor
+        // sits ~4.5x below that and can only trip on near-total elimination,
+        // not on a genuinely fold-dominated frame.
+        if delta < total / 10 {
+            emit(&format!(
+                "ERROR [vyr-size] timed render_only {delta} < 10% of total {total} \
+                 — the timed render was probably eliminated; refusing to report"
+            ));
+            return Err(RenderError::Unimplemented("timed loop eliminated"));
+        }
+
         #[cfg(feature = "board")]
         emit(&format!(
             "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {delta} cycles \
-             (DWT_CYCCNT, REAL SILICON — {} cycles/frame)",
-            delta / TIMED_FRAMES
+             (DWT_CYCCNT, REAL SILICON — {} cycles/frame) \
+             render_only={delta} total={total} fold={fold} \
+             render_only_per_frame={} total_per_frame={} fold_per_frame={}",
+            delta / TIMED_FRAMES,
+            delta / TIMED_FRAMES,
+            total / TIMED_FRAMES,
+            fold / TIMED_FRAMES
         ));
         #[cfg(not(feature = "board"))]
         emit(&format!(
             "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {delta} cs virtual \
-             (SYS_CLOCK; icount shift=0 makes 1 virtual ns = 1 guest insn)"
+             (SYS_CLOCK; icount shift=0 makes 1 virtual ns = 1 guest insn) \
+             render_only={delta} total={total} fold={fold}"
         ));
     }
 

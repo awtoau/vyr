@@ -178,6 +178,39 @@ one. Render-only:
 | Draft vs LVGL | 1.21× | **1.70×** |
 | Exact vs LVGL | 9.06× | **19.0×** |
 
+**Closed 2026-07-25 (#44), structurally, on both sides.** The mitigation that
+kept failing was *subtraction* — measure the fold once, subtract it everywhere.
+It failed because the fold's own cost moves with tier, optimisation level and
+compiler, so a figure borrowed from another cell is arithmetic wearing a
+measurement's clothes; at `opt-level=2` it once inverted the sign of a published
+result. The fix removes the arithmetic instead of trying to keep it correct:
+
+- both harnesses render **without** folding inside the timed window, with the
+  materialisation barrier (`black_box` / an `asm volatile` memory clobber) kept
+  unconditionally so nothing can be optimised away;
+- the determinism proof moves to an **untimed verification pass** that must
+  reproduce the reference hash before any timed pass runs, and is fatal if it
+  does not;
+- a **second timed pass** *with* the fold measures `total` and `fold` in the
+  same cell, so all three fields are measured and none is ever carried over;
+- a **dead-code gate** on both sides refuses to report if `render_only` falls
+  below 10 % of `total` — the failure mode that removing a fold invites.
+
+Measured after the change, both sides through the same `libinsn` instrument:
+
+| cell | render_only | total | fold | fold share |
+|---|--:|--:|--:|--:|
+| LVGL | 3,224,404 | 7,112,592 | 3,888,188 | 54.7 % |
+| vyr Exact | 48,239,550 | 51,349,984 | 3,110,433 | 6.1 % |
+| vyr Fast | 33,508,475 | 36,618,909 | 3,110,433 | 8.5 % |
+| vyr Draft | 5,511,165 | 8,621,599 | 3,110,433 | 36.1 % |
+
+vyr's fold is bit-identical across all three tiers, which is what a fixed cost
+per output byte must be — a check on the flag itself. The figures land within
+101 instructions in 3.2 M of the differential ones they replace, so the old
+correction was right; it was the *method* that was unsustainable.
+Reproduce: `python3 scripts/fold-split-check.py`.
+
 ### The attribution *(`lvgl-gap.md`)*
 
 **A hypothesis falsified.** "vyr pays coverage over solid interiors where LVGL

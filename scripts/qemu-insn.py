@@ -152,8 +152,34 @@ def one_run(elf: Path, plugin: Path, tag: str) -> dict:
         log(f"ERROR: libinsn matched no bkpt — is this qemu built with capstone? "
             f"(no ARM disassembly => match= never fires). See {plog}")
         raise SystemExit(1)
-    window_addr, _disas, window = max(hits, key=lambda h: int(h[2]))
-    window = int(window)
+    # #44 made this TWO windows, not one: the timed loop now runs twice —
+    # render-only first, then an identical pass WITH the hash fold so `fold` is
+    # measured on this cell instead of carried over from another build. So the
+    # two largest deltas ARE the two timed passes, and the with-fold one is
+    # necessarily the larger. Everything else is bracketed by console writes and
+    # is orders of magnitude smaller (the untimed verification pass renders ONE
+    # frame against the timed loops' 20).
+    ranked = sorted(hits, key=lambda h: int(h[2]), reverse=True)
+    total_addr, _d0, total_w = ranked[0]
+    total_w = int(total_w)
+    if len(ranked) > 1:
+        window_addr, _d1, window = ranked[1]
+        window = int(window)
+    else:
+        window_addr, window = total_addr, total_w
+    fold_w = max(0, total_w - window)
+
+    # Guard the assumption rather than trusting it: the two timed passes render
+    # the same frames, so they must be within a small factor of each other, and
+    # both must tower over the third-largest delta. If that is not the shape
+    # observed, the window identification is wrong and every number below it
+    # would be wrong too — say so instead of reporting.
+    third = int(ranked[2][2]) if len(ranked) > 2 else 0
+    if window and (total_w > 3 * window or third > window // 4):
+        log(f"ERROR: timed-window identification failed — deltas "
+            f"{total_w:,} / {window:,} / {third:,}. Expected two comparable "
+            f"timed passes far above the rest (see {plog})")
+        raise SystemExit(1)
 
     # Cross-check against what the firmware itself reported.
     frames = None
@@ -172,6 +198,13 @@ def one_run(elf: Path, plugin: Path, tag: str) -> dict:
     return {
         "total_insns": total,
         "timed_window_insns": window,
+        # #44: all three, always. render_only is the headline series.
+        "render_only_insns": window,
+        "with_fold_insns": total_w,
+        "fold_insns": fold_w,
+        "render_only_insns_per_frame": window // frames if frames else None,
+        "with_fold_insns_per_frame": total_w // frames if frames else None,
+        "fold_insns_per_frame": fold_w // frames if frames else None,
         "timed_window_end_bkpt": "0x" + window_addr,
         "timed_frames": frames,
         "insns_per_frame": window // frames if frames else None,
@@ -288,6 +321,15 @@ def main() -> int:
         "timed_window_insns": runs[0]["timed_window_insns"] if deterministic else None,
         "timed_frames": runs[0]["timed_frames"],
         "insns_per_frame": runs[0]["insns_per_frame"] if deterministic else None,
+        # #44: all three promoted, always. `insns_per_frame` above is an alias
+        # for render_only so existing consumers keep working and keep meaning
+        # the same thing they did once the fold left the window.
+        "render_only_insns_per_frame": (
+            runs[0]["render_only_insns_per_frame"] if deterministic else None),
+        "with_fold_insns_per_frame": (
+            runs[0]["with_fold_insns_per_frame"] if deterministic else None),
+        "fold_insns_per_frame": (
+            runs[0]["fold_insns_per_frame"] if deterministic else None),
         "runs": runs,
     }
     dest = TMP / f"qemu-insn-{name}.json"

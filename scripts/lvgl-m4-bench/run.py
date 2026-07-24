@@ -369,6 +369,12 @@ def parse(gout, logf):
         "lv_mem_peak": g(r"lv_mem_peak=(\d+)"),
         "lv_mem_frag_pct": g(r"lv_mem_frag_pct=(\d+)"),
         "timed_cs": g(r"timed_cs=\D*(\d+)"),
+        # #44: all three, always. render_only is the headline; total keeps rows
+        # taken before the fold came out of the window comparable; fold is
+        # measured on THIS cell, never carried over from another build.
+        "render_only_cs": g(r"render_only_cs=\D*(\d+)"),
+        "total_cs": g(r"total_cs=\D*(\d+)"),
+        "fold_cs": g(r"fold_cs=\D*(\d+)"),
         "timed_frames": g(r"timed_frames=\D*(\d+)"),
         "ok": "workload ok" in gout,
     }
@@ -479,8 +485,16 @@ def main():
             log(f"RESULT: {res['timed_cs']} cs / {TIMED} frames = {insns:,} insns "
                 f"({per_frame:,}/frame, {per_frame/px:.0f} insn/px) — "
                 f"DETERMINISTIC (icount), resolution 1 cs", logf)
-            est_ms = per_frame / 180e6 * 1e3
-            log(f"  @180 MHz ~{est_ms:.0f} ms/frame ESTIMATE (CPI=1.0 assumption)", logf)
+            est_ms = per_frame / 192e6 * 1e3
+            log(f"  @192 MHz ~{est_ms:.0f} ms/frame ESTIMATE (CPI=1.0 assumption)", logf)
+        if res["total_cs"] and res["fold_cs"]:
+            tot = int(res["total_cs"]) * 10_000_000 // TIMED
+            fold = int(res["fold_cs"]) * 10_000_000 // TIMED
+            ro = int(res["render_only_cs"]) * 10_000_000 // TIMED
+            share = 100.0 * fold / tot if tot else 0.0
+            log(f"RESULT: render_only={ro:,}/frame  total={tot:,}/frame  "
+                f"fold={fold:,}/frame ({share:.1f}% of total) — #44: the "
+                f"headline is render_only", logf)
         log(f"RESULT: LVGL pool peak (high-water) = {res['lv_mem_peak']} B "
             f"of {res['lv_mem_total']} B pool; draw buffer {res['draw_buf_bytes']} B; "
             f"frag {res['lv_mem_frag_pct']}%", logf)
@@ -498,6 +512,16 @@ def main():
                 int(res["timed_cs"]) * 10_000_000 // TIMED if res["timed_cs"] else None
             ),
             "timed_cs": int(res["timed_cs"]) if res["timed_cs"] else None,
+            "render_only_insns_per_frame": (
+                int(res["render_only_cs"]) * 10_000_000 // TIMED
+                if res["render_only_cs"] else None
+            ),
+            "total_insns_per_frame": (
+                int(res["total_cs"]) * 10_000_000 // TIMED if res["total_cs"] else None
+            ),
+            "fold_insns_per_frame": (
+                int(res["fold_cs"]) * 10_000_000 // TIMED if res["fold_cs"] else None
+            ),
             "timed_frames": TIMED,
             "lv_mem_peak": res["lv_mem_peak"],
             "lv_mem_total": res["lv_mem_total"],
