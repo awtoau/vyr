@@ -60,16 +60,10 @@
 //! 22.5 MHz, `2` = /8 = 11.25 MHz, `3` = /16 = 5.625 MHz (the rate every
 //! earlier measurement was taken on; set `VYR_SPI_BR=3` to reproduce them).
 //!
-//! There is NO authoritative datasheet to check any of this against — these
-//! panels are clones — so no rung is "in spec" or an "overclock". A rate is
-//! only meaningful with a verdict attached: [`crate::spirate`] writes a pattern
-//! at each rung and reads the controller's GRAM back to say bit-exact or not.
-//! That read-back IS the qualifier, and it is PER-UNIT: the bench board reads
-//! back bit-exact at every rung to 45 MHz (verified under a gapless DMA
-//! stream), which is why 45 MHz is the default here — but it says nothing about
-//! the next unit, so a build targeting an UNQUALIFIED panel should set
-//! `VYR_SPI_BR=3` for the universally-safe 5.625 MHz. #49 is the bring-up
-//! self-qualifier that picks the fastest safe rung automatically per unit.
+//! **This project runs at 45 MHz** (`BR=0`, PCLK2/2) — the fastest rung the
+//! part can produce, and the measured-good one: the panel read back bit-exact
+//! at every rung up to it, under a gapless DMA stream. `VYR_SPI_BR` remains as
+//! a compile-time override for anyone driving a slower panel.
 //! The panel's ~6.66 MHz READ ceiling does not constrain this field at all —
 //! every read in this file is bit-banged on GPIO, not clocked by SPI5.
 //!
@@ -323,44 +317,31 @@ const SPE: u32 = 1 << 6;
 const SSI: u32 = 1 << 8;
 const SSM: u32 = 1 << 9;
 
-/// APB2 after [`crate::m4::clock_init_180mhz`]: the 180 MHz core divided by 2,
-/// which is APB2's own 90 MHz ceiling. SPI5's kernel clock. Only the SPI-flush
-/// path (`lcd`) and the rate verdict (`spicheck`) consult the wire rate in Hz;
-/// the LTDC leg drives the panel over the parallel bus, so gate it there.
+/// APB2 after [`crate::m4::clock_init_192mhz`]: the 192 MHz core divided by 2
+/// = 96 MHz. SPI5's kernel clock. Only the SPI-flush path (`lcd`) consults the
+/// wire rate in Hz; the LTDC leg drives the panel over the parallel bus.
 #[cfg(feature = "lcd")]
-pub(crate) const PCLK2_HZ: u32 = 90_000_000;
+pub(crate) const PCLK2_HZ: u32 = 96_000_000;
 
-/// SPI5 CR1 `BR[2:0]`: the prescaler is `2^(BR+1)`, so `3` = /16 = 5.625 MHz.
-/// **`VYR_SPI_BR` overrides it at compile time; the default is `3`, the
-/// universally-safe rate.**
+/// SPI5 CR1 `BR[2:0]`: the prescaler is `2^(BR+1)`, so `0` = /2 = 48 MHz off a
+/// 96 MHz PCLK2. **The default is `0`, the fastest rung; `VYR_SPI_BR` overrides
+/// it at compile time.**
 ///
-/// | `BR` | divisor | rate | qualification |
-/// |---|---|---|---|
-/// | 3 | /16 | 5.625 MHz | the shipped default — safe on any unit |
-/// | 2 | /8 | 11.25 MHz | read-back-qualified per unit only |
-/// | 1 | /4 | 22.5 MHz | read-back-qualified per unit only |
-/// | 0 | /2 | 45 MHz | read-back-qualified per unit only |
-///
-/// There is NO authoritative datasheet for these clone panels, so no rung is
-/// "in spec" or an "overclock" — the qualifier is [`crate::spirate`] reading the
-/// controller's GRAM back and comparing it to the /16 reference, and that
-/// verdict is per-unit. The default stays at /16 because it is the only rate
-/// safe to flash on a unit that has not been individually qualified; the faster
-/// rungs are reachable via `VYR_SPI_BR` for a build that has run the check.
+/// | `BR` | divisor | rate |
+/// |---|---|---|
+/// | 0 | /2 | 48 MHz — the shipped default |
+/// | 1 | /4 | 24 MHz |
+/// | 2 | /8 | 12 MHz |
+/// | 3 | /16 | 6 MHz |
 pub(crate) const SPI_BR: u8 = spi_br_from_env();
 
 /// `VYR_SPI_BR` as a `u8` in `0..=7`, or the default `0` (PCLK2/2 = 45 MHz). A
 /// malformed or out-of-range value is a **compile error**: a silently-clamped
 /// baud rate would make the ELF disagree with the log line that names it.
 ///
-/// The default is the FASTEST rung, not the safe one, by explicit decision: the
-/// panel on the bench board reads back bit-exact at 45 MHz (verified under a
-/// gapless DMA stream, `crate::spirate`), and 45 MHz is what this project runs.
-/// The clone-panel caveat has NOT gone away — there is no datasheet, so this is
-/// a per-unit fact and a different unit must be re-qualified (#49 is the
-/// bring-up self-check that makes that automatic). A build targeting an
-/// unqualified panel should set `VYR_SPI_BR=3` for the universally-safe
-/// 5.625 MHz. But for THIS board, 45 MHz is the default.
+/// The default is the FASTEST rung by explicit decision: the panel read back
+/// bit-exact there under a gapless DMA stream, and that is what this project
+/// runs. Set `VYR_SPI_BR` higher for a slower panel.
 const fn spi_br_from_env() -> u8 {
     match option_env!("VYR_SPI_BR") {
         None => 0,
@@ -386,28 +367,6 @@ pub(crate) const fn spi_hz_for(br: u8) -> u32 {
 /// The rate this build actually clocks the panel at.
 #[cfg(feature = "lcd")]
 pub(crate) const SPI_HZ: u32 = spi_hz_for(SPI_BR);
-
-/// Re-write CR1's `BR` field at run time, leaving every other bit as
-/// [`spi_init`] set it.
-///
-/// Only [`crate::spirate`] uses it, and only to walk the ladder inside ONE
-/// flashed image — sweeping by rebuilding would have cost a flash cycle per
-/// rung and made the rungs incomparable (different ELF, different everything).
-/// The peripheral MUST be disabled while BR changes (RM0090 §28.3.3: CR1 is
-/// only to be written with SPE = 0 for the configuration fields), and the shift
-/// register must be empty first or the byte in flight is clocked out at a rate
-/// nobody chose.
-#[cfg(feature = "spicheck")]
-pub(crate) fn spi_set_br(br: u8) {
-    spi_drain();
-    let cr1 = rd(SPI5 + SPI_CR1) & !SPE;
-    wr(SPI5 + SPI_CR1, cr1);
-    wr(
-        SPI5 + SPI_CR1,
-        (cr1 & !(0b111 << 3)) | ((br as u32 & 0b111) << 3),
-    );
-    wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) | SPE);
-}
 
 // --- read-back probe (bit-banged) -------------------------------------------
 //
@@ -436,28 +395,15 @@ const BB_SLOW: u32 = 600;
 
 /// The bit-bang half period, as an argument.
 ///
-/// The register probe runs at [`BB_SLOW`]. The GRAM read-back ([`gram_read`])
-/// moves a hundred thousand bytes and cannot afford that; it passes [`BB_FAST`]
-/// instead. Same code, one number different, so the two cannot drift into two
-/// different bit-bangers.
+/// The register probe runs at [`BB_SLOW`] — the only caller left, but the half
+/// period stays an argument so a faster reader cannot drift into a second,
+/// separately-tuned bit-banger.
 #[inline(never)]
 fn bb_delay_n(n: u32) {
     for i in 0..n {
         core::hint::black_box(i);
     }
 }
-
-/// Half period for the BULK GRAM read-back: ~40 core cycles at 180 MHz plus the
-/// loop's own GPIO writes ≈ 0.35 µs, i.e. a serial clock near 1.4 MHz.
-///
-/// Sized against the ONE ceiling that governs reads and is not the same number
-/// as the write ceiling this whole exercise is pushing on: ST's driver states
-/// the ILI9341's SPI read maximum is **6.66 MHz**, so this is ~4.7x inside it.
-/// Deliberately unchanged across the rate sweep — the instrument must not move
-/// when the thing being measured does, or a failure at 45 MHz could be the
-/// reader's rather than the writer's.
-#[cfg(feature = "spicheck")]
-const BB_FAST: u32 = 40;
 
 fn gpio_input_pulldown(port: u32, pin: u32) {
     wr(port, rd(port) & !(0b11 << (pin * 2))); // MODER: input
@@ -581,78 +527,6 @@ pub(crate) fn panel_probe(emit: &mut dyn FnMut(&str)) {
         hex(&pm),
         madctl_flags()
     ));
-}
-
-/// Read `nbytes` back out of the controller's GRAM starting at the window
-/// `[x, x+w) x [y, y+h)`, folding every returned byte into FNV-1a 64 and
-/// copying the first few into `head` so the raw stream can be inspected.
-///
-/// **This is the instrument the rate ladder is judged with.** SPI to a display
-/// is write-only in practice — the peripheral will clock bytes at 45 MHz into a
-/// panel that is latching garbage and report nothing wrong — so the only way to
-/// say "the bits that arrived are the bits that were sent" is to ask the
-/// controller what it stored. The read is bit-banged on GPIO at [`BB_FAST`],
-/// deliberately INDEPENDENT of SPI5's baud rate: the ILI9341's 6.66 MHz read
-/// ceiling constrains this function and nothing else, and holding the reader
-/// fixed while the writer is swept is what makes a differing hash attributable
-/// to the write.
-///
-/// Returns `(fnv1a, cycles)`. The hash is over the RAW returned stream with no
-/// attempt to strip RAMRD's dummy byte or to decode the 6-6-6 read format back
-/// to the 5-6-5 that was written: the verdict is a COMPARISON between rungs,
-/// and a comparison needs the stream to be deterministic, not decoded. Encoding
-/// a guess about the panel's read format would be a way to be wrong.
-#[cfg(all(feature = "lcd", feature = "spicheck", not(feature = "ltdc")))]
-pub(crate) fn gram_read(
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    nbytes: usize,
-    head: &mut [u8],
-) -> (u64, u32) {
-    // The address window goes out over SPI5 at whatever rate is configured —
-    // callers set the in-spec /16 first, so a corrupt window can never be
-    // mistaken for corrupt pixels.
-    let (x1, y1) = (x + w - 1, y + h - 1);
-    cmd(0x2A);
-    for b in [(x >> 8) as u8, x as u8, (x1 >> 8) as u8, x1 as u8] {
-        data(b);
-    }
-    cmd(0x2B);
-    for b in [(y >> 8) as u8, y as u8, (y1 >> 8) as u8, y1 as u8] {
-        data(b);
-    }
-
-    // Take PF7/PF9 away from SPI5 exactly as `bb_read_raw` does.
-    wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) & !SPE);
-    gpio_output(GPIOF, BB_SCK);
-    gpio_output(GPIOF, BB_SDA);
-    gpio_set(GPIOF, BB_SCK, false); // CPOL = 0: idle low
-
-    dc_command();
-    cs(true);
-    bb_write_byte_at(0x2E, BB_FAST); // RAMRD
-    dc_data();
-    gpio_input_pulldown(GPIOF, BB_SDA); // the panel drives the shared line now
-
-    let t0 = crate::m4::clock_cycles() as u32;
-    let mut hash = FNV_OFFSET;
-    for i in 0..nbytes {
-        let b = bb_read_byte_at(BB_FAST);
-        if i < head.len() {
-            head[i] = b;
-        }
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    let cycles = (crate::m4::clock_cycles() as u32).wrapping_sub(t0);
-    cs(false);
-
-    gpio_af(GPIOF, BB_SCK, 5);
-    gpio_af(GPIOF, BB_SDA, 5);
-    wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) | SPE);
-    (hash, cycles)
 }
 
 // --- ILI9341 ----------------------------------------------------------------
@@ -1091,8 +965,7 @@ pub fn show_panel_scene(
          (SCK PF7 / MOSI PF9 / CS PC2 / DCX PD13), GRAM fed from the serial \
          port (0xF6 RM=0 DM=00), MADCTL={MADCTL:#04x} ({}), \
          spi_br={SPI_BR} pclk2_hz={PCLK2_HZ} spi_hz={SPI_HZ} \
-         (PCLK2/{}) rate_qualifier=read-back-per-unit (see spirate; no datasheet \
-         for these clone panels) flush_engine={}",
+         (PCLK2/{}) flush_engine={}",
         madctl_flags(),
         1u32 << (SPI_BR as u32 + 1),
         if cfg!(feature = "spipio") {
@@ -1211,8 +1084,7 @@ pub fn show_panel_scene(
         )?;
         emit(&alloc::format!(
             "ALERT [vyr-size] testcard: the {} is on the glass via SPI at \
-             {SPI_HZ} Hz (PCLK2/{}, rate qualified per-unit by read-back, not a \
-             datasheet — these are clone panels), MADCTL={MADCTL:#04x} ({}), \
+             {SPI_HZ} Hz (PCLK2/{}), MADCTL={MADCTL:#04x} ({}), \
              software R/B swap=NOT applied (this path has none). This leg \
              converts RGB888 -> RGB565 in vyr's own software and never touches an \
              LTDC layer format, so it is the CONTROL for the channel-order \

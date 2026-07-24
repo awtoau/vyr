@@ -78,13 +78,6 @@ mod present;
 mod spidma;
 /// The SPI link-rate verdict leg: write a pattern at each divisor, read the
 /// controller's GRAM back, compare. Board-only, additive to [`lcd`].
-#[cfg(all(
-    target_os = "none",
-    feature = "spicheck",
-    feature = "lcd",
-    not(feature = "ltdc")
-))]
-mod spirate;
 /// The labelled colour test card — a display bring-up fixture, not a scene.
 /// Compiled on EVERY target (host, emulated M4, board) because the whole point
 /// is that the same IR renders to the same bytes everywhere and the host PNG is

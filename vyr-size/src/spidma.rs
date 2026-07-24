@@ -53,12 +53,12 @@
 //! [`crate::lcd::show_panel_scene`] and [`crate::anim`] happens on those bytes
 //! BEFORE either engine sees them. A DMA that corrupted the wire could not move
 //! a hash — which is precisely why the wire needs its own instrument
-//! ([`crate::spirate`]) and does not get to hide behind this one.
+//! and does not get to hide behind this one.
 
 // Which half of this module is live depends on which OTHER feature is on.
 // A plain display build (no `spipio`) uses the DMA `flush_rect` and nothing
 // else; the split begin/end API and the wait-cycle instrumentation exist for
-// `--features spicheck`, which is what measures the two engines against each
+// The two engines are measured against each
 // other. Warning about that per feature set would be noise about a module that
 // is entirely reachable across the set of builds it exists for.
 #![allow(dead_code)]

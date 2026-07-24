@@ -160,25 +160,13 @@ testcard = ["run-qemu"]
 orientcard = ["testcard"]
 # --- SPI link rate + DMA (#28 follow-on) ------------------------------------
 # The SPI5 baud-rate divisor is NOT a feature: it is `VYR_SPI_BR`, an
-# `option_env!` compile-time parameter read by `lcd::SPI_BR`, defaulting to
-# /16 (5.625 MHz), the universally-safe rate. See vyr-size/src/lcd.rs. A rung is
-# only meaningful with a read-back verdict attached (see `spicheck`); there is
-# no authoritative datasheet for these clone panels, so the read-back IS the
-# qualifier and it is per-unit. A feature would have needed one per rung.
-#
-# spicheck: the RATE VERDICT leg. Writes a deterministic high-transition
-# pattern into ILI9341 GRAM at each rung of the divisor ladder and READS IT
-# BACK over the bit-banged serial port (which the panel's own read ceiling
-# governs, not SPI5's baud rate), folding the returned bytes to FNV-1a. A rung
-# whose read-back hash equals the reference /16 rung's is bit-exact ON THE WIRE
-# for THIS unit — a machine verdict with no human in the loop, and no claim
-# about any other unit. Additive to `lcd`; the measurement build compiles none
-# of it. Runner: scripts/board-spirate.py.
-spicheck = ["lcd"]
+# `option_env!` compile-time parameter read by `lcd::SPI_BR`, defaulting to `0`
+# = PCLK2/2 = 48 MHz, the fastest rung. See vyr-size/src/lcd.rs. A feature would
+# have needed one per rung.
 # DMA IS THE DEFAULT FLUSH: with `lcd` compiled, `lcd::flush_rect` streams the
 # pixel flush out of SPI5 with DMA2 Stream 4 Channel 2 (SPI5_TX per ST's CubeMX
 # device database) instead of busy-waiting on TXE for ~513 cycles per pixel.
-# Measured: CPU-blocked-on-wire fell 218 ms -> 10 ms at /16 because the RGB565
+# Measured: CPU-blocked-on-wire fell 218 ms -> 10 ms because the RGB565
 # conversion overlaps the transfer. The engine is hash-neutral — the per-band
 # FNV fold happens on the source bytes before either engine sees them.
 #

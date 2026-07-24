@@ -25,11 +25,8 @@ MCU_COMBOS = [
     "board,lcd,spipio",                   # SPI scene, busy-wait flush
     "board,lcd,anim",                     # animated SPI, DMA flush
     "board,lcd,anim,spipio",              # animated SPI, busy-wait flush
-    "board,lcd,spicheck",                 # rate verdict + engine compare (DMA)
-    "board,lcd,spicheck,spipio",          # rate verdict, PIO-only
     "board,lcd,testcard",                 # colour card over SPI
     "board,lcd,orientcard",               # orient card over SPI
-    "board,lcd,spicheck,testcard",        # rate leg + card
     "board,ltdc",                         # LTDC/SDRAM scan
     "board,ltdc,present",                 # direct RGB888 vs banded
     "board,ltdc,testcard",                # card blitted

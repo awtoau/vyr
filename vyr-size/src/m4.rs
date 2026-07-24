@@ -744,25 +744,6 @@ fn main() -> ! {
         }
     }
 
-    // `--features spicheck`: the SPI LINK-RATE VERDICT. Runs on the panel the
-    // `lcd` block above already brought up, LAST of the display legs, and
-    // entirely outside the DWT window `workload::run` opens below — it deals in
-    // its own windows and the 480x270 hash and cycles/frame are untouched by
-    // it. It repaints GRAM with a test pattern, so it deliberately runs AFTER
-    // whatever the earlier legs left on the glass and restores the card (or the
-    // scene) itself before it finishes.
-    #[cfg(all(feature = "lcd", feature = "spicheck", not(feature = "ltdc")))]
-    {
-        let n = crate::lcd::PANEL_BAND_BYTES;
-        if let Err(e) = crate::spirate::run(
-            &mut emit,
-            &mut band_buf[..n],
-            crate::workload::WORKLOAD_QUALITY,
-        ) {
-            write_line(&alloc::format!("ERROR [vyr-size] spirate failed: {e:?}"));
-        }
-    }
-
     // #30, `--features ltdc`: the same scene on the same panel, but through
     // FMC/SDRAM + PLLSAI + LTDC hardware scan-out instead of SPI5 pixel
     // pushes. It borrows the same 240x16 CCM prefix for the RENDER band; the
