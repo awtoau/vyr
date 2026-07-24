@@ -54,9 +54,10 @@ measurement-ledger writer — see below). Return codes:
 ## The measurement ledger — ONE file, ONE writer
 
 `docs/perf/history.jsonl` is **the** canonical measurement history: append-only,
-committed, one row per run, `"schema": 2`. `docs/perf/index.html` and the SVGs
-beside it are regenerated from it and are pure derived artifacts. There is no
-second ledger (`docs/metrics/` was retired in #25).
+committed, one row per run, `"schema": 2`. `docs/perf/index.html` — flat
+sortable tables of every value in that file, and nothing else — is regenerated
+from it and is a pure derived artifact. There is no second ledger
+(`docs/metrics/` was retired in #25).
 
 - **One writer: `./dev.py track`** (`scripts/ledger.py`). Nothing else appends.
   It *measures nothing* — it ingests the artifacts the measuring commands leave
