@@ -326,7 +326,12 @@ dependencies = [
  "serde",
  "serde_json",
  "vyr-core",
+ "vyr-scene",
 ]
+
+[[package]]
+name = "vyr-scene"
+version = "0.0.1"
 
 [[package]]
 name = "vyr-size"
@@ -334,6 +339,7 @@ version = "0.0.1"
 dependencies = [
  "linked_list_allocator",
  "vyr-core",
+ "vyr-scene",
 ]
 
 [[package]]

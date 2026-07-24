@@ -40,6 +40,31 @@ draft = []
 # Mutually exclusive with `draft` (draft wins if both are somehow enabled,
 # and the cfg below says so explicitly rather than silently).
 fast = []
+# The long ANIMATED workload (vyr-scene) instead of the single static
+# fixture: `run-qemu` renders one frame N times, which prices a still frame
+# and says nothing about a UI that changes. `rig` re-generates the IR every
+# frame from the frame index, so the measured window contains what an
+# animating device actually pays — scene emit, parse, glyph-cache churn,
+# contour-memo churn — and the heap series over the run is the only thing
+# that can show a slow leak. Strictly ADDITIVE to `run-qemu`: the published
+# `./dev.py qemu-m4` numbers compile none of it.
+rig = ["dep:vyr-scene"]
+# `rig` at Detail::Lite — the MCU-fitting variant (smaller glyph repertoire
+# and chart series). See vyr_scene::Detail.
+rig-lite = ["rig"]
+# Frame counts for `rig`, matching vyr_scene::Preset. Default (bare `rig`)
+# is Short = 300 frames; these select Smoke = 60 and Full = 1200. A feature
+# rather than an env var because the M4 binary has no env and the count must
+# be part of the build the ELF hash pins.
+rig-smoke = ["rig"]
+rig-full = ["rig"]
+# Bracket EVERY timed frame with a clock read, so the TCG plugin's
+# `match=bkpt,trace=on` delta stream is a per-frame instruction SERIES rather
+# than one aggregate window. Deliberately NOT the default: it invalidates
+# scripts/qemu-insn.py's "largest delta is the timed window" rule (every
+# delta is now one frame), so it is consumed by scripts/rig-insns.py, which
+# reads all the deltas. Mean insns/frame from either is the same number.
+rig-perframe = ["rig"]
 # #33: measure the STACK high-water mark of a real run. Paints the unused
 # CCM stack region with a known word at boot (before .bss is zeroed, so no
 # static is touched) and scans it back up after the workload, printing
@@ -88,6 +113,10 @@ ltdc = ["board"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
+# The frame-indexed animated scene (no_std + alloc, zero deps) — the SAME
+# generator vyr-rig drives on the host, so the two legs animate identical
+# pixels and their hashes are directly comparable across ISAs.
+vyr-scene = { path = "../vyr-scene", optional = true }
 # Real alloc/dealloc heap for the runnable vehicle only (MIT OR Apache-2.0;
 # default features off: no spin lock — the M4 leg is single-threaded with no
 # heap-touching interrupts, vyr-size wraps it in its own unsafe cell).

@@ -1,0 +1,16 @@
+[package]
+name = "vyr-scene"
+description = "Frame-indexed animated test scenes as IR JSON (no_std + alloc) — shared verbatim by the host rig and the M4 measurement vehicle so both legs animate the SAME pixels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# No dependencies, deliberately. The scene generator runs INSIDE the measured
+# window on the M4, so anything it costs is charged to the renderer's
+# insns/frame. Integer arithmetic and a committed sine table only: no libm (a
+# single `sinf` is ~1,145 M4 instructions — see docs/measurements/perf-history.md
+# #32), no serde, no float.
+[dependencies]

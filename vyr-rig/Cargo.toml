@@ -9,6 +9,9 @@ authors.workspace = true
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
+# The frame-indexed scene generators (no_std + alloc), shared verbatim with
+# the M4 measurement vehicle so both legs animate the same pixels.
+vyr-scene = { path = "../vyr-scene" }
 # Hash-chain / ladder JSON files (std side — the rig is a shell harness like
 # vyr-bench; vyr-core is untouched by F18).
 serde = { version = "1", features = ["derive"] }

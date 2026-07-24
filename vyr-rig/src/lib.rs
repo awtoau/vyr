@@ -36,6 +36,7 @@ use std::time::Instant;
 
 use vyr_core::ir::Request;
 use vyr_core::{Assets, Fonts, Rect, RgbaImage, dirty_rects};
+pub use vyr_scene::{Detail, Preset, SUITE_VERSION};
 
 // --- scene parameters --------------------------------------------------------
 
@@ -259,29 +260,71 @@ pub fn scene_ir(w: u32, h: u32, frame: u32) -> String {
 
 // --- FNV-1a hashing + the chain ----------------------------------------------
 
-/// FNV-1a 64 offset basis (public so callers can fold chains themselves).
-pub const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x100_0000_01b3;
+// One implementation, in vyr-scene, because the M4 leg needs the same
+// function in `no_std` and two copies of a hash function is two chances to
+// disagree about a golden. Re-exported here so vyr-rig's public surface is
+// unchanged.
+pub use vyr_scene::{FNV_OFFSET, fnv1a, fnv1a_chain};
 
-/// FNV-1a 64 — the repo's golden-hash function (`tests/golden.rs`).
-pub fn fnv1a(data: &[u8]) -> u64 {
-    let mut h = FNV_OFFSET;
-    for &b in data {
-        h ^= b as u64;
-        h = h.wrapping_mul(FNV_PRIME);
-    }
-    h
+// --- which scene a run drives --------------------------------------------------
+
+/// The scenes the rig can drive. `--scene` on the CLI; recorded in the hash
+/// chain so a chain is never compared across scenes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scene {
+    /// The original F18 rig scene ([`scene_ir`]) — the 600-frame acceptance
+    /// fixture, unchanged.
+    Rig,
+    /// The long animated scene (`vyr_scene`), at a detail level.
+    Long(Detail),
 }
 
-/// Chain step: fold one frame hash (8 LE bytes) into the run hash — the run
-/// hash therefore pins frame ORDER as well as content.
-pub fn fnv1a_chain(run: u64, frame_hash: u64) -> u64 {
-    let mut h = run;
-    for b in frame_hash.to_le_bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(FNV_PRIME);
+impl Scene {
+    /// This scene's IR for one frame — the whole animation contract.
+    pub fn ir(self, w: u32, h: u32, frame: u32) -> String {
+        match self {
+            Scene::Rig => scene_ir(w, h, frame),
+            Scene::Long(d) => vyr_scene::scene_ir(w, h, frame, d),
+        }
     }
-    h
+
+    /// The scene revision tag stored in hash chains.
+    pub fn id(self) -> &'static str {
+        match self {
+            Scene::Rig => SCENE_VERSION,
+            Scene::Long(d) => d.scene_id(),
+        }
+    }
+
+    /// Parse the CLI spelling: `rig`, `long`, `long-lite`.
+    pub fn parse(s: &str) -> Option<Scene> {
+        match s {
+            "rig" => Some(Scene::Rig),
+            "long" => Some(Scene::Long(Detail::Full)),
+            "long-lite" => Some(Scene::Long(Detail::Lite)),
+            _ => None,
+        }
+    }
+
+    /// The committed hash-chain golden for this scene, relative to the repo
+    /// root — the file `--check` consults and `--bless` writes.
+    pub fn chain_file(self) -> &'static str {
+        match self {
+            Scene::Rig => "vyr-rig/hashchain.json",
+            Scene::Long(Detail::Full) => "vyr-rig/hashchain-long.json",
+            Scene::Long(Detail::Lite) => "vyr-rig/hashchain-long-lite.json",
+        }
+    }
+
+    /// The acceptance shape (`w`, `frames`) whose chain is committed. The
+    /// long scenes accept at [`Preset::Full`] — one complete animation
+    /// period — at the [`ACCEPT_W`] rung.
+    pub fn accept(self) -> (u32, u32) {
+        match self {
+            Scene::Rig => (ACCEPT_W, ACCEPT_FRAMES),
+            Scene::Long(_) => (ACCEPT_W, Preset::Full.frames()),
+        }
+    }
 }
 
 // --- the animation driver -------------------------------------------------------
@@ -289,6 +332,8 @@ pub fn fnv1a_chain(run: u64, frame_hash: u64) -> u64 {
 /// What [`run_anim`] proves + measures (pixel counts only — wall timing is
 /// the caller's, per the core/shell clock split).
 pub struct AnimRun {
+    /// Which scene was driven.
+    pub scene: Scene,
     pub w: u32,
     pub h: u32,
     pub frames: u32,
@@ -300,6 +345,20 @@ pub struct AnimRun {
     pub dirty_px: u64,
     /// Σ full-frame px across those steps — the dirty-% denominator.
     pub step_px: u64,
+    /// Merged dirty area for EVERY incremental step (`frames - 1` entries,
+    /// step *i* being frame *i* → frame *i+1*). A mean dirty % cannot tell a
+    /// scene that is always 12 % dirty from one that alternates 1 % and 100 %,
+    /// and the two have very different worst-frame costs — so the series is
+    /// the measurement and the mean is a summary of it.
+    pub dirty_series: Vec<u64>,
+    /// Glyph-cache bytes held after each frame (`frames` entries) — the
+    /// cache has no eviction, so this series is the leak detector.
+    pub glyph_bytes: Vec<u64>,
+    /// Glyph-cache entries held after each frame.
+    pub glyph_entries: Vec<u64>,
+    /// Pixels the painter wrote for each FULL frame — a render-cost proxy
+    /// that is identical on every platform (unlike wall time).
+    pub pixels_written: Vec<u64>,
 }
 
 impl AnimRun {
@@ -309,6 +368,25 @@ impl AnimRun {
             return 0.0;
         }
         100.0 * self.dirty_px as f64 / self.step_px as f64
+    }
+
+    /// Per-step dirty fractions, as percentages of the screen.
+    pub fn dirty_pct_series(&self) -> Vec<f64> {
+        let px = (self.w as f64) * (self.h as f64);
+        self.dirty_series
+            .iter()
+            .map(|&d| 100.0 * d as f64 / px)
+            .collect()
+    }
+
+    /// `(step index, dirty px)` of the single dirtiest incremental step —
+    /// the worst frame the 60 fps claim has to survive.
+    pub fn worst_step(&self) -> Option<(usize, u64)> {
+        self.dirty_series
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, &d)| d)
+            .map(|(i, &d)| (i, d))
     }
 }
 
@@ -329,6 +407,19 @@ pub fn run_anim(
     w: u32,
     h: u32,
     frames: u32,
+    on_frame: impl FnMut(u32, &[u8]),
+) -> Result<AnimRun, String> {
+    run_anim_scene(Scene::Rig, w, h, frames, on_frame)
+}
+
+/// [`run_anim`] for any [`Scene`] — the same three per-frame validations and
+/// the same hash chain, plus the per-step dirty / glyph-cache series the long
+/// scene exists to produce.
+pub fn run_anim_scene(
+    scene: Scene,
+    w: u32,
+    h: u32,
+    frames: u32,
     mut on_frame: impl FnMut(u32, &[u8]),
 ) -> Result<AnimRun, String> {
     if frames == 0 {
@@ -344,11 +435,19 @@ pub fn run_anim(
     let mut frame_hashes = Vec::with_capacity(frames as usize);
     let mut run_hash = FNV_OFFSET;
     let mut dirty_px = 0u64;
+    let mut dirty_series = Vec::with_capacity(frames.saturating_sub(1) as usize);
+    let mut glyph_bytes = Vec::with_capacity(frames as usize);
+    let mut glyph_entries = Vec::with_capacity(frames as usize);
+    let mut pixels_written = Vec::with_capacity(frames as usize);
     for f in 0..frames {
-        let ir = scene_ir(w, h, f);
+        let ir = scene.ir(w, h, f);
         let req = Request::parse(&ir).map_err(|e| format!("frame {f}: parse: {e:?}"))?;
-        req.render_with(&mut fonts, &assets, area, &mut full, stride)
+        let stats = req
+            .render_with(&mut fonts, &assets, area, &mut full, stride)
             .map_err(|e| format!("frame {f}: full render: {e:?}"))?;
+        glyph_bytes.push(stats.glyph_cache_bytes);
+        glyph_entries.push(stats.glyph_cache_entries);
+        pixels_written.push(stats.pixels_written);
         if is_blank(&full) {
             return Err(format!(
                 "frame {f}: rendered BLANK (uniform {:?}) — a blank render is a bug (I6)",
@@ -364,6 +463,7 @@ pub fn run_anim(
                     .render_incremental(p, &mut fonts, &assets, &mut incr, stride)
                     .map_err(|e| format!("frame {f}: incremental render: {e:?}"))?;
                 dirty_px += stats.dirty_area_px;
+                dirty_series.push(stats.dirty_area_px);
             }
         }
         if full != incr {
@@ -388,6 +488,7 @@ pub fn run_anim(
         prev = Some(req);
     }
     Ok(AnimRun {
+        scene,
         w,
         h,
         frames,
@@ -395,6 +496,10 @@ pub fn run_anim(
         run_hash,
         dirty_px,
         step_px: (frames as u64 - 1) * w as u64 * h as u64,
+        dirty_series,
+        glyph_bytes,
+        glyph_entries,
+        pixels_written,
     })
 }
 
@@ -407,6 +512,13 @@ pub fn run_anim(
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct HashChain {
     pub scene: String,
+    /// #43: the measurement suite this chain belongs to. Informational (like
+    /// `arch`) and EXCLUDED from [`HashChain::diff`] — a suite bump obliges a
+    /// replay, but it is not itself a pixel change, and a chain that failed
+    /// on it would be reporting bookkeeping as a regression. Defaulted so
+    /// chains written before the field still parse.
+    #[serde(default)]
+    pub suite: String,
     pub w: u32,
     pub h: u32,
     pub frames: u32,
@@ -420,7 +532,8 @@ pub struct HashChain {
 impl HashChain {
     pub fn from_run(r: &AnimRun) -> Self {
         HashChain {
-            scene: SCENE_VERSION.into(),
+            scene: r.scene.id().into(),
+            suite: SUITE_VERSION.into(),
             w: r.w,
             h: r.h,
             frames: r.frames,

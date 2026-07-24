@@ -71,6 +71,9 @@ pub const CHECKER: &[u8] = include_bytes!("../assets/checker-24.rgba");
 /// 480×270 panel fixture — DEMO_IR/TEXT_IR-derived: text (both font sizes),
 /// an image blit, and one of each headline widget, all crossing several
 /// 16-row band seams. ASCII-only text (the subset font's whole range).
+/// (`--features rig` animates `vyr-scene` instead and never reads this; the
+/// constant stays so flipping the feature off is a one-word change.)
+#[cfg_attr(feature = "rig", allow(dead_code))]
 pub const FIXTURE_IR: &str = r##"{
   "schema_version": "0.6-vyvanse",
   "w": 480, "h": 270,
@@ -128,7 +131,7 @@ fn phase(emit: &mut dyn FnMut(&str), heap: &dyn Fn() -> (usize, usize), name: &s
 /// the per-phase story). Returns (frame hash, Σ pixels_written, last band's
 /// stats — whose glyph-cache counters are the Fonts registry's cumulative
 /// truth).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn render_frame_banded(
     req: &vyr_core::ir::Request,
     fonts: &mut Fonts,
@@ -198,6 +201,22 @@ fn render_frame_banded(
 /// icount) and enables the timed warmed-frames loop. `band_buf` is the
 /// caller-placed [`BAND_BYTES`] output buffer. Returns the frame hash.
 pub fn run(
+    emit: &mut dyn FnMut(&str),
+    heap: &dyn Fn() -> (usize, usize),
+    clock_cs: Option<&dyn Fn() -> i32>,
+    band_buf: &mut [u8],
+    quality: Quality,
+) -> Result<u64, RenderError> {
+    #[cfg(feature = "rig")]
+    return run_animated(emit, heap, clock_cs, band_buf, quality);
+    #[cfg(not(feature = "rig"))]
+    run_static(emit, heap, clock_cs, band_buf, quality)
+}
+
+/// The original single-fixture workload: one frame, rendered over and over.
+/// See [`run`].
+#[cfg(not(feature = "rig"))]
+fn run_static(
     emit: &mut dyn FnMut(&str),
     heap: &dyn Fn() -> (usize, usize),
     clock_cs: Option<&dyn Fn() -> i32>,
@@ -368,10 +387,233 @@ pub fn run(
     Ok(hash)
 }
 
+// --- the long ANIMATED workload (`--features rig`) ----------------------------
+
+/// Detail level of the animated scene — [`vyr_scene::Detail::Lite`] under
+/// `--features rig-lite` (the MCU-fitting variant), Full otherwise.
+#[cfg(all(feature = "rig", not(feature = "rig-lite")))]
+pub const RIG_DETAIL: vyr_scene::Detail = vyr_scene::Detail::Full;
+/// See [`RIG_DETAIL`].
+#[cfg(all(feature = "rig", feature = "rig-lite"))]
+pub const RIG_DETAIL: vyr_scene::Detail = vyr_scene::Detail::Lite;
+
+/// Frames the animated workload renders — `vyr_scene::Preset`, selected by
+/// feature because the M4 binary has no env and the count must be part of
+/// the build the ELF hash pins.
+#[cfg(all(feature = "rig", feature = "rig-smoke"))]
+pub const RIG_FRAMES: u32 = 60;
+/// See [`RIG_FRAMES`].
+#[cfg(all(feature = "rig", feature = "rig-full", not(feature = "rig-smoke")))]
+pub const RIG_FRAMES: u32 = 1200;
+/// See [`RIG_FRAMES`].
+#[cfg(all(feature = "rig", not(feature = "rig-smoke"), not(feature = "rig-full")))]
+pub const RIG_FRAMES: u32 = 300;
+
+/// The long animated workload: `RIG_FRAMES` DIFFERENT frames of
+/// `vyr_scene`'s long scene, each generated from its frame index, parsed,
+/// and rendered in 480×16 bands — the shape a real animating device runs.
+///
+/// Two passes, deliberately:
+///
+/// 1. **Survey (untimed).** Every frame's banded byte stream folds into a
+///    per-frame FNV-1a, and those chain into ONE run digest — the same chain
+///    `vyr-rig` computes on the host, so a single hash compares whole runs
+///    across ISAs and the per-frame line says which frame first diverged.
+///    Heap live/peak, glyph-cache size and contour-memo occupancy are
+///    emitted periodically: a heap PEAK is a scalar and cannot show drift,
+///    and drift over a long run is the entire point of a long run.
+/// 2. **Timed.** The same frames again with no semihosting inside the loop,
+///    bracketed by two clock reads, so `scripts/qemu-insn.py`'s
+///    largest-delta rule still isolates exactly the render window (#44: the
+///    hash fold stays OUT of it). `--features rig-perframe` adds a clock
+///    read per frame instead, turning that window into a per-frame series.
+///
+/// The pass-2 window INCLUDES scene generation and IR parse. That is not
+/// slack: an animating UI re-emits its IR every frame, so those are frame
+/// costs, and hiding them would make the number describe a still image.
+#[cfg(feature = "rig")]
+fn run_animated(
+    emit: &mut dyn FnMut(&str),
+    heap: &dyn Fn() -> (usize, usize),
+    clock_cs: Option<&dyn Fn() -> i32>,
+    band_buf: &mut [u8],
+    quality: Quality,
+) -> Result<u64, RenderError> {
+    if band_buf.len() != BAND_BYTES {
+        return Err(RenderError::BadIr(alloc::format!(
+            "band_buf is {} B, expected {BAND_BYTES}",
+            band_buf.len()
+        )));
+    }
+    let qname = match quality {
+        Quality::Exact => "Exact",
+        Quality::Fast => "Fast",
+        Quality::Draft => "Draft",
+    };
+    emit(&format!(
+        "INFO  [vyr-size] rig workload: scene {} suite {} — {RIG_FRAMES} frames \
+         ({:.2} s @ {} fps) at {FIXTURE_W}x{FIXTURE_H} in {FIXTURE_W}x{BAND_H} bands; \
+         quality={qname}",
+        RIG_DETAIL.scene_id(),
+        vyr_scene::SUITE_VERSION,
+        RIG_FRAMES as f32 / vyr_scene::FPS as f32,
+        vyr_scene::FPS,
+    ));
+
+    let mut fonts = Fonts::new();
+    fonts.register("roboto", opaque(SUBSET_FONT).to_vec())?;
+    phase(emit, heap, "font-reg");
+    let mut assets = Assets::new();
+    assets.register(
+        vyr_core::demo::IMAGE_ASSET,
+        vyr_core::RgbaImage::new(24, 24, opaque(CHECKER).to_vec())?,
+    )?;
+    phase(emit, heap, "asset-reg");
+
+    // ONE contour memo for the whole run (#32) — and now under churn: the
+    // scene's gauge breathes through 13 distinct diameters, so this is the
+    // first time the 8 KiB budget is asked to hold more than one shape.
+    let mut shapes = Shapes::new();
+
+    // ~20 samples whatever the preset, so the survey's own semihosting
+    // deltas stay far smaller than the timed window (qemu-insn.py takes the
+    // LARGEST delta; a coarse survey must never out-run the measurement).
+    let report_every = (RIG_FRAMES / 20).max(1);
+    let mut chain = vyr_scene::FNV_OFFSET;
+    for f in 0..RIG_FRAMES {
+        // The IR STRING is dropped before the render starts: on a part with
+        // 122,880 B of arena, holding a 3–4 KB scene string alive across a
+        // banded frame is 3–4 KB of peak nobody needs, and a real animating
+        // device would not do it either.
+        let req = {
+            let ir = vyr_scene::scene_ir(FIXTURE_W, FIXTURE_H, f, RIG_DETAIL);
+            vyr_core::ir::Request::parse(opaque(ir.as_str()))?
+        };
+        let (hash, pixels, stats) = render_frame_banded(
+            &req,
+            &mut fonts,
+            &assets,
+            &mut shapes,
+            band_buf,
+            quality,
+            None,
+            true,
+        )?;
+        chain = vyr_scene::fnv1a_chain(chain, hash);
+        if f.is_multiple_of(report_every) || f + 1 == RIG_FRAMES {
+            let (live, peak) = heap();
+            emit(&format!(
+                "INFO  [vyr-size] rig frame={f} hash={hash:#018x} px={pixels} \
+                 heap_live={live} heap_peak={peak} glyph_bytes={} glyph_entries={} \
+                 memo_bytes={} memo_hits={} memo_misses={} memo_overflow={} fastpath={}",
+                stats.glyph_cache_bytes,
+                stats.glyph_cache_entries,
+                shapes.cache_bytes(),
+                shapes.hits(),
+                shapes.misses(),
+                shapes.overflow(),
+                stats.fastpath_pixels,
+            ));
+        }
+    }
+    let (live, peak) = heap();
+    emit(&format!(
+        "INFO  [vyr-size] rig chain fnv1a={chain:#018x} frames={RIG_FRAMES} \
+         scene={} detail_frames_ok heap_peak={peak} heap_live={live}",
+        RIG_DETAIL.scene_id(),
+    ));
+
+    if let Some(clock) = clock_cs {
+        let t0 = clock();
+        for f in 0..RIG_FRAMES {
+            // Per-frame bracketing (#rig-perframe): a semihosting trap here
+            // makes every plugin delta exactly one frame, which is how the
+            // WORST frame gets a number instead of an estimate.
+            #[cfg(feature = "rig-perframe")]
+            let _ = clock();
+            let req = {
+                let ir = vyr_scene::scene_ir(FIXTURE_W, FIXTURE_H, f, RIG_DETAIL);
+                vyr_core::ir::Request::parse(opaque(ir.as_str()))?
+            };
+            render_frame_banded(
+                &req,
+                &mut fonts,
+                &assets,
+                &mut shapes,
+                band_buf,
+                quality,
+                None,
+                false,
+            )?;
+        }
+        let t1 = clock();
+        let delta = (t1 as u32).wrapping_sub(t0 as u32);
+        // The literal "timed: N warmed frames" spelling is the contract
+        // scripts/qemu-insn.py parses to divide the window by frames.
+        #[cfg(feature = "board")]
+        emit(&format!(
+            "INFO  [vyr-size] timed: {RIG_FRAMES} warmed frames in {delta} cycles \
+             (DWT_CYCCNT, REAL SILICON — {} cycles/frame, animated)",
+            delta / RIG_FRAMES
+        ));
+        #[cfg(not(feature = "board"))]
+        emit(&format!(
+            "INFO  [vyr-size] timed: {RIG_FRAMES} warmed frames in {delta} cs virtual \
+             (SYS_CLOCK; the window includes scene emit + IR parse — animation frame cost)"
+        ));
+    }
+
+    let (live, peak) = heap();
+    emit(&format!(
+        "ALERT [vyr-size] rig workload ok: heap peak={peak} B live-end={live} B"
+    ));
+    Ok(chain)
+}
+
+/// Host-only cross-check for the animated workload: frame 0 of the long
+/// scene, hashed BOTH ways — `(banded, full-frame)`. Frame 0 rather than the
+/// chain, because a chain over many frames has no full-frame counterpart to
+/// compare against; band equivalence is a per-frame property and this is the
+/// per-frame form of it.
+#[cfg(all(not(target_os = "none"), feature = "rig"))]
+pub fn rig_frame0_hashes(quality: Quality) -> Result<(u64, u64), RenderError> {
+    let mut fonts = Fonts::new();
+    fonts.register("roboto", SUBSET_FONT.to_vec())?;
+    let mut assets = Assets::new();
+    assets.register(
+        vyr_core::demo::IMAGE_ASSET,
+        vyr_core::RgbaImage::new(24, 24, CHECKER.to_vec())?,
+    )?;
+    let ir = vyr_scene::scene_ir(FIXTURE_W, FIXTURE_H, 0, RIG_DETAIL);
+    let req = vyr_core::ir::Request::parse(&ir)?;
+    let mut shapes = Shapes::new();
+    let mut band = vec![0u8; BAND_BYTES];
+    let (banded, _, _) = render_frame_banded(
+        &req,
+        &mut fonts,
+        &assets,
+        &mut shapes,
+        &mut band,
+        quality,
+        None,
+        true,
+    )?;
+    let stride = (FIXTURE_W * 3) as usize;
+    let mut buf = vec![0u8; stride * FIXTURE_H as usize];
+    let area = Rect {
+        x: 0,
+        y: 0,
+        w: FIXTURE_W,
+        h: FIXTURE_H,
+    };
+    vyr_core::render_with_quality(&ir, &mut fonts, &assets, area, &mut buf, stride, quality)?;
+    Ok((banded, fnv1a_fold(FNV_OFFSET, &buf)))
+}
+
 /// Host-only cross-check: the SAME fixture rendered full-frame in one pass
 /// (the 567,424 B gutter pixmap a 192 KiB part can never hold), hashed with
 /// the same FNV — must equal the banded stream's hash (band equivalence).
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(feature = "rig")))]
 pub fn full_frame_hash(quality: Quality) -> Result<u64, RenderError> {
     let mut fonts = Fonts::new();
     fonts.register("roboto", SUBSET_FONT.to_vec())?;

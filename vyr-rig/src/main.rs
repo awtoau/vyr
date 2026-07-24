@@ -21,7 +21,8 @@ use std::process::ExitCode;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use vyr_rig::{
-    ACCEPT_FRAMES, ACCEPT_W, HashChain, RUNGS, RungReport, measure_rung, run_anim, rung,
+    ACCEPT_FRAMES, ACCEPT_W, HashChain, Preset, RUNGS, RungReport, SUITE_VERSION, Scene,
+    measure_rung, run_anim_scene, rung,
 };
 
 /// A ladder regression must exceed baseline × this to fail — and then
@@ -65,6 +66,20 @@ fn write_png(path: &std::path::Path, w: u32, h: u32, rgb: &[u8]) -> Result<(), S
         .map_err(|e| format!("encode {path:?}: {e}"))
 }
 
+/// A `u64` slice as a bare JSON array body (no brackets) — the series files
+/// are written by hand because they are large and flat, and pulling serde
+/// into the hot path to emit `[1,2,3]` would be a dependency for nothing.
+fn csv_u64(v: &[u64]) -> String {
+    let mut s = String::with_capacity(v.len() * 6);
+    for (i, x) in v.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&x.to_string());
+    }
+    s
+}
+
 /// `--key value` lookup over the raw arg list.
 fn arg_val(args: &[String], key: &str) -> Option<String> {
     args.iter()
@@ -73,6 +88,34 @@ fn arg_val(args: &[String], key: &str) -> Option<String> {
 }
 
 fn anim(args: &[String]) -> ExitCode {
+    let scene = match arg_val(args, "--scene") {
+        None => Scene::Rig,
+        Some(s) => match Scene::parse(&s) {
+            Some(sc) => sc,
+            None => {
+                log(
+                    "ERROR",
+                    &format!("--scene {s:?} unknown (rig | long | long-lite)"),
+                );
+                return ExitCode::from(2);
+            }
+        },
+    };
+    // `--preset` is the frame count by name; `--frames` still wins if both
+    // are given, so an ad-hoc length is always reachable.
+    let preset = match arg_val(args, "--preset") {
+        None => None,
+        Some(s) => match Preset::parse(&s) {
+            Some(p) => Some(p),
+            None => {
+                log(
+                    "ERROR",
+                    &format!("--preset {s:?} unknown (smoke | short | full)"),
+                );
+                return ExitCode::from(2);
+            }
+        },
+    };
     let size: u32 = match arg_val(args, "--size")
         .as_deref()
         .unwrap_or(&ACCEPT_W.to_string())
@@ -95,9 +138,13 @@ fn anim(args: &[String]) -> ExitCode {
         );
         return ExitCode::from(2);
     };
+    let default_frames = preset.map(Preset::frames).unwrap_or_else(|| match scene {
+        Scene::Rig => ACCEPT_FRAMES,
+        Scene::Long(_) => scene.accept().1,
+    });
     let frames: u32 = match arg_val(args, "--frames")
         .as_deref()
-        .unwrap_or(&ACCEPT_FRAMES.to_string())
+        .unwrap_or(&default_frames.to_string())
         .parse()
     {
         Ok(v) if v > 0 => v,
@@ -113,22 +160,47 @@ fn anim(args: &[String]) -> ExitCode {
         log("ERROR", &format!("create {d:?}: {e}"));
         return ExitCode::FAILURE;
     }
+    // A 1200-frame dump is 1200 PNG encodes; `--dump-every N` keeps the
+    // eyeball artifact affordable on the long presets without shortening the
+    // run (the run is the measurement, the PNGs are the illustration).
+    let dump_every: u32 = match arg_val(args, "--dump-every")
+        .as_deref()
+        .unwrap_or("1")
+        .parse()
+    {
+        Ok(v) if v > 0 => v,
+        _ => {
+            log("ERROR", "--dump-every must be a positive integer");
+            return ExitCode::from(2);
+        }
+    };
     log(
         "INFO",
         &format!(
-            "anim start: {w}x{h}, {frames} frames @ logical 60 fps, arch {}, dump {}",
+            "anim start: scene {} (suite {SUITE_VERSION}), {w}x{h}, {frames} frames \
+             @ logical 60 fps = {:.2} s, arch {}, dump {}",
+            scene.id(),
+            frames as f64 / 60.0,
             std::env::consts::ARCH,
             dump_dir
                 .as_ref()
-                .map(|d| d.display().to_string())
+                .map(|d| format!("{} (every {dump_every})", d.display()))
                 .unwrap_or_else(|| "off".into()),
         ),
     );
     let t0 = Instant::now();
     let mut dump_err: Option<String> = None;
-    let run = match run_anim(w, h, frames, |f, rgb| {
+    // Per-frame wall time: measured HERE, in the shell, because the library
+    // is the pixel-counting half and timing is the caller's (the core/shell
+    // clock split). `on_frame` fires once per proven frame, so consecutive
+    // marks bracket exactly one full+incremental+verify step.
+    let mut frame_ns: Vec<u64> = Vec::with_capacity(frames as usize);
+    let mut last = Instant::now();
+    let run = match run_anim_scene(scene, w, h, frames, |f, rgb| {
+        frame_ns.push(last.elapsed().as_nanos() as u64);
         if let Some(d) = &dump_dir
             && dump_err.is_none()
+            && f.is_multiple_of(dump_every)
             && let Err(e) = write_png(&d.join(format!("frame-{f:04}.png")), w, h, rgb)
         {
             dump_err = Some(e);
@@ -140,6 +212,7 @@ fn anim(args: &[String]) -> ExitCode {
                 &format!("  frame {f}/{frames} ok (incremental==full so far)"),
             );
         }
+        last = Instant::now();
     }) {
         Ok(r) => r,
         Err(e) => {
@@ -164,6 +237,49 @@ fn anim(args: &[String]) -> ExitCode {
             run.run_hash
         ),
     );
+    // The worst frame, not the mean: a 60 fps claim is about the frame that
+    // nearly missed, so both extremes are logged unconditionally.
+    if let Some((i, d)) = run.worst_step() {
+        log(
+            "INFO",
+            &format!(
+                "  dirtiest step: frame {i}→{} at {d} px ({:.1}% of screen); quietest {:.2}%",
+                i + 1,
+                100.0 * d as f64 / (w as f64 * h as f64),
+                run.dirty_pct_series()
+                    .iter()
+                    .copied()
+                    .fold(f64::INFINITY, f64::min),
+            ),
+        );
+    }
+    if let (Some(&first), Some(&last_b)) = (run.glyph_bytes.first(), run.glyph_bytes.last()) {
+        log(
+            "INFO",
+            &format!(
+                "  glyph cache: {first} B after frame 0 → {last_b} B after frame {} \
+                 ({} entries) — the cache has NO eviction, so a still-rising tail is the leak",
+                frames - 1,
+                run.glyph_entries.last().copied().unwrap_or(0),
+            ),
+        );
+    }
+    if let (Some(worst), Some(&slowest)) = (
+        frame_ns.iter().enumerate().max_by_key(|&(_, &n)| n),
+        frame_ns.iter().max(),
+    ) {
+        let mean = frame_ns.iter().sum::<u64>() as f64 / frame_ns.len() as f64;
+        log(
+            "INFO",
+            &format!(
+                "  host cost: mean {:.3} ms/frame, worst frame {} at {:.3} ms ({:.2}x mean)",
+                mean / 1e6,
+                worst.0,
+                slowest as f64 / 1e6,
+                slowest as f64 / mean,
+            ),
+        );
+    }
     let chain = HashChain::from_run(&run);
     if let Some(path) = arg_val(args, "--hashes-out") {
         if let Err(e) = std::fs::write(&path, chain.to_json()) {
@@ -178,9 +294,11 @@ fn anim(args: &[String]) -> ExitCode {
         // emulation by definition; the consumer labels it.
         let json = format!(
             "{{\"w\":{w},\"h\":{h},\"frames\":{frames},\"arch\":\"{}\",\
+             \"scene\":\"{}\",\"suite\":\"{SUITE_VERSION}\",\
              \"wall_s\":{:.3},\"ms_frame\":{ms_frame:.4},\"dirty_pct\":{:.2},\
              \"run_hash\":\"{:#018x}\",\"dumped_pngs\":{}}}\n",
             std::env::consts::ARCH,
+            scene.id(),
             wall.as_secs_f64(),
             run.dirty_pct(),
             run.run_hash,
@@ -190,6 +308,35 @@ fn anim(args: &[String]) -> ExitCode {
             log("ERROR", &format!("write {path}: {e}"));
             return ExitCode::FAILURE;
         }
+    }
+    if let Some(path) = arg_val(args, "--series-out") {
+        // The per-frame SERIES, not summaries: dirty area per step, glyph
+        // cache growth per frame, painter pixels per frame, host ns per
+        // frame. Everything a distribution or a drift plot needs, and the
+        // only form in which "does the heap creep over 1200 frames?" is
+        // answerable at all.
+        let json = format!(
+            "{{\"scene\":\"{}\",\"suite\":\"{SUITE_VERSION}\",\"key\":\"{}\",\
+             \"w\":{w},\"h\":{h},\"frames\":{frames},\"arch\":\"{}\",\
+             \"screen_px\":{},\"run_hash\":\"{:#018x}\",\
+             \"dirty_px\":[{}],\"glyph_cache_bytes\":[{}],\"glyph_cache_entries\":[{}],\
+             \"pixels_written\":[{}],\"frame_ns\":[{}]}}\n",
+            scene.id(),
+            format_args!("{}@{w}x{h}/{frames}", scene.id()),
+            std::env::consts::ARCH,
+            w as u64 * h as u64,
+            run.run_hash,
+            csv_u64(&run.dirty_series),
+            csv_u64(&run.glyph_bytes),
+            csv_u64(&run.glyph_entries),
+            csv_u64(&run.pixels_written),
+            csv_u64(&frame_ns),
+        );
+        if let Err(e) = std::fs::write(&path, json) {
+            log("ERROR", &format!("write {path}: {e}"));
+            return ExitCode::FAILURE;
+        }
+        log("INFO", &format!("per-frame series → {path}"));
     }
     match (arg_val(args, "--check"), arg_val(args, "--bless")) {
         (Some(_), Some(_)) => {
@@ -445,8 +592,10 @@ fn main() -> ExitCode {
         Some("ladder") => ladder(&args[1..]),
         _ => {
             eprintln!(
-                "usage: vyr-rig anim --size W --frames N [--dump-dir D] [--hashes-out F]\n\
-                 \x20                  [--stats-out F] [--check F | --bless F]\n\
+                "usage: vyr-rig anim [--scene rig|long|long-lite] [--preset smoke|short|full]\n\
+                 \x20                  [--size W] [--frames N] [--dump-dir D] [--dump-every N]\n\
+                 \x20                  [--hashes-out F] [--stats-out F] [--series-out F]\n\
+                 \x20                  [--check F | --bless F]\n\
                  \x20      vyr-rig ladder [--json-out F] [--check | --record]"
             );
             ExitCode::from(2)
