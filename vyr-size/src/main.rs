@@ -65,6 +65,11 @@ mod anim;
 /// parallel RGB bus. Uses [`lcd`] for the command channel and the scene.
 #[cfg(all(target_os = "none", feature = "ltdc"))]
 mod ltdc;
+/// #45: the presentation-mode comparison — render DIRECT into the SDRAM
+/// framebuffer versus render into a small buffer and flush. Additive to
+/// [`ltdc`], which owns the SDRAM/LTDC bring-up it measures against.
+#[cfg(all(target_os = "none", feature = "present"))]
+mod present;
 
 #[cfg(not(feature = "run-qemu"))]
 use alloc::vec;

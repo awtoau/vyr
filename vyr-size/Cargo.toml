@@ -85,6 +85,16 @@ anim = ["lcd"]
 # own and reports render and blit cycles separately.
 # Runner: scripts/board-ltdc.py.
 ltdc = ["board"]
+# #45: MEASURE both presentation modes rather than assume one. Additive to
+# `ltdc` in exactly the way `ltdc` is additive to `board`: it adds a SECOND,
+# RGB888 framebuffer in SDRAM, renders straight into it through the same
+# `render(tree, area, buf, stride)` entry point (no vyr-core change — `buf`
+# was always the caller's memory), and prices it against the existing
+# render-to-CCM-then-blit path per tier, full-frame and dirty-rect, with the
+# memory-bandwidth probes that explain the result. `--features board` and
+# `--features board,ltdc` compile none of it and are unchanged byte for byte.
+# Runner: scripts/board-present.py.
+present = ["ltdc"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }
