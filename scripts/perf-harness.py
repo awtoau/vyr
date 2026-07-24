@@ -103,7 +103,8 @@ HARNESS_VERSION = "perf-harness/1.0"
 HARNESS_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 REPO = Path(__file__).resolve().parent.parent  # the INSTRUMENT's checkout
-TMP = REPO / "tmp"
+# See qemu-insn.py: per-worker scratch so parallel replay shards do not collide.
+TMP = Path(os.environ["VYR_PERF_TMP"]) if os.environ.get("VYR_PERF_TMP") else REPO / "tmp"
 LOG = TMP / "perf-harness.log"
 
 # Detached specimen worktree + a shared cargo target dir. dev.py resolves
@@ -850,6 +851,28 @@ LVGL_FOLD_PATCH = "for (uint32_t i = 0; i < 0; i++) { /* perf-harness fold diffe
 
 
 def measure_lvgl(repeat: int, cache: dict | None) -> dict:
+    # The anchor is REF-INDEPENDENT by construction: LVGL_RUNNER and LVGL_MAIN
+    # resolve against REPO (the instrument's checkout), never the specimen, so
+    # the same ELF is rebuilt and re-measured for every commit in a replay —
+    # 40+ identical builds saying the same thing. VYR_LVGL_CELL points at a
+    # cell measured once and reused, which is also what makes parallel shards
+    # safe: run.py writes a fixed tmp/lvgl-m4.elf that concurrent builds would
+    # otherwise clobber.
+    cached = os.environ.get("VYR_LVGL_CELL")
+    if cached and Path(cached).exists():
+        cell = json.loads(Path(cached).read_text())
+        # provenance, NOT metric_notes: that field explains why a metric is
+        # NULL, and every entry in it must surface on the page beside the null
+        # it accounts for. Nothing here is null.
+        cell.setdefault("provenance", {})["reused"] = (
+            "measured once per replay, not per specimen: the LVGL anchor is built "
+            "from the INSTRUMENT's checkout and cannot vary with the vyr ref"
+        )
+        return cell
+    return _measure_lvgl_uncached(repeat, cache)
+
+
+def _measure_lvgl_uncached(repeat: int, cache: dict | None) -> dict:
     """The LVGL anchor, measured by the SAME instrument and with its fold priced
     the SAME way (differential rebuild) as vyr's.
 

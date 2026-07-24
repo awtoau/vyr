@@ -53,10 +53,14 @@ import re
 import subprocess
 import sys
 import time
+import pathlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TMP = REPO / "tmp"
+# VYR_PERF_TMP: a per-worker scratch namespace. The output name is derived from
+# a caller-supplied tag that REPEATS across specimens (ph-exact-z-fold), so two
+# parallel replay shards would otherwise write the same file.
+TMP = pathlib.Path(os.environ["VYR_PERF_TMP"]) if os.environ.get("VYR_PERF_TMP") else REPO / "tmp"
 LOG = TMP / "qemu-insn.log"
 
 QEMU_BUILD = Path(os.environ.get("VYR_QEMU_BUILD", "/mnt/2tb/git_debris/qemu-plugins-build"))
