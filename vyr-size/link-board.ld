@@ -92,12 +92,17 @@ SECTIONS
 
 /* The stack runs down from the top of CCM (initial SP = m4::STACK_TOP,
  * baked into the vector table). Assert the link leaves it headroom over
- * the CCM residents: 16 KiB floor, because tiny-skia's flattening + JSON
- * parse recursion measure well under that on hosts, and a silent collision
- * with the band buffer would corrupt rendered bytes (caught at LINK time,
- * not as a flaky runtime fault). lld wants ASSERT at top level. */
-ASSERT(ORIGIN(CCM) + LENGTH(CCM) - __eccm >= 16384,
-       "board: less than 16 KiB stack headroom above .ccm; shrink the band buffer")
+ * the CCM residents, because a silent collision with the band buffer would
+ * corrupt rendered bytes (caught at LINK time, not as a flaky runtime
+ * fault). lld wants ASSERT at top level.
+ *
+ * 24 KiB floor, MEASURED on the emulated twin of this vehicle (#33,
+ * 2026-07-24, `--features stack-probe`): high-water 18,748-19,068 B across
+ * every tier and every opt-level. The previous 16 KiB floor was BELOW actual
+ * usage — it would have linked a firmware whose stack overflows. Kept in
+ * step with link-qemu.ld; the board leg runs the same render path. */
+ASSERT(ORIGIN(CCM) + LENGTH(CCM) - __eccm >= 24576,
+       "board: less than 24 KiB stack headroom above .ccm; measured high-water is ~19 KiB (#33) — shrink the band buffer")
 
 /* And the heap arena + statics must fit SRAM outright (the linker errors on
  * overflow anyway; this names the failure). */

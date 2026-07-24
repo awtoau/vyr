@@ -124,6 +124,69 @@ pub fn heap_now() -> (usize, usize) {
     )
 }
 
+// --- #33: stack high-water probe (`--features stack-probe`, OFF by default) -
+
+/// The word painted into the unused stack region at boot. Conventional
+/// pattern: not 0 (crt0 zeroes .bss with it), not an address the code holds
+/// everywhere, and not a plausible small integer.
+#[cfg(feature = "stack-probe")]
+const STACK_PAINT: u32 = 0xA5A5_A5A5;
+
+/// Bytes below the painting frame's own SP left untouched — the paint loop
+/// must not overwrite the frame it is running in, and no exception can push
+/// below SP here because none is ever enabled.
+#[cfg(feature = "stack-probe")]
+const STACK_PAINT_MARGIN: u32 = 256;
+
+/// Fill the unused stack region (from the top of the CCM residents up to
+/// just below the current SP) with [`STACK_PAINT`]. Called from `reset`
+/// BEFORE `.bss` is zeroed, so it may touch no static — linker symbol and
+/// raw pointers only.
+///
+/// # Safety
+/// Must run with the CCM stack otherwise untouched (i.e. first thing in
+/// `reset`), on this crate's `link-qemu.ld`/`link-board.ld` layout.
+#[cfg(feature = "stack-probe")]
+unsafe fn paint_stack() {
+    unsafe extern "C" {
+        static __eccm: u32;
+    }
+    let lo = core::ptr::addr_of!(__eccm) as u32;
+    let sp: u32;
+    // SAFETY: reads SP into a register; no memory access, no stack use.
+    unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack)) };
+    let hi = sp.saturating_sub(STACK_PAINT_MARGIN);
+    let mut p = lo as *mut u32;
+    // SAFETY: [lo, hi) is the linker-reserved stack region below this
+    // frame — 4-aligned, inside CCM, and dead by construction.
+    unsafe {
+        while (p as u32) < hi {
+            p.write_volatile(STACK_PAINT);
+            p = p.add(1);
+        }
+    }
+}
+
+/// `(used, painted)` bytes: how far the stack actually grew down from
+/// [`STACK_TOP`], and how much region the paint covered (the measurement's
+/// ceiling — `used == painted` means the probe SATURATED and the real figure
+/// is unknown-but-larger).
+#[cfg(feature = "stack-probe")]
+pub fn stack_watermark() -> (u32, u32) {
+    unsafe extern "C" {
+        static __eccm: u32;
+    }
+    let lo = core::ptr::addr_of!(__eccm) as u32;
+    let mut p = lo as *const u32;
+    // SAFETY: scanning the same painted CCM range, upward, read-only.
+    unsafe {
+        while (p as u32) < STACK_TOP && p.read_volatile() == STACK_PAINT {
+            p = p.add(1);
+        }
+    }
+    (STACK_TOP - p as u32, STACK_TOP - lo - STACK_PAINT_MARGIN)
+}
+
 // --- semihosting (ARM "Semihosting for AArch32/AArch64", via bkpt 0xAB) ----
 
 const SYS_WRITE0: u32 = 0x04; // r1 = NUL-terminated string
@@ -531,6 +594,10 @@ pub unsafe extern "C" fn reset() -> ! {
         CPACR.write_volatile(CPACR.read_volatile() | (0xF << 20));
         core::arch::asm!("dsb", "isb", options(nostack));
 
+        // #33: paint the dead stack region before anything has used it.
+        #[cfg(feature = "stack-probe")]
+        paint_stack();
+
         // Real silicon: bring the clock tree up to the part's rated maximum
         // BEFORE measuring anything. At reset the F429 runs on HSI at 16 MHz
         // with zero flash wait states and the ART accelerator off, which is
@@ -662,7 +729,21 @@ fn main() -> ! {
         band_buf,
         crate::workload::WORKLOAD_QUALITY,
     ) {
-        Ok(_) => exit(true),
+        Ok(_) => {
+            #[cfg(feature = "stack-probe")]
+            {
+                let (used, painted) = stack_watermark();
+                write_line(&alloc::format!(
+                    "INFO  [vyr-size] stack watermark={used} B of {painted} B painted{}",
+                    if used >= painted {
+                        " (SATURATED — the real figure is larger)"
+                    } else {
+                        ""
+                    }
+                ));
+            }
+            exit(true)
+        }
         Err(e) => {
             write_line(&alloc::format!("ERROR [vyr-size] workload failed: {e:?}"));
             exit(false)

@@ -40,6 +40,15 @@ draft = []
 # Mutually exclusive with `draft` (draft wins if both are somehow enabled,
 # and the cfg below says so explicitly rather than silently).
 fast = []
+# #33: measure the STACK high-water mark of a real run. Paints the unused
+# CCM stack region with a known word at boot (before .bss is zeroed, so no
+# static is touched) and scans it back up after the workload, printing
+# `stack watermark=N B`. Strictly ADDITIVE to `run-qemu` and OFF by default:
+# the painting loop and the scan both sit outside the timed window, but they
+# do add a few hundred bytes of flash and can nudge code layout, so the
+# published insns/frame numbers are always taken WITHOUT it. Used by
+# scripts/optlevel-matrix.py to answer "does opt-level change stack depth?".
+stack-probe = []
 # F9 BOARD half (#9): the same runnable vehicle on REAL silicon — an
 # STM32F429I-DISC1 (F429ZI, M4F @ up to 180 MHz, 2 M flash / 192 K SRAM +
 # 64 K CCM). Implies run-qemu's runtime (vector table, crt0, semihosting,
