@@ -23,8 +23,9 @@ same semihosting methodology.
 
 | metric | vyr (M4 banded) | LVGL (M4 bare-metal) | TouchGFX (M4) |
 |---|--:|--:|---|
-| **instructions / frame** | **75.0 M** (579 insn/px) | **~10.0–10.25 M** (77–79 insn/px) | not benchmarkable in-repo¹ |
-| **ms/frame @180 MHz (ESTIMATE²)** | ~417 ms | ~56 ms | — |
+| **instructions / frame, RENDER ONLY⁵** | Exact **48.24 M** (372 insn/px) · Fast **33.51 M** (259) · Draft **5.51 M** (42.5) | **3.22 M** (24.9 insn/px) | not benchmarkable in-repo¹ |
+| **instructions / frame, with the harness fold⁵** | Exact 51.35 M · Fast 36.62 M · Draft 8.62 M | 7.11 M | — |
+| **ms/frame @192 MHz (ESTIMATE²)** | Exact ~251 ms · Draft ~29 ms | ~17 ms | — |
 | **heap / pool PEAK** | 106,409 B (counting-alloc) | **8,152 B** (lv_mem high-water) | — |
 | **draw / band buffer** | 23,040 B (CCM static, off-heap) | 23,040 B (SRAM .bss) | — |
 | **flash (.text+.rodata)** | 448,269 B | **192,672 B** | ST publishes per-board figures¹ |
@@ -33,13 +34,26 @@ same semihosting methodology.
 | **frame hash (own)** | `0x6b0c51567a991741` | `0xe7a75d89a00badec` | — |
 | **what the frame contains** | panel, label×3, checker image, gauge (tiny-skia arc), LCD text, slider×2, progress, toggle, line — Roboto-ASCII subset font, unhinted AA | panel, label×3, checker image, scale+arc gauge, slider×2, bar, switch, line — Montserrat built-in font, LVGL AA | (proprietary; not built) |
 
+⁵ **Render-only is measured, not subtracted (#44).** Since 889543f both
+harnesses render without folding inside the timed window — the fold moved to an
+untimed verification pass that must reproduce the reference hash first — and each
+runs a *second* timed pass with the fold so `total` and `fold` are measured in
+the same cell. Instrument: qemu + the `libinsn` TCG plugin (exact instruction
+counts) on both sides. Reproduce: `python3 scripts/fold-split-check.py`.
+
 ¹ ² ³ ⁴ — see notes below.
 
 ### The headline reading
 
-- **LVGL is ~7.3–7.5× fewer instructions per frame** on this scene (10.0 M vs
-  75.0 M). That is the expected shape: LVGL is a mature, hand-tuned fixed-point
-  C renderer with a simpler AA model; vyr renders through **tiny-skia**'s
+- **LVGL is 15.0× fewer instructions per frame than vyr Exact, and vyr's own
+  Draft tier still costs 1.71× LVGL** (3.22 M render-only against 5.51 M) while
+  drawing *less* — no anti-aliasing, square corners. Read the render-only row,
+  not the with-fold one: the FNV hash both harnesses use to prove the frame was
+  materialised is a fixed ~3–3.9 M/frame, so it inflates a cheap frame far more
+  than an expensive one and a "total" comparison is substantially a comparison
+  of two FNV loops (#31, #44). That is the expected shape: LVGL is a mature,
+  hand-tuned fixed-point C renderer with a simpler AA model; vyr renders
+  through **tiny-skia**'s
   general-purpose floating-point coverage pipeline (the F9 static doc already
   flagged tiny-skia + skrifa generality as the flash cost; here it shows up as
   the per-frame instruction cost too). This is a SYSTEM comparison of two very

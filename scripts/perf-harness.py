@@ -466,6 +466,13 @@ def count_insns(elf: Path, tag: str, repeat: int, cache: dict | None) -> dict:
         "timed_window_insns": runs[0]["timed_window_insns"] if ok else None,
         "timed_frames": frames,
         "insns_per_frame": (runs[0]["timed_window_insns"] // frames) if ok else None,
+        # #44: firmware built since the two-pass change MEASURES its own split
+        # (render-only pass + with-fold pass in the same binary). When these are
+        # present there is nothing to subtract and nothing to rebuild.
+        "timed_passes": runs[0].get("timed_passes", 1),
+        "render_only_per_frame": runs[0].get("render_only_insns_per_frame") if ok else None,
+        "with_fold_per_frame": runs[0].get("with_fold_insns_per_frame") if ok else None,
+        "fold_per_frame": runs[0].get("fold_insns_per_frame") if ok else None,
         "window_remainder": (runs[0]["timed_window_insns"] % frames) if ok else None,
         "windows_seen": sorted(windows),
         "console": runs[0]["guest_console"],
@@ -562,7 +569,22 @@ def measure_qemu_m4(spec: Path, tier: str, opt: str, cap: dict, repeat: int,
         cell["provenance"]["guest_console"] = total["console"]
 
         # --- 2. the same firmware with the fold folding NOTHING ---
-        if cap.get("fold_in_timed_window") is False:
+        if total.get("timed_passes") == 2:
+            # #44 two-pass firmware: render-only, with-fold and the difference
+            # all come from ONE binary in ONE session. `insns_per_frame_total`
+            # is the WITH-fold pass, so the `total` column keeps meaning what it
+            # meant before the fold left the window and old rows stay comparable.
+            cell["metrics"]["insns_per_frame_total"] = total["with_fold_per_frame"]
+            cell["metrics"]["insns_per_frame_render_only"] = total["render_only_per_frame"]
+            cell["metrics"]["harness_fold_insns"] = total["fold_per_frame"]
+            cell["fold_provenance"] = "measured-in-cell (#44 two-pass)"
+            cell["build_type"] = ("perf (timed pass renders only; a second timed pass "
+                                  "prices the fold; an untimed verification pass must "
+                                  "reproduce the hash before either)")
+            cell["provenance"]["fold_share_of_total"] = (
+                round(total["fold_per_frame"] / total["with_fold_per_frame"], 4)
+                if total["with_fold_per_frame"] else None)
+        elif cap.get("fold_in_timed_window") is False:
             # #44: there is nothing to subtract — the timed pass renders only,
             # and an untimed verification pass has already proven the hash.
             cell["metrics"]["insns_per_frame_render_only"] = total["insns_per_frame"]
@@ -886,24 +908,40 @@ def measure_lvgl(repeat: int, cache: dict | None) -> dict:
             if hp:
                 cell["metrics"]["heap_peak_b"] = hp
 
-        LVGL_MAIN.write_text(original.replace(LVGL_FOLD_NEEDLE, LVGL_FOLD_PATCH))
-        r = sh([sys.executable, str(LVGL_RUNNER)], cwd=REPO, deadline=3600)
-        if r.returncode != 0:
-            cell["metric_notes"]["harness_fold_insns"] = "fold-neutered LVGL build failed"
+        if total.get("timed_passes") == 2:
+            # #44 landed on the LVGL side too: the anchor measures its own split,
+            # so the fold-neutered rebuild below is not run at all.
+            cell["metrics"]["insns_per_frame_total"] = total["with_fold_per_frame"]
+            cell["metrics"]["insns_per_frame_render_only"] = total["render_only_per_frame"]
+            cell["metrics"]["harness_fold_insns"] = total["fold_per_frame"]
+            cell["fold_provenance"] = "measured-in-cell (#44 two-pass)"
+            cell["build_type"] = ("perf (flush_cb folds behind a flag; second timed "
+                                  "pass prices the fold; untimed verification first)")
+            cell["provenance"]["fold_share_of_total"] = (
+                round(total["fold_per_frame"] / total["with_fold_per_frame"], 4)
+                if total["with_fold_per_frame"] else None)
+
         else:
-            nofold = count_insns(elf, "ph-lvgl-nofold", repeat, cache)
-            if nofold["deterministic"]:
-                ro = nofold["insns_per_frame"]
-                cell["metrics"]["insns_per_frame_render_only"] = ro
-                cell["metrics"]["harness_fold_insns"] = total["insns_per_frame"] - ro
-                cell["fold_provenance"] = "measured-differential"
-                cell["provenance"]["fold_share_of_total"] = round(
-                    (total["insns_per_frame"] - ro) / total["insns_per_frame"], 4)
-                cell["provenance"]["render_only"] = {k: v for k, v in nofold.items()
-                                                     if k != "console"}
+            # Pre-#44 anchor: the fold is inside the timed window, so render-only
+            # can only be had by rebuilding with it neutered and differencing.
+            LVGL_MAIN.write_text(original.replace(LVGL_FOLD_NEEDLE, LVGL_FOLD_PATCH))
+            r = sh([sys.executable, str(LVGL_RUNNER)], cwd=REPO, deadline=3600)
+            if r.returncode != 0:
+                cell["metric_notes"]["harness_fold_insns"] = "fold-neutered LVGL build failed"
             else:
-                cell["metric_notes"]["harness_fold_insns"] = \
-                    f"fold-neutered run non-deterministic {nofold['windows_seen']}"
+                nofold = count_insns(elf, "ph-lvgl-nofold", repeat, cache)
+                if nofold["deterministic"]:
+                    ro = nofold["insns_per_frame"]
+                    cell["metrics"]["insns_per_frame_render_only"] = ro
+                    cell["metrics"]["harness_fold_insns"] = total["insns_per_frame"] - ro
+                    cell["fold_provenance"] = "measured-differential"
+                    cell["provenance"]["fold_share_of_total"] = round(
+                        (total["insns_per_frame"] - ro) / total["insns_per_frame"], 4)
+                    cell["provenance"]["render_only"] = {k: v for k, v in nofold.items()
+                                                         if k != "console"}
+                else:
+                    cell["metric_notes"]["harness_fold_insns"] = \
+                        f"fold-neutered run non-deterministic {nofold['windows_seen']}"
     finally:
         LVGL_MAIN.write_text(original)
         if keep.exists():

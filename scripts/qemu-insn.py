@@ -152,34 +152,46 @@ def one_run(elf: Path, plugin: Path, tag: str) -> dict:
         log(f"ERROR: libinsn matched no bkpt — is this qemu built with capstone? "
             f"(no ARM disassembly => match= never fires). See {plog}")
         raise SystemExit(1)
-    # #44 made this TWO windows, not one: the timed loop now runs twice —
-    # render-only first, then an identical pass WITH the hash fold so `fold` is
-    # measured on this cell instead of carried over from another build. So the
-    # two largest deltas ARE the two timed passes, and the with-fold one is
-    # necessarily the larger. Everything else is bracketed by console writes and
-    # is orders of magnitude smaller (the untimed verification pass renders ONE
-    # frame against the timed loops' 20).
+    # #44 made this TWO windows, not one — but only for firmware BUILT since
+    # #44. Every historical ref replayed by perf-harness.py has a single timed
+    # pass, and assuming two would either pick an unrelated small delta as
+    # "render_only" or trip the shape guard below on every old commit. So the
+    # pass count is DETECTED from the guest's own output, not assumed: post-#44
+    # firmware reports `render_only=` on its timed line (vyr) or
+    # `render_only_cs=` (the LVGL harness). No marker => one pass => the window
+    # is the largest delta and INCLUDES the fold, which is what those refs
+    # actually measured.
     ranked = sorted(hits, key=lambda h: int(h[2]), reverse=True)
-    total_addr, _d0, total_w = ranked[0]
-    total_w = int(total_w)
-    if len(ranked) > 1:
+    two_pass = ("render_only=" in gout) or ("render_only_cs=" in gout)
+
+    if two_pass and len(ranked) > 1:
+        # The with-fold pass is necessarily the larger of the two.
+        total_addr, _d0, total_w = ranked[0]
+        total_w = int(total_w)
         window_addr, _d1, window = ranked[1]
         window = int(window)
-    else:
-        window_addr, window = total_addr, total_w
-    fold_w = max(0, total_w - window)
+        fold_w = max(0, total_w - window)
 
-    # Guard the assumption rather than trusting it: the two timed passes render
-    # the same frames, so they must be within a small factor of each other, and
-    # both must tower over the third-largest delta. If that is not the shape
-    # observed, the window identification is wrong and every number below it
-    # would be wrong too — say so instead of reporting.
-    third = int(ranked[2][2]) if len(ranked) > 2 else 0
-    if window and (total_w > 3 * window or third > window // 4):
-        log(f"ERROR: timed-window identification failed — deltas "
-            f"{total_w:,} / {window:,} / {third:,}. Expected two comparable "
-            f"timed passes far above the rest (see {plog})")
-        raise SystemExit(1)
+        # Guard the assumption rather than trusting it: the two passes render
+        # the same frames, so they must be within a small factor of each other,
+        # and both must tower over the third-largest delta. If the shape is not
+        # that, the window identification is wrong and so is everything below.
+        third = int(ranked[2][2]) if len(ranked) > 2 else 0
+        if window and (total_w > 3 * window or third > window // 4):
+            log(f"ERROR: timed-window identification failed — deltas "
+                f"{total_w:,} / {window:,} / {third:,}. Expected two comparable "
+                f"timed passes far above the rest (see {plog})")
+            raise SystemExit(1)
+    else:
+        # Single timed pass: the window is the largest delta, and whether it
+        # contains the fold is a property of the ref, not something this script
+        # can separate. Report it as the window and leave the split unknown —
+        # perf-harness.py prices the fold for these refs by rebuilding with it
+        # neutered, and records `fold_provenance` accordingly.
+        window_addr, _disas, window = ranked[0]
+        window = int(window)
+        total_w = window
+        fold_w = None
 
     # Cross-check against what the firmware itself reported.
     frames = None
@@ -199,12 +211,15 @@ def one_run(elf: Path, plugin: Path, tag: str) -> dict:
         "total_insns": total,
         "timed_window_insns": window,
         # #44: all three, always. render_only is the headline series.
-        "render_only_insns": window,
-        "with_fold_insns": total_w,
+        "timed_passes": 2 if fold_w is not None else 1,
+        "render_only_insns": window if fold_w is not None else None,
+        "with_fold_insns": total_w if fold_w is not None else None,
         "fold_insns": fold_w,
-        "render_only_insns_per_frame": window // frames if frames else None,
-        "with_fold_insns_per_frame": total_w // frames if frames else None,
-        "fold_insns_per_frame": fold_w // frames if frames else None,
+        "render_only_insns_per_frame": (
+            window // frames if (fold_w is not None and frames) else None),
+        "with_fold_insns_per_frame": (
+            total_w // frames if (fold_w is not None and frames) else None),
+        "fold_insns_per_frame": fold_w // frames if (fold_w is not None and frames) else None,
         "timed_window_end_bkpt": "0x" + window_addr,
         "timed_frames": frames,
         "insns_per_frame": window // frames if frames else None,
@@ -324,6 +339,7 @@ def main() -> int:
         # #44: all three promoted, always. `insns_per_frame` above is an alias
         # for render_only so existing consumers keep working and keep meaning
         # the same thing they did once the fold left the window.
+        "timed_passes": runs[0]["timed_passes"],
         "render_only_insns_per_frame": (
             runs[0]["render_only_insns_per_frame"] if deterministic else None),
         "with_fold_insns_per_frame": (
