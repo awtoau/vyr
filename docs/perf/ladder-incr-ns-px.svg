@@ -28,7 +28,8 @@
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Incremental repaint cost per rung</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -45,51 +46,55 @@
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">31.60</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / dirty px</text>
-<polyline class="s1" points="74.0,76.1 202.5,70.3 459.5,77.3 588.0,82.9" fill="none" stroke-width="2"/>
+<polyline class="s1 ln" points="74.0,76.1 88.7,70.3 309.0,77.3 411.8,82.9" stroke-width="2"/>
 <circle class="s1" cx="74.0" cy="76.1" r="4" stroke="none"><title>120x68 @ 21427f2: 26.75 ns / dirty px</title></circle>
-<circle class="s1" cx="202.5" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 27.48 ns / dirty px</title></circle>
-<circle class="s1" cx="459.5" cy="77.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 26.59 ns / dirty px</title></circle>
-<circle class="s1" cx="588.0" cy="82.9" r="4" stroke="none"><title>120x68 @ 3e7c620*: 25.88 ns / dirty px</title></circle>
+<circle class="s1" cx="88.7" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 27.48 ns / dirty px</title></circle>
+<circle class="s1" cx="309.0" cy="77.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 26.59 ns / dirty px</title></circle>
+<circle class="s1" cx="411.8" cy="82.9" r="4" stroke="none"><title>120x68 @ 3e7c620*: 25.88 ns / dirty px</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">120x68</text>
-<polyline class="s2" points="74.0,157.5 202.5,154.8 459.5,153.5 588.0,155.7" fill="none" stroke-width="2"/>
+<polyline class="s2 ln" points="74.0,157.5 88.7,154.8 309.0,153.5 411.8,155.7" stroke-width="2"/>
 <circle class="s2" cx="74.0" cy="157.5" r="4" stroke="none"><title>240x135 @ 21427f2: 16.37 ns / dirty px</title></circle>
-<circle class="s2" cx="202.5" cy="154.8" r="4" stroke="none"><title>240x135 @ 21427f2: 16.72 ns / dirty px</title></circle>
-<circle class="s2" cx="459.5" cy="153.5" r="4" stroke="none"><title>240x135 @ 7b5a662: 16.89 ns / dirty px</title></circle>
-<circle class="s2" cx="588.0" cy="155.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 16.61 ns / dirty px</title></circle>
+<circle class="s2" cx="88.7" cy="154.8" r="4" stroke="none"><title>240x135 @ 21427f2: 16.72 ns / dirty px</title></circle>
+<circle class="s2" cx="309.0" cy="153.5" r="4" stroke="none"><title>240x135 @ 7b5a662: 16.89 ns / dirty px</title></circle>
+<circle class="s2" cx="411.8" cy="155.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 16.61 ns / dirty px</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">240x135</text>
-<polyline class="s3" points="74.0,230.2 202.5,229.8 459.5,229.7 588.0,230.4" fill="none" stroke-width="2"/>
+<polyline class="s3 ln" points="74.0,230.2 88.7,229.8 309.0,229.7 411.8,230.4" stroke-width="2"/>
 <circle class="s3" cx="74.0" cy="230.2" r="4" stroke="none"><title>480x270 @ 21427f2: 7.12 ns / dirty px</title></circle>
-<circle class="s3" cx="202.5" cy="229.8" r="4" stroke="none"><title>480x270 @ 21427f2: 7.17 ns / dirty px</title></circle>
-<circle class="s3" cx="459.5" cy="229.7" r="4" stroke="none"><title>480x270 @ 7b5a662: 7.18 ns / dirty px</title></circle>
-<circle class="s3" cx="588.0" cy="230.4" r="4" stroke="none"><title>480x270 @ 3e7c620*: 7.08 ns / dirty px</title></circle>
+<circle class="s3" cx="88.7" cy="229.8" r="4" stroke="none"><title>480x270 @ 21427f2: 7.17 ns / dirty px</title></circle>
+<circle class="s3" cx="309.0" cy="229.7" r="4" stroke="none"><title>480x270 @ 7b5a662: 7.18 ns / dirty px</title></circle>
+<circle class="s3" cx="411.8" cy="230.4" r="4" stroke="none"><title>480x270 @ 3e7c620*: 7.08 ns / dirty px</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">480x270</text>
-<polyline class="s4" points="74.0,260.3 202.5,260.2 459.5,260.5 588.0,260.3" fill="none" stroke-width="2"/>
+<polyline class="s4 ln" points="74.0,260.3 88.7,260.2 309.0,260.5 411.8,260.3" stroke-width="2"/>
 <circle class="s4" cx="74.0" cy="260.3" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
-<circle class="s4" cx="202.5" cy="260.2" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
-<circle class="s4" cx="459.5" cy="260.5" r="4" stroke="none"><title>960x540 @ 7b5a662: 3.24 ns / dirty px</title></circle>
-<circle class="s4" cx="588.0" cy="260.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 3.28 ns / dirty px</title></circle>
+<circle class="s4" cx="88.7" cy="260.2" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
+<circle class="s4" cx="309.0" cy="260.5" r="4" stroke="none"><title>960x540 @ 7b5a662: 3.24 ns / dirty px</title></circle>
+<circle class="s4" cx="411.8" cy="260.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 3.28 ns / dirty px</title></circle>
 <rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="100">960x540</text>
-<polyline class="s5" points="74.0,271.8 202.5,271.7 459.5,271.7 588.0,271.8" fill="none" stroke-width="2"/>
+<polyline class="s5 ln" points="74.0,271.8 88.7,271.7 309.0,271.7 411.8,271.8" stroke-width="2"/>
 <circle class="s5" cx="74.0" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
-<circle class="s5" cx="202.5" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
-<circle class="s5" cx="459.5" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 1.82 ns / dirty px</title></circle>
-<circle class="s5" cx="588.0" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.81 ns / dirty px</title></circle>
+<circle class="s5" cx="88.7" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="309.0" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="411.8" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.81 ns / dirty px</title></circle>
 <rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="117">1920x1080</text>
-<polyline class="s6" points="74.0,276.4 202.5,276.3 459.5,276.4 588.0,276.3" fill="none" stroke-width="2"/>
+<polyline class="s6 ln" points="74.0,276.4 88.7,276.3 309.0,276.4 411.8,276.3" stroke-width="2"/>
 <circle class="s6" cx="74.0" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.23 ns / dirty px</title></circle>
-<circle class="s6" cx="202.5" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.24 ns / dirty px</title></circle>
-<circle class="s6" cx="459.5" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.23 ns / dirty px</title></circle>
-<circle class="s6" cx="588.0" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.24 ns / dirty px</title></circle>
+<circle class="s6" cx="88.7" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.24 ns / dirty px</title></circle>
+<circle class="s6" cx="309.0" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.23 ns / dirty px</title></circle>
+<circle class="s6" cx="411.8" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.24 ns / dirty px</title></circle>
 <rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="134">3840x2160</text>
 </svg>

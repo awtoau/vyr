@@ -1,10 +1,15 @@
 # vyr — performance model and measured numbers
 
-**Status:** snapshot, 2026-07-23. **Every number here is perishable.** They were
-taken at specific commits with specific tools, and the renderer changes under
-them. Treat the *model* as durable and the *figures* as expiring — §6 gives the
-exact command to regenerate each one. A number quoted from this file without
-re-running its command is a claim about the past.
+**Status:** snapshot, 2026-07-24, commit `5482dad`. **Every number here is
+perishable.** They were taken at specific commits with specific tools, and the
+renderer changes under them. Treat the *model* as durable and the *figures* as
+expiring — §6 gives the exact command to regenerate each one. A number quoted
+from this file without re-running its command is a claim about the past.
+
+**The live version of every figure below is the ledger**,
+[`docs/perf/index.html`](perf/index.html), rebuilt from
+[`history.jsonl`](perf/history.jsonl) — one row per measured commit, one
+instrument, full per-cell provenance.
 
 **Chronology:** [`measurements/perf-history.md`](measurements/perf-history.md) records how
 every number here was arrived at — including the **four measurement errors**
@@ -12,8 +17,8 @@ found so far, each of which flattered vyr. Read it before trusting any figure
 in this file.
 
 This document exists because the project spent a long time quoting a
-performance figure that was not measuring what it claimed (§5). The
-countermeasure is not better numbers, it is written-down provenance.
+performance figure that was not measuring what it claimed. The countermeasure
+is not better numbers, it is written-down provenance (§5).
 
 ---
 
@@ -96,68 +101,93 @@ Ranked by trustworthiness. **Do not mix tiers in one comparison.**
 | **Real silicon cycles** (DWT_CYCCNT) | actual F429 cycles incl. flash wait states, ART, bus contention | yes — 0 spread over 5 runs | the honest on-target cost |
 | **QEMU plugin insn counts** (`libinsn`) | architectural instructions executed | yes — bit-identical under host load | algorithmic cost, cross-firmware comparison |
 | **Host bench** (`vyr-bench`, ladder) | ns/px on x86-64 | yes, statistically | regression gates, scaling laws |
-| ~~**qemu SYS_CLOCK**~~ | **host wall time wearing an instruction-count costume** | **NO** | **nothing — see §5** |
+| ~~**qemu SYS_CLOCK**~~ | **host wall time wearing an instruction-count costume** | **NO** | **nothing** — the story is error 1 in [`measurements/perf-history.md`](measurements/perf-history.md) |
+
+**One instrument, one entry point.** Every figure in the first two rows comes
+from `scripts/perf-harness.py`, which fills a matrix of platform × tier ×
+opt-level and records, per cell, what it could NOT measure and why. History is
+the same instrument replayed (`scripts/perf-replay.py`) — an old commit is
+measured with today's tools, never with the tooling that shipped beside it.
 
 ---
 
 ## 3. Numbers — instruction counts (QEMU + `libinsn` plugin)
 
 480x270 scene, `netduinoplus2` (STM32F405/M4F), warmed steady state.
-Independently verified: bit-identical across 3 idle and 3 host-loaded runs;
+Independently verified: bit-identical across repeats and under host load;
 doubling the frame count gives a marginal cost with **remainder exactly 0**;
 fixed window overhead 7-11 instructions (the clock-read call itself).
 
-**Re-measured 2026-07-23** — all four firmwares in one session, same tool, same
-day (`python3 scripts/tier-insns.py` + one `qemu-insn.py` run for LVGL). The
-previous table's figures are superseded and are kept in git history only; two
-things moved under them, and both matter:
+**Measured 2026-07-24 at `5482dad`** by `scripts/perf-harness.py` — one
+instrument, one session, every firmware, and the same figures replayed over the
+whole history into [`perf/history.jsonl`](perf/index.html).
 
-- the **`Fast` tier** landed (#27), so there are now three vyr rows;
-- the **LVGL harness was corrected** (#27 Task B) — it had been drawing a
-  tick-marked `lv_scale` + a value arc + a knob where vyr draws a plain ring,
-  and its own grey checkerboard where vyr blits the real asset. Removing the
-  content vyr never had made LVGL **23 % cheaper** (9,220,422 → 7,112,541).
-  The old "vyr Draft beats LVGL by 8.05 %" was measured against an LVGL that
-  was drawing more work than vyr.
+> ### Quote the RENDER-ONLY column, and check how it was obtained
+>
+> A benchmark that hashes its own output inside the timed window is measuring
+> itself. That fold is a roughly fixed cost, so it inflates a cheap frame far
+> more than an expensive one — it was 6.1 % of vyr Exact and **36.1 % of vyr
+> Draft, against 54.7 % of LVGL** — and a "total" comparison between a big
+> renderer and a small one is therefore substantially a comparison of two FNV
+> loops. Since **#44** vyr's fold runs in an *untimed verification pass* that
+> must reproduce the reference hash before the timed pass starts, so for vyr
+> **total is render-only, structurally, with nothing subtracted**. The LVGL
+> anchor still folds inside its `flush_cb`, so its render-only figure is
+> obtained by rebuilding it with the fold folding nothing and differencing —
+> in the same cell, at the same optimisation level. Every ledger cell records
+> which of the two it was (`fold_provenance`).
 
-**Re-measured again 2026-07-24 at `a9c8a4f`.** Two more things moved:
+`insn/px` is **instructions per DELIVERED pixel** (`insns / 129,600`) on every
+row — the normaliser LVGL's row always used (`measurements/lvgl-gap.md` §0.2).
 
-- **#32's contour memo** (flattening no longer re-runs `libm` f32 trig, in
-  software `f64`, once per vertex per band per frame) took Exact
-  64,422,179 → 51,349,644 and Fast 49,585,035 → 36,618,969, **no pixel
-  changed**;
-- **#33**: the two sides were never compiled at comparable effort — see the
-  flag caveat below the table.
+| Firmware (`opt-level="z"`, shipped) | total | harness fold | **render only** | insn/px | vs LVGL |
+|---|--:|--:|--:|--:|--:|
+| vyr **Exact** | 48,239,550 | 0 *(absent by build)* | **48,239,550** | 372.2 | **14.96x** |
+| vyr **Fast** (#27) | 33,508,475 | 0 *(absent by build)* | **33,508,475** | 258.6 | 10.39x |
+| vyr **Draft** | 5,511,165 | 0 *(absent by build)* | **5,511,165** | 42.5 | **1.71x** |
+| LVGL 9.6.0-dev (`62f343b54`), content-corrected (`-Os`) | 7,112,541 | 3,888,238 *(measured)* | **3,224,303** | 24.9 | 1.00x |
 
-`insn/px` below is now **instructions per DELIVERED
-pixel** (`insns / 129,600`) on every row — the same normaliser LVGL's row
-always used. The previous column divided vyr's rows by the overdraw-inclusive
-touched-pixel count and flattered them by 1.4-1.6x (`measurements/lvgl-gap.md`
-§0.2).
+Draft is **8.75x** cheaper than Exact; Fast recovers only **25 %** of the
+Exact→Draft gap — see §3.1. **vyr Draft costs 71 % more than LVGL per frame
+while drawing less** (no AA, square corners). The old "Draft is 4.6 % cheaper
+than LVGL" compared two totals, i.e. substantially two FNV loops.
 
-| Firmware | insns/frame | insn/px | vs LVGL |
-|---|--:|--:|--:|
-| vyr **Exact** (`opt-level="z"`, shipped) | 51,349,644 | 396.2 | 7.22x |
-| vyr **Fast** (#27) (`z`) | 36,618,969 | 282.6 | 5.15x |
-| vyr **Draft** (`z`) | **8,621,557** | 66.5 | **1.21x** |
-| same three at `opt-level="s"` — the flag-for-flag match to LVGL's `-Os` | 32,887,551 / 22,413,829 / 7,290,627 | 253.8 / 172.9 / 56.3 | 4.62x / 3.15x / **1.02x** |
-| same three at `opt-level=2` — faster *and* smaller than `s` | 25,336,538 / 16,764,151 / 6,513,113 | 195.5 / 129.4 / 50.3 | 3.56x / 2.36x / **0.92x** |
-| LVGL 9.6.0-dev (`62f343b54`), content-corrected (`-Os`) | 7,112,541 | 54.9 | 1.00x |
+> **Mixed provenance, stated.** vyr's render-only is structural (no fold in the
+> binary's timed path); LVGL's is a two-build difference. Both were taken by the
+> same instrument in the same session, and the differential is validated three
+> ways: it reproduces vyr's own pre-#44 numbers to **356 instructions in 48 M**
+> when checked against #44's structural removal; it agrees with
+> `scripts/m4-attribute.py`'s independent per-symbol attribution of LVGL's
+> `flush_cb` (3,888,238 vs 3,888,561, i.e. 323 instructions in 7.1 M); and
+> removing the fold moved all three vyr tiers by the same constant. It is still
+> a subtraction, and it stays flagged until #44's LVGL half lands.
 
-Draft is 5.96x cheaper than Exact; Fast recovers only **25 %** of the
-Exact→Draft gap — see §3.1.
+### 3.0 `opt-level` is a dimension, not a decision
 
-> **Compiler-flag caveat — the two sides are not compiled alike.** LVGL builds
-> `-Os`; `release-mcu` builds `opt-level="z"`, which is `-Oz` (no inlining,
-> machine outliner on) and costs vyr **36 % of its frame at Exact**. The `-Os`
-> analogue is `opt-level="s"` (Exact 32,887,551 = 4.62x LVGL); `opt-level=2` is
-> both faster and smaller than `s` and is the level to ship where the flash
-> exists. The anchor cannot be moved the other way — arm-none-eabi-gcc 15.2
-> compiles this LVGL tree **byte-identically** at `-Os` and `-Oz`. Both the `z`
-> row (what vyr ships) and the `2` row (like-for-like effort) are given above
-> for that reason; the full matrix, its flash price and the profile decision are
-> in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) §0.3
-> ([#33](https://github.com/awtoau/vyr/issues/33)).
+`release-mcu` ships `opt-level="z"` (`-Oz`: no inlining, machine outliner on);
+LVGL's anchor builds `-Os`. Which level to *ship* depends on the part, the
+flash budget and the compiler — it is a deployment choice, so the ledger
+records all four rather than blessing one. **Render only**, same instrument,
+same commit:
+
+| tier | `z` (shipped) | `s` | `2` | `3` |
+|---|--:|--:|--:|--:|
+| Exact | 48,239,550 | 30,165,894 | 23,100,873 | 22,328,886 |
+| Fast | 33,508,475 | 19,692,171 | 14,528,101 | 14,330,940 |
+| Draft | **5,511,165** | 4,568,990 | **4,277,394** | 4,268,521 |
+| Draft vs LVGL render-only | 1.71x | 1.42x | **1.33x** | 1.32x |
+| *(vyr's fold, when it was still in the window)* | *3,110,4xx* | *2,721,65x* | *2,235,7xx* | *2,235,7xx* |
+
+**A fold figure is only valid for the cell it was measured in** — the last row
+is why. Before #44 took it out of the window, the fold's own cost moved with
+the optimisation level by 39 %, so a render-only number scaled from another
+level was arithmetic, not measurement. Concretely: reading *totals* at
+`opt-level=2` before #44 gave Draft 6,513,113 against LVGL's 7,112,541 and the
+tempting headline "vyr wins by 8 %"; render-only says Draft is **33 % dearer**.
+That is error 4 recurring in a new guise — caught by the schema, which now
+records how every render-only figure was obtained. Flash price and the full
+matrix: `measurements/lvgl-gap.md` §0.3
+([#33](https://github.com/awtoau/vyr/issues/33)).
 
 > **Fidelity caveat — do not quote the above without it.** Draft has **no
 > anti-aliasing** and draws `radius > 0` **square**. Fast and Exact both
@@ -178,8 +208,9 @@ uses. It buys the quality outright and almost none of the speed:
 
 | | Exact | Fast | Draft |
 |---|--:|--:|--:|
-| M4 insns/frame (2026-07-24, `a9c8a4f`, `opt-level="z"`) | 51,349,644 | 36,618,969 | 8,621,557 |
-| host ns, 480x270 panel | 243,596 | 237,973 | 58,059 |
+| M4 insns/frame, render-only (`5482dad`, `opt-level="z"`) | 48,239,550 | 33,508,475 | 5,511,165 |
+| M4 heap peak / stack high-water | 112,473 / 19,044 B | 114,873 / 19,044 B | 82,881 / 19,044 B |
+| host ns/frame, 480x270 panel (`vyr-bench scene/panel_*`) | 256,816 | 242,939 | 59,390 |
 | blend px in the gauge region (12,100 px) | 567 | **567** | 0 |
 | differing px vs Exact, 480x270 | — | **0** | 3,408 |
 | M4 band heap, 480x16 | 63,488 B pixmap | 46,848 + 23,040 B | 30,720 + 23,040 B |
@@ -198,6 +229,36 @@ have no flat part to cut away, and they dominate.
 cost.** Getting there needs a coverage-aware integer curve rasteriser obeying
 the same 1/64-px quantization contract — a separate piece of work, not a
 routing change.
+
+### 3.2 Why the measurement is a MATRIX
+
+The axes are **platform** (x86-64 host · qemu M4 · real F429 · armv7 musl),
+**tier** and **opt-level**. Word size and float capability are *properties of a
+platform*, not free axes, so every cell records them:
+
+| platform | word | float |
+|---|--:|---|
+| host | 64 | hardware f32 **and** f64 |
+| qemu-m4 / board | 32 | hardware f32 only (VFPv4-SP); **every f64 op is software** |
+| arm32 (musl) | 32 | hardware f32 and f64 (VFPv3-D16) |
+
+That third column is not trivia. **#32's soft-`f64` trig bill — 11.4 M
+insns/frame, 17.7 % of Exact — hid for months because x86-64 computes `sinf`
+and `cosf` in hardware and the M4F does not.** The host bench moved 8.2 % where
+the M4 moved 20.3 %; nobody had a view that put the two side by side, so a 2.5x
+divergence read as noise. In a matrix that divergence is a *cell*, and a row
+where one platform's column moves and another's does not is a platform
+pathology by construction.
+
+The corollary is a rule: **optimisation targets are per-platform.** There is no
+point optimising transcendentals for x86 — it has them in hardware. The
+platform that pays is the one to measure on.
+
+The arm32 column earns its place cheaply: it is 32-bit like the M4 but has
+hardware `f64`, so it separates "32-bit" from "no double". It also carries the
+frame hash, which is the cross-ISA determinism proof — Exact
+`0x24dcaff531c6eb01`, Fast `0x930d03610b07ea6f`, Draft `0xf98cbbdddd6da1ba`,
+**byte-identical on x86-64, armv7 and the emulated M4**.
 
 ---
 
@@ -267,31 +328,13 @@ take that entirely off the core and let flush overlap the next render.
 
 ---
 
-## 5. The failure this document exists to prevent
+## 5. The rules this document exists to enforce
 
-For most of the project's life, per-frame cost was reported as "instructions"
-derived from semihosting `SYS_CLOCK` under `-icount shift=0,sleep=off`,
-multiplied by 1e7. **It was host wall time.** Fedora's stock `qemu-system-arm`
-10.2.2 ships with TCG plugins disabled, so nothing was counting instructions.
-
-Proof — identical unchanged workload:
-
-| condition | SYS_CLOCK reading |
-|---|--:|
-| idle | 39-40 cs |
-| host loaded (12 CPU burners) | **42, 58 cs** |
-
-A 49 % swing from host load. An instruction count cannot do that. The LVGL
-harness asserted `DETERMINISTIC (icount)`; it was wrong. vyr's own `dev.py`
-warning that the same mechanism was "wall-influenced, NOT pure icount" was
-right.
-
-Consequences, all now corrected: `QEMU_M4_EXACT_INSNS` was 16.9 % high,
-`QEMU_M4_LVGL_INSNS` 8.5 % high, and the headline "vyr beats LVGL by 12.8 %" was
-an overstatement of ~60 % in relative terms (the true figure is 8.05 %). The
-*direction* survived; every absolute number did not.
-
-**Three lessons, in priority order:**
+**The narrative lives in
+[`measurements/perf-history.md`](measurements/perf-history.md)** — four
+measurement errors, what each one said, and how each was found. That is
+deliberately the ONE place it is told; this section keeps only the rules that
+came out of it.
 
 1. **A tool asserting determinism is not evidence of it.** Run the workload
    under host load. If the number moves, it is not counting instructions.
@@ -300,6 +343,13 @@ an overstatement of ~60 % in relative terms (the true figure is 8.05 %). The
    that repetition alone will not.
 3. **Record provenance with the number.** An anchor whose source is not recorded
    is not an anchor — it is a rumour with a decimal point.
+4. **The instrument is constant; only the renderer varies.** A commit is
+   measured with TODAY's harness, never with the tooling that shipped beside
+   it. `scripts/perf-replay.py` exists to make that cheap enough to actually do.
+5. **Never publish a number the benchmark contributed to.** Both M4 vehicles
+   hash their own output inside the timed window; `render_only`, `fold` and
+   `total` are three separate recorded fields per cell so that cost can never
+   again be inside a headline without being seen.
 
 ---
 
@@ -310,7 +360,10 @@ provenance — tool version, source commit, ELF SHA-256, every run's raw values.
 
 | Numbers | Command | Output |
 |---|---|---|
-| §3 instruction counts, ALL vyr tiers in one run | `python3 scripts/tier-insns.py --repeat 2` | `tmp/tier-insns.json` |
+| **§3 — the whole matrix at one ref, render-only separated from the harness fold** | `python3 scripts/perf-harness.py --ref HEAD --lvgl --stack` | `tmp/perf-harness-HEAD.json` |
+| **the same matrix replayed over history** (one instrument, every specimen) | `python3 scripts/perf-replay.py` | `tmp/perf-replay.jsonl` |
+| — then rebuild the ledger and the page from it | `python3 scripts/ledger.py --rebuild-from-replay tmp/perf-replay.jsonl` | `docs/perf/history.jsonl`, `docs/perf/index.html` |
+| §3 instruction counts, ALL vyr tiers in one run (totals only — no fold split) | `python3 scripts/tier-insns.py --repeat 2` | `tmp/tier-insns.json` |
 | §3 instruction counts, one ELF | `python3 scripts/qemu-insn.py --name <n> <elf> --repeat 3` | `tmp/qemu-insn-<n>.json` |
 | §3 flag caveat — the whole `opt-level` × tier matrix (insns, flash, heap peak, stack watermark, frame hash) | `python3 scripts/optlevel-matrix.py` | `tmp/optlevel-matrix.json`, `tmp/optlevel-matrix.md` |
 | §3 one tier at one `opt-level` | `python3 scripts/tier-insns.py --opt 2 --tiers exact` | `tmp/tier-insns-O2.json` |
@@ -343,9 +396,10 @@ Notes that will cost time if forgotten:
 
 | Issue | Why it matters here |
 |---|---|
-| ~~[#25](https://github.com/awtoau/vyr/issues/25)~~ | **closed.** The two parallel ledgers are now one: `docs/perf/history.jsonl` (`"schema": 2`), written only by `./dev.py track`, with first-class sections for §3 (`insns`) and §4 (`silicon`, `board_anim`). Every number here now has a home in a time series; re-run the §6 command, then `./dev.py track`. |
+| ~~[#25](https://github.com/awtoau/vyr/issues/25)~~ | **closed.** The two parallel ledgers are now one: `docs/perf/history.jsonl` (`"schema": 3`), with the `matrix` section as the only source of an M4 instruction figure and first-class sections for §4 (`silicon`, `board_anim`). Rebuilt 2026-07-24 from a replay of the whole history by one instrument; the SYS_CLOCK-era numbers are deleted rather than relabelled. |
 | [#27](https://github.com/awtoau/vyr/issues/27) | partly addressed: the `Fast` tier exists and matches Exact's edge quality, but at 4.4x Draft's cost; the LVGL harness's checker and gauge are content-matched, its theme colours and font are not |
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |
-| [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **the §3 table still counts the benchmark's own FNV fold** (3.1 M insns/frame on our side, 3.9 M on LVGL's) as render cost. The `insn/px` normaliser mismatch is fixed above (every row is now per *delivered* pixel). Render-only, at the pre-#32 firmware, LVGL was 24.9 insn/px, Draft 42.4, Exact 473.1 — and the fold's own cost moves with `opt-level`, so those must be re-derived per level. Full attribution, and the ranked fixes, in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
+| [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **fixed on vyr's side.** The `insn/px` normaliser mismatch is gone (every row is per *delivered* pixel) and #44 removed vyr's fold from the timed window, so §3's vyr rows are render-only by construction. **Outstanding: the LVGL harness still folds in its `flush_cb`**, so its render-only figure is a two-build difference and the cross-renderer row is mixed provenance until #44's LVGL half lands. Full attribution in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
+| [#44](https://github.com/awtoau/vyr/issues/44) / [#45](https://github.com/awtoau/vyr/issues/45) | verification is becoming a **build type**, not a field to subtract: #44 moved the fold to an untimed pass, #45 would remove it from the perf binary entirely. The ledger already carries `build_type` and `fold_provenance` per cell so the two eras stay comparable — and so a derived value can never be mistaken for a measured one. |
 | [#33](https://github.com/awtoau/vyr/issues/33) | **`opt-level` is a permanent matrix DIMENSION, not a settled default.** All four levels are measured and recorded every run — see [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) §0.3 for the numbers. `release-mcu` ships `"z"` as the value that fits the smallest part the plan contemplates, but that is a **starting point, not a verdict**: the right level is a per-application choice made from the matrix at deployment time, and `--config profile.release-mcu.opt-level=…` reproduces any column in ~12 s. Pixels, heap peak and stack depth are opt-level-invariant across all 24 builds, so the M4 gate holds at every level. |

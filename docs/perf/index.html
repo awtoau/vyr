@@ -25,15 +25,24 @@
 <body>
 <h1>vyr measurement ledger</h1>
 <p class="lede">THE single measurement history for this project
-(<a href="https://github.com/awtoau/vyr/issues/25">#25</a>): host resolution
-ladder and anim acceptance, cross-ISA verdicts, static size, exact M4
-instruction counts (QEMU + <code>libinsn</code>), and real F429 silicon cycles —
-one append-only row per run in
+(<a href="https://github.com/awtoau/vyr/issues/25">#25</a>): the performance
+<b>matrix</b> (platform × tier × opt-level), the host resolution ladder and anim
+acceptance, cross-ISA verdicts, static size, and real F429 silicon cycles — one
+append-only row per run in
 <a href="history.jsonl"><code>history.jsonl</code></a>, this page regenerated
 from it by <code>./dev.py track</code>. Sections are independent and optional:
 a run records what it measured and nothing else. <b>Rows are sparse where the
 measurement was never taken</b> — see the coverage matrix. Provenance for every
 number: <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">docs/performance.md</a>.</p>
+<p class="lede"><b>Schema 3 (2026-07-24) is a rebuild, not an append.</b> Every
+M4 instruction figure here was produced by one instrument —
+<code>scripts/perf-harness.py</code> — replayed over history by
+<code>scripts/perf-replay.py</code>: old commits measured with today's tools,
+never with their own. The SYS_CLOCK-derived rows of the previous ledger were
+host wall time and are deleted rather than relabelled, and the benchmark's own
+hash fold is now a separate recorded field instead of being silently inside the
+headline. The four measurement errors that forced this are in
+<a href="https://github.com/awtoau/vyr/blob/main/docs/measurements/perf-history.md">perf-history.md</a>.</p>
 
 <h2>Host resolution ladder — <code>3e7c620</code> · 2026-07-23T09:39:50Z</h2><table><tr><th>rung</th><th>full ms</th><th>ns/px</th><th>×60fps</th><th>incr ms</th><th>ns/dirty-px</th><th>×60fps</th><th>dirty</th><th>speedup</th></tr>
 <tr><td>120x68</td><td>0.060</td><td>7.41</td><td>275.64×</td><td>0.083</td><td>25.88</td><td>200.89×</td><td>39.3%</td><td>0.7×</td></tr>
@@ -42,11 +51,27 @@ number: <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">do
 <tr><td>960x540</td><td>0.633</td><td>1.22</td><td>26.32×</td><td>0.215</td><td>3.28</td><td>77.59×</td><td>12.6%</td><td>2.9×</td></tr>
 <tr><td>1920x1080</td><td>2.079</td><td>1.00</td><td>8.02×</td><td>0.445</td><td>1.81</td><td>37.49×</td><td>11.8%</td><td>4.7×</td></tr>
 <tr><td>3840x2160</td><td>13.989</td><td>1.69</td><td>1.19×</td><td>1.182</td><td>1.24</td><td>14.11×</td><td>11.5%</td><td>11.8×</td></tr>
-</table><p class="lede">×60fps = headroom vs the 16.67 ms budget (&gt;1 fits). The incremental path is where 60 fps @ 4K lives.</p><p>Anim acceptance: <b>60 frames @ 480×270</b>, run hash <code>0x75f4a4e8bf96dfb3</code>, dirty 14.2%/step, 0.85 ms/frame (host wall clock).</p><h2>Exact instruction counts — <code>3e7c620</code></h2><table><tr><th>firmware</th><th>insns/frame</th><th>insn/px</th><th>vs LVGL</th><th>frames</th><th>elf / upstream</th></tr>
-<tr><td>vyr Exact</td><td>64,178,227</td><td>495.2</td><td>6.9604×</td><td>20</td><td><code>82f74036fab5</code></td></tr>
-<tr><td>vyr Draft</td><td>8,478,137</td><td>65.4</td><td>0.9195×</td><td>20</td><td><code>ccff508e1f22</code></td></tr>
-<tr><td>LVGL anchor</td><td>9,220,422</td><td>71.1</td><td>1.0000×</td><td>40</td><td><code>62f343b54</code> (9.6.0-dev)</td></tr>
-</table><p class="lede">QEMU emulator version 11.0.50, built with <code>--enable-plugins --enable-capstone</code> from <code>7f2007d19245</code>; plugin <code>tests/tcg/plugins/libinsn.so</code> <code>match=bkpt,trace=on</code>, machine <code>netduinoplus2</code>. Not an equal-output comparison — Draft has no anti-aliasing (<a href="https://github.com/awtoau/vyr/issues/27">#27</a>).</p><h2>Real silicon — <code>3e7c620</code></h2><table><tr><th>tier</th><th>cycles/frame</th><th>ms @180 MHz</th><th>heap peak</th><th>cycles/insn</th><th>spread</th><th>frame hash</th></tr>
+</table><p class="lede">×60fps = headroom vs the 16.67 ms budget (&gt;1 fits). The incremental path is where 60 fps @ 4K lives.</p><p>Anim acceptance: <b>60 frames @ 480×270</b>, run hash <code>0x75f4a4e8bf96dfb3</code>, dirty 14.2%/step, 0.85 ms/frame (host wall clock).</p><h2>The matrix — <code>5482dad</code> <span class="lede">fix(size): take the hash fold out of the timed window (#44)</span></h2><table><tr><th>platform / firmware tier / opt</th><th>insns total</th><th>hash fold</th><th>insns RENDER ONLY</th><th>fold share</th><th>fold provenance</th><th>cycles</th><th>ns/frame</th><th>heap B</th><th>stack B</th><th>flash B</th><th>frame hash</th></tr>
+<tr><td>host / vyr exact / O3 (cargo `release`)</td><td>—</td><td>—</td><td><b>—</b></td><td>—</td><td>—</td><td>—</td><td>256,816</td><td>140,833</td><td>—</td><td>—</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+<tr><td>qemu-m4 / vyr exact / Oz</td><td>48,239,550</td><td>0</td><td><b>48,239,550</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>112,473</td><td>19,044</td><td>480,717</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+<tr><td>qemu-m4 / vyr exact / Os</td><td>30,165,894</td><td>0</td><td><b>30,165,894</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>112,473</td><td>—</td><td>679,353</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+<tr><td>qemu-m4 / vyr exact / O2</td><td>23,100,873</td><td>0</td><td><b>23,100,873</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>112,473</td><td>—</td><td>674,107</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+<tr><td>qemu-m4 / vyr exact / O3</td><td>22,328,886</td><td>0</td><td><b>22,328,886</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>112,473</td><td>—</td><td>708,779</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+<tr><td>arm32 / vyr exact / O3 (cargo `release`)</td><td>—</td><td>—</td><td><b>—</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td>135,481</td><td>—</td><td>—</td><td><code>0x24dcaff531c6eb01</code></td></tr>
+<tr><td>host / vyr fast / O3 (cargo `release`)</td><td>—</td><td>—</td><td><b>—</b></td><td>—</td><td>—</td><td>—</td><td>242,939</td><td>142,833</td><td>—</td><td>—</td><td><code>0x930d03610b07ea6f</code></td></tr>
+<tr><td>qemu-m4 / vyr fast / Oz</td><td>33,508,475</td><td>0</td><td><b>33,508,475</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>114,873</td><td>19,044</td><td>480,725</td><td><code>0x930d03610b07ea6f</code></td></tr>
+<tr><td>qemu-m4 / vyr fast / Os</td><td>19,692,171</td><td>0</td><td><b>19,692,171</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>114,873</td><td>—</td><td>679,353</td><td><code>0x930d03610b07ea6f</code></td></tr>
+<tr><td>qemu-m4 / vyr fast / O2</td><td>14,528,101</td><td>0</td><td><b>14,528,101</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>114,873</td><td>—</td><td>674,227</td><td><code>0x930d03610b07ea6f</code></td></tr>
+<tr><td>qemu-m4 / vyr fast / O3</td><td>14,330,940</td><td>0</td><td><b>14,330,940</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>114,873</td><td>—</td><td>708,859</td><td><code>0x930d03610b07ea6f</code></td></tr>
+<tr><td>arm32 / vyr fast / O3 (cargo `release`)</td><td>—</td><td>—</td><td><b>—</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td>137,481</td><td>—</td><td>—</td><td><code>0x930d03610b07ea6f</code></td></tr>
+<tr><td>host / vyr draft / O3 (cargo `release`)</td><td>—</td><td>—</td><td><b>—</b></td><td>—</td><td>—</td><td>—</td><td>59,390</td><td>112,297</td><td>—</td><td>—</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+<tr><td>qemu-m4 / vyr draft / Oz</td><td>5,511,165</td><td>0</td><td><b>5,511,165</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>82,881</td><td>19,044</td><td>480,725</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+<tr><td>qemu-m4 / vyr draft / Os</td><td>4,568,990</td><td>0</td><td><b>4,568,990</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>82,881</td><td>—</td><td>679,385</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+<tr><td>qemu-m4 / vyr draft / O2</td><td>4,277,394</td><td>0</td><td><b>4,277,394</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>82,881</td><td>—</td><td>674,267</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+<tr><td>qemu-m4 / vyr draft / O3</td><td>4,268,521</td><td>0</td><td><b>4,268,521</b></td><td>—</td><td>absent-from-window-by-build</td><td>—</td><td>—</td><td>82,881</td><td>—</td><td>709,059</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+<tr><td>arm32 / vyr draft / O3 (cargo `release`)</td><td>—</td><td>—</td><td><b>—</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td>106,945</td><td>—</td><td>—</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
+<tr><td>qemu-m4 / lvgl lvgl / Os (-Os, the anchor's own level)</td><td>7,112,541</td><td>3,888,238</td><td><b>3,224,303</b></td><td>54.7%</td><td>measured-differential</td><td>—</td><td>—</td><td>—</td><td>—</td><td>196,348</td><td><code>0xe79483c364fffcd1</code></td></tr>
+</table><p class="lede"><b>render-only is the number to quote</b>, and <b>how it was obtained is part of the number</b>: <code>absent-from-window-by-build</code> means the timed pass contains no fold at all (#44) so total IS render-only; <code>measured-differential</code> means the same firmware was rebuilt with the fold folding an empty slice and the two counts differenced, in this cell, at this opt-level; <code>derived-by-subtraction</code> would mean a fold figure carried in from elsewhere and is never produced here. The fold is not rendering, and being a fixed cost it inflates a cheap tier far more than an expensive one (error 4 in <a href="https://github.com/awtoau/vyr/blob/main/docs/measurements/perf-history.md">perf-history.md</a>). Counter: QEMU emulator version 11.0.50 @ <code>7f2007d19245</code>, plugin <code>/mnt/2tb/git_debris/qemu-plugins-build/tests/tcg/plugins/libinsn.so</code> <code>match=bkpt,trace=on</code>, machine <code>netduinoplus2</code>, <code>shift=0,sleep=off</code>. </p><h2>Real silicon — <code>3e7c620</code></h2><table><tr><th>tier</th><th>cycles/frame</th><th>ms @180 MHz</th><th>heap peak</th><th>cycles/insn</th><th>spread</th><th>frame hash</th></tr>
 <tr><td>Exact</td><td>112,328,558</td><td>624.05</td><td>106,409 B</td><td>1.75</td><td>0 ppm</td><td><code>0x24dcaff531c6eb01</code></td></tr>
 </table><p class="lede">STM32F429I-DISC1 (STM32F429ZI, Cortex-M4F), DWT_CYCCNT (real CPU cycles), 180 MHz (HSE crystal -&gt; PLL), 5 flash wait states, ART prefetch/I/D 1/1/1. cycles/insn is the cost emulation cannot model — it comes from this row's <code>insns</code> section.</p><h2>Emulated M4 (stock qemu) — <code>3e7c620</code></h2><table><tr><th>tier</th><th>heap peak</th><th>Draft fast-path</th><th>frame hash</th></tr>
 <tr><td>Draft</td><td>80.9 KiB</td><td>96.8%</td><td><code>0xf98cbbdddd6da1ba</code></td></tr>
@@ -66,7 +91,11 @@ number: <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">do
 <h2>Trends</h2>
 <p class="lede">A series is charted only where it has two or more observations;
 single observations stay in the tables above rather than being drawn as a
-one-point line.</p>
+one-point line. <b>A tier that did not exist yet simply starts later</b> —
+<code>Draft</code> from <code>5da42a2</code>, <code>Fast</code> from
+<code>cb29f52</code> — rather than being interpolated backwards or drawn as a
+gap in a line that pretends to span it. Where a platform could not be measured
+at all, the cell carries a written reason instead of a value.</p>
 <figure><a href="ladder-full-ns-px.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Full-frame render cost per rung (lower is better)" font-size="11">
 <style>
   .surface { fill: #fcfcfb; }
@@ -97,7 +126,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Full-frame render cost per rung (lower is better)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -114,51 +144,55 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">8.73</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
-<polyline class="s1" points="74.0,73.9 202.5,70.3 459.5,71.8 588.0,75.5" fill="none" stroke-width="2"/>
+<polyline class="s1 ln" points="74.0,73.9 88.7,70.3 309.0,71.8 411.8,75.5" stroke-width="2"/>
 <circle class="s1" cx="74.0" cy="73.9" r="4" stroke="none"><title>120x68 @ 21427f2: 7.47 ns / px</title></circle>
-<circle class="s1" cx="202.5" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 7.59 ns / px</title></circle>
-<circle class="s1" cx="459.5" cy="71.8" r="4" stroke="none"><title>120x68 @ 7b5a662: 7.54 ns / px</title></circle>
-<circle class="s1" cx="588.0" cy="75.5" r="4" stroke="none"><title>120x68 @ 3e7c620*: 7.41 ns / px</title></circle>
+<circle class="s1" cx="88.7" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 7.59 ns / px</title></circle>
+<circle class="s1" cx="309.0" cy="71.8" r="4" stroke="none"><title>120x68 @ 7b5a662: 7.54 ns / px</title></circle>
+<circle class="s1" cx="411.8" cy="75.5" r="4" stroke="none"><title>120x68 @ 3e7c620*: 7.41 ns / px</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">120x68</text>
-<polyline class="s2" points="74.0,191.5 202.5,189.8 459.5,190.6 588.0,192.2" fill="none" stroke-width="2"/>
+<polyline class="s2 ln" points="74.0,191.5 88.7,189.8 309.0,190.6 411.8,192.2" stroke-width="2"/>
 <circle class="s2" cx="74.0" cy="191.5" r="4" stroke="none"><title>240x135 @ 21427f2: 3.33 ns / px</title></circle>
-<circle class="s2" cx="202.5" cy="189.8" r="4" stroke="none"><title>240x135 @ 21427f2: 3.39 ns / px</title></circle>
-<circle class="s2" cx="459.5" cy="190.6" r="4" stroke="none"><title>240x135 @ 7b5a662: 3.36 ns / px</title></circle>
-<circle class="s2" cx="588.0" cy="192.2" r="4" stroke="none"><title>240x135 @ 3e7c620*: 3.30 ns / px</title></circle>
+<circle class="s2" cx="88.7" cy="189.8" r="4" stroke="none"><title>240x135 @ 21427f2: 3.39 ns / px</title></circle>
+<circle class="s2" cx="309.0" cy="190.6" r="4" stroke="none"><title>240x135 @ 7b5a662: 3.36 ns / px</title></circle>
+<circle class="s2" cx="411.8" cy="192.2" r="4" stroke="none"><title>240x135 @ 3e7c620*: 3.30 ns / px</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">240x135</text>
-<polyline class="s3" points="74.0,236.1 202.5,235.4 459.5,234.9 588.0,235.9" fill="none" stroke-width="2"/>
+<polyline class="s3 ln" points="74.0,236.1 88.7,235.4 309.0,234.9 411.8,235.9" stroke-width="2"/>
 <circle class="s3" cx="74.0" cy="236.1" r="4" stroke="none"><title>480x270 @ 21427f2: 1.76 ns / px</title></circle>
-<circle class="s3" cx="202.5" cy="235.4" r="4" stroke="none"><title>480x270 @ 21427f2: 1.78 ns / px</title></circle>
-<circle class="s3" cx="459.5" cy="234.9" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.80 ns / px</title></circle>
-<circle class="s3" cx="588.0" cy="235.9" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.76 ns / px</title></circle>
+<circle class="s3" cx="88.7" cy="235.4" r="4" stroke="none"><title>480x270 @ 21427f2: 1.78 ns / px</title></circle>
+<circle class="s3" cx="309.0" cy="234.9" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.80 ns / px</title></circle>
+<circle class="s3" cx="411.8" cy="235.9" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.76 ns / px</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">480x270</text>
-<polyline class="s4" points="74.0,251.4 202.5,250.5 459.5,251.8 588.0,251.3" fill="none" stroke-width="2"/>
+<polyline class="s4 ln" points="74.0,251.4 88.7,250.5 309.0,251.8 411.8,251.3" stroke-width="2"/>
 <circle class="s4" cx="74.0" cy="251.4" r="4" stroke="none"><title>960x540 @ 21427f2: 1.22 ns / px</title></circle>
-<circle class="s4" cx="202.5" cy="250.5" r="4" stroke="none"><title>960x540 @ 21427f2: 1.25 ns / px</title></circle>
-<circle class="s4" cx="459.5" cy="251.8" r="4" stroke="none"><title>960x540 @ 7b5a662: 1.20 ns / px</title></circle>
-<circle class="s4" cx="588.0" cy="251.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 1.22 ns / px</title></circle>
+<circle class="s4" cx="88.7" cy="250.5" r="4" stroke="none"><title>960x540 @ 21427f2: 1.25 ns / px</title></circle>
+<circle class="s4" cx="309.0" cy="251.8" r="4" stroke="none"><title>960x540 @ 7b5a662: 1.20 ns / px</title></circle>
+<circle class="s4" cx="411.8" cy="251.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 1.22 ns / px</title></circle>
 <rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="100">960x540</text>
-<polyline class="s5" points="74.0,257.5 202.5,257.9 459.5,258.3 588.0,257.5" fill="none" stroke-width="2"/>
+<polyline class="s5 ln" points="74.0,257.5 88.7,257.9 309.0,258.3 411.8,257.5" stroke-width="2"/>
 <circle class="s5" cx="74.0" cy="257.5" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.00 ns / px</title></circle>
-<circle class="s5" cx="202.5" cy="257.9" r="4" stroke="none"><title>1920x1080 @ 21427f2: 0.99 ns / px</title></circle>
-<circle class="s5" cx="459.5" cy="258.3" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 0.97 ns / px</title></circle>
-<circle class="s5" cx="588.0" cy="257.5" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.00 ns / px</title></circle>
+<circle class="s5" cx="88.7" cy="257.9" r="4" stroke="none"><title>1920x1080 @ 21427f2: 0.99 ns / px</title></circle>
+<circle class="s5" cx="309.0" cy="258.3" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 0.97 ns / px</title></circle>
+<circle class="s5" cx="411.8" cy="257.5" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.00 ns / px</title></circle>
 <rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="117">1920x1080</text>
-<polyline class="s6" points="74.0,232.9 202.5,233.4 459.5,237.2 588.0,238.1" fill="none" stroke-width="2"/>
+<polyline class="s6 ln" points="74.0,232.9 88.7,233.4 309.0,237.2 411.8,238.1" stroke-width="2"/>
 <circle class="s6" cx="74.0" cy="232.9" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.87 ns / px</title></circle>
-<circle class="s6" cx="202.5" cy="233.4" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.85 ns / px</title></circle>
-<circle class="s6" cx="459.5" cy="237.2" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.72 ns / px</title></circle>
-<circle class="s6" cx="588.0" cy="238.1" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.69 ns / px</title></circle>
+<circle class="s6" cx="88.7" cy="233.4" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.85 ns / px</title></circle>
+<circle class="s6" cx="309.0" cy="237.2" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.72 ns / px</title></circle>
+<circle class="s6" cx="411.8" cy="238.1" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.69 ns / px</title></circle>
 <rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="134">3840x2160</text>
 </svg>
@@ -193,7 +227,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Incremental repaint cost per rung</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -210,51 +245,55 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">31.60</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / dirty px</text>
-<polyline class="s1" points="74.0,76.1 202.5,70.3 459.5,77.3 588.0,82.9" fill="none" stroke-width="2"/>
+<polyline class="s1 ln" points="74.0,76.1 88.7,70.3 309.0,77.3 411.8,82.9" stroke-width="2"/>
 <circle class="s1" cx="74.0" cy="76.1" r="4" stroke="none"><title>120x68 @ 21427f2: 26.75 ns / dirty px</title></circle>
-<circle class="s1" cx="202.5" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 27.48 ns / dirty px</title></circle>
-<circle class="s1" cx="459.5" cy="77.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 26.59 ns / dirty px</title></circle>
-<circle class="s1" cx="588.0" cy="82.9" r="4" stroke="none"><title>120x68 @ 3e7c620*: 25.88 ns / dirty px</title></circle>
+<circle class="s1" cx="88.7" cy="70.3" r="4" stroke="none"><title>120x68 @ 21427f2: 27.48 ns / dirty px</title></circle>
+<circle class="s1" cx="309.0" cy="77.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 26.59 ns / dirty px</title></circle>
+<circle class="s1" cx="411.8" cy="82.9" r="4" stroke="none"><title>120x68 @ 3e7c620*: 25.88 ns / dirty px</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">120x68</text>
-<polyline class="s2" points="74.0,157.5 202.5,154.8 459.5,153.5 588.0,155.7" fill="none" stroke-width="2"/>
+<polyline class="s2 ln" points="74.0,157.5 88.7,154.8 309.0,153.5 411.8,155.7" stroke-width="2"/>
 <circle class="s2" cx="74.0" cy="157.5" r="4" stroke="none"><title>240x135 @ 21427f2: 16.37 ns / dirty px</title></circle>
-<circle class="s2" cx="202.5" cy="154.8" r="4" stroke="none"><title>240x135 @ 21427f2: 16.72 ns / dirty px</title></circle>
-<circle class="s2" cx="459.5" cy="153.5" r="4" stroke="none"><title>240x135 @ 7b5a662: 16.89 ns / dirty px</title></circle>
-<circle class="s2" cx="588.0" cy="155.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 16.61 ns / dirty px</title></circle>
+<circle class="s2" cx="88.7" cy="154.8" r="4" stroke="none"><title>240x135 @ 21427f2: 16.72 ns / dirty px</title></circle>
+<circle class="s2" cx="309.0" cy="153.5" r="4" stroke="none"><title>240x135 @ 7b5a662: 16.89 ns / dirty px</title></circle>
+<circle class="s2" cx="411.8" cy="155.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 16.61 ns / dirty px</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">240x135</text>
-<polyline class="s3" points="74.0,230.2 202.5,229.8 459.5,229.7 588.0,230.4" fill="none" stroke-width="2"/>
+<polyline class="s3 ln" points="74.0,230.2 88.7,229.8 309.0,229.7 411.8,230.4" stroke-width="2"/>
 <circle class="s3" cx="74.0" cy="230.2" r="4" stroke="none"><title>480x270 @ 21427f2: 7.12 ns / dirty px</title></circle>
-<circle class="s3" cx="202.5" cy="229.8" r="4" stroke="none"><title>480x270 @ 21427f2: 7.17 ns / dirty px</title></circle>
-<circle class="s3" cx="459.5" cy="229.7" r="4" stroke="none"><title>480x270 @ 7b5a662: 7.18 ns / dirty px</title></circle>
-<circle class="s3" cx="588.0" cy="230.4" r="4" stroke="none"><title>480x270 @ 3e7c620*: 7.08 ns / dirty px</title></circle>
+<circle class="s3" cx="88.7" cy="229.8" r="4" stroke="none"><title>480x270 @ 21427f2: 7.17 ns / dirty px</title></circle>
+<circle class="s3" cx="309.0" cy="229.7" r="4" stroke="none"><title>480x270 @ 7b5a662: 7.18 ns / dirty px</title></circle>
+<circle class="s3" cx="411.8" cy="230.4" r="4" stroke="none"><title>480x270 @ 3e7c620*: 7.08 ns / dirty px</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">480x270</text>
-<polyline class="s4" points="74.0,260.3 202.5,260.2 459.5,260.5 588.0,260.3" fill="none" stroke-width="2"/>
+<polyline class="s4 ln" points="74.0,260.3 88.7,260.2 309.0,260.5 411.8,260.3" stroke-width="2"/>
 <circle class="s4" cx="74.0" cy="260.3" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
-<circle class="s4" cx="202.5" cy="260.2" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
-<circle class="s4" cx="459.5" cy="260.5" r="4" stroke="none"><title>960x540 @ 7b5a662: 3.24 ns / dirty px</title></circle>
-<circle class="s4" cx="588.0" cy="260.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 3.28 ns / dirty px</title></circle>
+<circle class="s4" cx="88.7" cy="260.2" r="4" stroke="none"><title>960x540 @ 21427f2: 3.28 ns / dirty px</title></circle>
+<circle class="s4" cx="309.0" cy="260.5" r="4" stroke="none"><title>960x540 @ 7b5a662: 3.24 ns / dirty px</title></circle>
+<circle class="s4" cx="411.8" cy="260.3" r="4" stroke="none"><title>960x540 @ 3e7c620*: 3.28 ns / dirty px</title></circle>
 <rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="100">960x540</text>
-<polyline class="s5" points="74.0,271.8 202.5,271.7 459.5,271.7 588.0,271.8" fill="none" stroke-width="2"/>
+<polyline class="s5 ln" points="74.0,271.8 88.7,271.7 309.0,271.7 411.8,271.8" stroke-width="2"/>
 <circle class="s5" cx="74.0" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
-<circle class="s5" cx="202.5" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
-<circle class="s5" cx="459.5" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 1.82 ns / dirty px</title></circle>
-<circle class="s5" cx="588.0" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.81 ns / dirty px</title></circle>
+<circle class="s5" cx="88.7" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 21427f2: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="309.0" cy="271.7" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 1.82 ns / dirty px</title></circle>
+<circle class="s5" cx="411.8" cy="271.8" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 1.81 ns / dirty px</title></circle>
 <rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="117">1920x1080</text>
-<polyline class="s6" points="74.0,276.4 202.5,276.3 459.5,276.4 588.0,276.3" fill="none" stroke-width="2"/>
+<polyline class="s6 ln" points="74.0,276.4 88.7,276.3 309.0,276.4 411.8,276.3" stroke-width="2"/>
 <circle class="s6" cx="74.0" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.23 ns / dirty px</title></circle>
-<circle class="s6" cx="202.5" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.24 ns / dirty px</title></circle>
-<circle class="s6" cx="459.5" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.23 ns / dirty px</title></circle>
-<circle class="s6" cx="588.0" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.24 ns / dirty px</title></circle>
+<circle class="s6" cx="88.7" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 1.24 ns / dirty px</title></circle>
+<circle class="s6" cx="309.0" cy="276.4" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 1.23 ns / dirty px</title></circle>
+<circle class="s6" cx="411.8" cy="276.3" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 1.24 ns / dirty px</title></circle>
 <rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="134">3840x2160</text>
 </svg>
@@ -289,7 +328,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Incremental speedup vs full frame (higher is better)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -306,55 +346,846 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">15.3</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">×</text>
-<polyline class="s1" points="74.0,274.4 202.5,274.6 459.5,274.3 588.0,274.1" fill="none" stroke-width="2"/>
+<polyline class="s1 ln" points="74.0,274.4 88.7,274.6 309.0,274.3 411.8,274.1" stroke-width="2"/>
 <circle class="s1" cx="74.0" cy="274.4" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
-<circle class="s1" cx="202.5" cy="274.6" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
-<circle class="s1" cx="459.5" cy="274.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 0.7 ×</title></circle>
-<circle class="s1" cx="588.0" cy="274.1" r="4" stroke="none"><title>120x68 @ 3e7c620*: 0.7 ×</title></circle>
+<circle class="s1" cx="88.7" cy="274.6" r="4" stroke="none"><title>120x68 @ 21427f2: 0.7 ×</title></circle>
+<circle class="s1" cx="309.0" cy="274.3" r="4" stroke="none"><title>120x68 @ 7b5a662: 0.7 ×</title></circle>
+<circle class="s1" cx="411.8" cy="274.1" r="4" stroke="none"><title>120x68 @ 3e7c620*: 0.7 ×</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">120x68</text>
-<polyline class="s2" points="74.0,272.4 202.5,272.4 459.5,272.7 588.0,272.7" fill="none" stroke-width="2"/>
+<polyline class="s2 ln" points="74.0,272.4 88.7,272.4 309.0,272.7 411.8,272.7" stroke-width="2"/>
 <circle class="s2" cx="74.0" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
-<circle class="s2" cx="202.5" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
-<circle class="s2" cx="459.5" cy="272.7" r="4" stroke="none"><title>240x135 @ 7b5a662: 0.8 ×</title></circle>
-<circle class="s2" cx="588.0" cy="272.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 0.8 ×</title></circle>
+<circle class="s2" cx="88.7" cy="272.4" r="4" stroke="none"><title>240x135 @ 21427f2: 0.8 ×</title></circle>
+<circle class="s2" cx="309.0" cy="272.7" r="4" stroke="none"><title>240x135 @ 7b5a662: 0.8 ×</title></circle>
+<circle class="s2" cx="411.8" cy="272.7" r="4" stroke="none"><title>240x135 @ 3e7c620*: 0.8 ×</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">240x135</text>
-<polyline class="s3" points="74.0,258.8 202.5,258.6 459.5,258.4 588.0,258.6" fill="none" stroke-width="2"/>
+<polyline class="s3 ln" points="74.0,258.8 88.7,258.6 309.0,258.4 411.8,258.6" stroke-width="2"/>
 <circle class="s3" cx="74.0" cy="258.8" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
-<circle class="s3" cx="202.5" cy="258.6" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
-<circle class="s3" cx="459.5" cy="258.4" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.7 ×</title></circle>
-<circle class="s3" cx="588.0" cy="258.6" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.7 ×</title></circle>
+<circle class="s3" cx="88.7" cy="258.6" r="4" stroke="none"><title>480x270 @ 21427f2: 1.7 ×</title></circle>
+<circle class="s3" cx="309.0" cy="258.4" r="4" stroke="none"><title>480x270 @ 7b5a662: 1.7 ×</title></circle>
+<circle class="s3" cx="411.8" cy="258.6" r="4" stroke="none"><title>480x270 @ 3e7c620*: 1.7 ×</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">480x270</text>
-<polyline class="s4" points="74.0,238.2 202.5,237.0 459.5,238.3 588.0,238.1" fill="none" stroke-width="2"/>
+<polyline class="s4 ln" points="74.0,238.2 88.7,237.0 309.0,238.3 411.8,238.1" stroke-width="2"/>
 <circle class="s4" cx="74.0" cy="238.2" r="4" stroke="none"><title>960x540 @ 21427f2: 2.9 ×</title></circle>
-<circle class="s4" cx="202.5" cy="237.0" r="4" stroke="none"><title>960x540 @ 21427f2: 3.0 ×</title></circle>
-<circle class="s4" cx="459.5" cy="238.3" r="4" stroke="none"><title>960x540 @ 7b5a662: 2.9 ×</title></circle>
-<circle class="s4" cx="588.0" cy="238.1" r="4" stroke="none"><title>960x540 @ 3e7c620*: 2.9 ×</title></circle>
+<circle class="s4" cx="88.7" cy="237.0" r="4" stroke="none"><title>960x540 @ 21427f2: 3.0 ×</title></circle>
+<circle class="s4" cx="309.0" cy="238.3" r="4" stroke="none"><title>960x540 @ 7b5a662: 2.9 ×</title></circle>
+<circle class="s4" cx="411.8" cy="238.1" r="4" stroke="none"><title>960x540 @ 3e7c620*: 2.9 ×</title></circle>
 <rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="100">960x540</text>
-<polyline class="s5" points="74.0,210.1 202.5,211.4 459.5,212.6 588.0,209.9" fill="none" stroke-width="2"/>
+<polyline class="s5 ln" points="74.0,210.1 88.7,211.4 309.0,212.6 411.8,209.9" stroke-width="2"/>
 <circle class="s5" cx="74.0" cy="210.1" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.7 ×</title></circle>
-<circle class="s5" cx="202.5" cy="211.4" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.6 ×</title></circle>
-<circle class="s5" cx="459.5" cy="212.6" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 4.5 ×</title></circle>
-<circle class="s5" cx="588.0" cy="209.9" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 4.7 ×</title></circle>
+<circle class="s5" cx="88.7" cy="211.4" r="4" stroke="none"><title>1920x1080 @ 21427f2: 4.6 ×</title></circle>
+<circle class="s5" cx="309.0" cy="212.6" r="4" stroke="none"><title>1920x1080 @ 7b5a662: 4.5 ×</title></circle>
+<circle class="s5" cx="411.8" cy="209.9" r="4" stroke="none"><title>1920x1080 @ 3e7c620*: 4.7 ×</title></circle>
 <rect class="s5" x="604" y="108" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="117">1920x1080</text>
-<polyline class="s6" points="74.0,70.3 202.5,74.2 459.5,87.7 588.0,93.5" fill="none" stroke-width="2"/>
+<polyline class="s6 ln" points="74.0,70.3 88.7,74.2 309.0,87.7 411.8,93.5" stroke-width="2"/>
 <circle class="s6" cx="74.0" cy="70.3" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.3 ×</title></circle>
-<circle class="s6" cx="202.5" cy="74.2" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.0 ×</title></circle>
-<circle class="s6" cx="459.5" cy="87.7" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 12.2 ×</title></circle>
-<circle class="s6" cx="588.0" cy="93.5" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 11.8 ×</title></circle>
+<circle class="s6" cx="88.7" cy="74.2" r="4" stroke="none"><title>3840x2160 @ 21427f2: 13.0 ×</title></circle>
+<circle class="s6" cx="309.0" cy="87.7" r="4" stroke="none"><title>3840x2160 @ 7b5a662: 12.2 ×</title></circle>
+<circle class="s6" cx="411.8" cy="93.5" r="4" stroke="none"><title>3840x2160 @ 3e7c620*: 11.8 ×</title></circle>
 <rect class="s6" x="604" y="125" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="134">3840x2160</text>
 </svg>
 </a></figure>
+<figure><a href="m4-insns-render-only.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 instructions per frame — RENDER ONLY, 480×270 (plugin QEMU + libinsn, release-mcu opt-level z)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 instructions per frame — RENDER ONLY, 480×270 (plugin QEMU + libinsn, release-mcu opt-level z)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.41e+07</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">2.82e+07</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">4.23e+07</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">5.64e+07</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">7.05e+07</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">insns / frame</text>
+<polyline class="s1 ln" points="103.4,75.3 118.1,75.3 132.7,75.4 147.4,75.4 162.1,75.4 176.8,75.4 191.5,75.4 206.2,75.3 220.9,74.8 235.5,74.8 250.2,74.8 279.6,74.8 294.3,71.2 323.7,71.2 338.3,71.2 353.0,71.2 367.7,71.2 382.4,71.2 397.1,71.2 426.5,71.2 441.1,71.2 455.8,70.3 470.5,70.3 485.2,70.3 499.9,116.3 514.6,116.3 529.3,116.3 543.9,116.3 558.6,116.3 573.3,116.3 588.0,116.3" stroke-width="2"/>
+<circle class="s1" cx="103.4" cy="75.3" r="4" stroke="none"><title>vyr Exact @ e08aa63: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="118.1" cy="75.3" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="132.7" cy="75.4" r="4" stroke="none"><title>vyr Exact @ cab0038: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="147.4" cy="75.4" r="4" stroke="none"><title>vyr Exact @ 1306369: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="162.1" cy="75.4" r="4" stroke="none"><title>vyr Exact @ e93fa79: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="176.8" cy="75.4" r="4" stroke="none"><title>vyr Exact @ 39cb441: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="191.5" cy="75.4" r="4" stroke="none"><title>vyr Exact @ d6fd574: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="206.2" cy="75.3" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 5.99e+07 insns / frame</title></circle>
+<circle class="s1" cx="220.9" cy="74.8" r="4" stroke="none"><title>vyr Exact @ 64ec376: 6.01e+07 insns / frame</title></circle>
+<circle class="s1" cx="235.5" cy="74.8" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 6.01e+07 insns / frame</title></circle>
+<circle class="s1" cx="250.2" cy="74.8" r="4" stroke="none"><title>vyr Exact @ dd84be1: 6e+07 insns / frame</title></circle>
+<circle class="s1" cx="279.6" cy="74.8" r="4" stroke="none"><title>vyr Exact @ f2f0724: 6e+07 insns / frame</title></circle>
+<circle class="s1" cx="294.3" cy="71.2" r="4" stroke="none"><title>vyr Exact @ a2f0340: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="323.7" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="338.3" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="353.0" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="367.7" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 2469624: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="382.4" cy="71.2" r="4" stroke="none"><title>vyr Exact @ d52d23a: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="397.1" cy="71.2" r="4" stroke="none"><title>vyr Exact @ b609831: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="426.5" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 153ae63: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="441.1" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 018b366: 6.11e+07 insns / frame</title></circle>
+<circle class="s1" cx="455.8" cy="70.3" r="4" stroke="none"><title>vyr Exact @ cb29f52: 6.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="470.5" cy="70.3" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 6.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="485.2" cy="70.3" r="4" stroke="none"><title>vyr Exact @ 31970f3: 6.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="499.9" cy="116.3" r="4" stroke="none"><title>vyr Exact @ f0a101a: 4.82e+07 insns / frame</title></circle>
+<circle class="s1" cx="514.6" cy="116.3" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 4.82e+07 insns / frame</title></circle>
+<circle class="s1" cx="529.3" cy="116.3" r="4" stroke="none"><title>vyr Exact @ 4da4133: 4.82e+07 insns / frame</title></circle>
+<circle class="s1" cx="543.9" cy="116.3" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 4.82e+07 insns / frame</title></circle>
+<circle class="s1" cx="558.6" cy="116.3" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 4.82e+07 insns / frame</title></circle>
+<circle class="s1" cx="573.3" cy="116.3" r="4" stroke="none"><title>vyr Exact @ b93eec1: 4.82e+07 insns / frame</title></circle>
+<circle class="s1" cx="588.0" cy="116.3" r="4" stroke="none"><title>vyr Exact @ 5482dad: 4.82e+07 insns / frame</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">vyr Exact</text>
+<polyline class="s2 ln" points="455.8,122.5 470.5,122.5 485.2,122.5 499.9,168.1 514.6,168.1 529.3,168.1 543.9,168.1 558.6,168.1 573.3,168.1 588.0,168.1" stroke-width="2"/>
+<circle class="s2" cx="455.8" cy="122.5" r="4" stroke="none"><title>vyr Fast @ cb29f52: 4.65e+07 insns / frame</title></circle>
+<circle class="s2" cx="470.5" cy="122.5" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 4.65e+07 insns / frame</title></circle>
+<circle class="s2" cx="485.2" cy="122.5" r="4" stroke="none"><title>vyr Fast @ 31970f3: 4.65e+07 insns / frame</title></circle>
+<circle class="s2" cx="499.9" cy="168.1" r="4" stroke="none"><title>vyr Fast @ f0a101a: 3.35e+07 insns / frame</title></circle>
+<circle class="s2" cx="514.6" cy="168.1" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 3.35e+07 insns / frame</title></circle>
+<circle class="s2" cx="529.3" cy="168.1" r="4" stroke="none"><title>vyr Fast @ 4da4133: 3.35e+07 insns / frame</title></circle>
+<circle class="s2" cx="543.9" cy="168.1" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 3.35e+07 insns / frame</title></circle>
+<circle class="s2" cx="558.6" cy="168.1" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 3.35e+07 insns / frame</title></circle>
+<circle class="s2" cx="573.3" cy="168.1" r="4" stroke="none"><title>vyr Fast @ b93eec1: 3.35e+07 insns / frame</title></circle>
+<circle class="s2" cx="588.0" cy="168.1" r="4" stroke="none"><title>vyr Fast @ 5482dad: 3.35e+07 insns / frame</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">vyr Fast</text>
+<polyline class="s3 ln" points="118.1,122.7 132.7,122.9 147.4,122.9 162.1,122.8 176.8,235.5 191.5,235.5 206.2,235.5 220.9,257.7 235.5,257.7 250.2,257.7 279.6,257.7 294.3,267.1 323.7,267.1 338.3,267.1 353.0,267.1 367.7,267.1 382.4,267.1 397.1,267.1 426.5,267.1 441.1,267.1 455.8,266.7 470.5,266.7 485.2,266.7 499.9,266.6 514.6,266.6 529.3,266.6 543.9,266.6 558.6,266.6 573.3,266.6 588.0,266.6" stroke-width="2"/>
+<circle class="s3" cx="118.1" cy="122.7" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 4.64e+07 insns / frame</title></circle>
+<circle class="s3" cx="132.7" cy="122.9" r="4" stroke="none"><title>vyr Draft @ cab0038: 4.64e+07 insns / frame</title></circle>
+<circle class="s3" cx="147.4" cy="122.9" r="4" stroke="none"><title>vyr Draft @ 1306369: 4.64e+07 insns / frame</title></circle>
+<circle class="s3" cx="162.1" cy="122.8" r="4" stroke="none"><title>vyr Draft @ e93fa79: 4.64e+07 insns / frame</title></circle>
+<circle class="s3" cx="176.8" cy="235.5" r="4" stroke="none"><title>vyr Draft @ 39cb441: 1.44e+07 insns / frame</title></circle>
+<circle class="s3" cx="191.5" cy="235.5" r="4" stroke="none"><title>vyr Draft @ d6fd574: 1.44e+07 insns / frame</title></circle>
+<circle class="s3" cx="206.2" cy="235.5" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 1.44e+07 insns / frame</title></circle>
+<circle class="s3" cx="220.9" cy="257.7" r="4" stroke="none"><title>vyr Draft @ 64ec376: 8.05e+06 insns / frame</title></circle>
+<circle class="s3" cx="235.5" cy="257.7" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 8.05e+06 insns / frame</title></circle>
+<circle class="s3" cx="250.2" cy="257.7" r="4" stroke="none"><title>vyr Draft @ dd84be1: 8.05e+06 insns / frame</title></circle>
+<circle class="s3" cx="279.6" cy="257.7" r="4" stroke="none"><title>vyr Draft @ f2f0724: 8.05e+06 insns / frame</title></circle>
+<circle class="s3" cx="294.3" cy="267.1" r="4" stroke="none"><title>vyr Draft @ a2f0340: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="323.7" cy="267.1" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="338.3" cy="267.1" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="353.0" cy="267.1" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="367.7" cy="267.1" r="4" stroke="none"><title>vyr Draft @ 2469624: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="382.4" cy="267.1" r="4" stroke="none"><title>vyr Draft @ d52d23a: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="397.1" cy="267.1" r="4" stroke="none"><title>vyr Draft @ b609831: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="426.5" cy="267.1" r="4" stroke="none"><title>vyr Draft @ 153ae63: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="441.1" cy="267.1" r="4" stroke="none"><title>vyr Draft @ 018b366: 5.37e+06 insns / frame</title></circle>
+<circle class="s3" cx="455.8" cy="266.7" r="4" stroke="none"><title>vyr Draft @ cb29f52: 5.49e+06 insns / frame</title></circle>
+<circle class="s3" cx="470.5" cy="266.7" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 5.49e+06 insns / frame</title></circle>
+<circle class="s3" cx="485.2" cy="266.7" r="4" stroke="none"><title>vyr Draft @ 31970f3: 5.49e+06 insns / frame</title></circle>
+<circle class="s3" cx="499.9" cy="266.6" r="4" stroke="none"><title>vyr Draft @ f0a101a: 5.51e+06 insns / frame</title></circle>
+<circle class="s3" cx="514.6" cy="266.6" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 5.51e+06 insns / frame</title></circle>
+<circle class="s3" cx="529.3" cy="266.6" r="4" stroke="none"><title>vyr Draft @ 4da4133: 5.51e+06 insns / frame</title></circle>
+<circle class="s3" cx="543.9" cy="266.6" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 5.51e+06 insns / frame</title></circle>
+<circle class="s3" cx="558.6" cy="266.6" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 5.51e+06 insns / frame</title></circle>
+<circle class="s3" cx="573.3" cy="266.6" r="4" stroke="none"><title>vyr Draft @ b93eec1: 5.51e+06 insns / frame</title></circle>
+<circle class="s3" cx="588.0" cy="266.6" r="4" stroke="none"><title>vyr Draft @ 5482dad: 5.51e+06 insns / frame</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">vyr Draft</text>
+</svg>
+</a><figcaption>Render only: the benchmark's own hash fold is measured separately and excluded. This is the series to quote.</figcaption></figure>
+<figure><a href="m4-insns-total.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 instructions per frame — TOTAL, incl. the benchmark's own hash fold" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 instructions per frame — TOTAL, incl. the benchmark's own hash fold</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.48e+07</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">2.96e+07</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">4.45e+07</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">5.93e+07</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">7.41e+07</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">insns / frame</text>
+<polyline class="s1 ln" points="103.4,72.4 118.1,75.0 132.7,75.2 147.4,75.2 162.1,75.1 176.8,75.1 191.5,75.1 206.2,75.1 220.9,74.6 235.5,74.6 250.2,74.6 279.6,74.6 294.3,71.2 323.7,71.2 338.3,71.2 353.0,71.2 367.7,71.2 382.4,71.2 397.1,71.2 426.5,71.2 441.1,71.2 455.8,70.3 470.5,70.3 485.2,70.3 499.9,114.1 514.6,114.1 529.3,114.1 543.9,114.1 558.6,114.1 573.3,114.1 588.0,124.5" stroke-width="2"/>
+<circle class="s1" cx="103.4" cy="72.4" r="4" stroke="none"><title>vyr Exact @ e08aa63: 6.38e+07 insns / frame</title></circle>
+<circle class="s1" cx="118.1" cy="75.0" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="132.7" cy="75.2" r="4" stroke="none"><title>vyr Exact @ cab0038: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="147.4" cy="75.2" r="4" stroke="none"><title>vyr Exact @ 1306369: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="162.1" cy="75.1" r="4" stroke="none"><title>vyr Exact @ e93fa79: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="176.8" cy="75.1" r="4" stroke="none"><title>vyr Exact @ 39cb441: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="191.5" cy="75.1" r="4" stroke="none"><title>vyr Exact @ d6fd574: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="206.2" cy="75.1" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 6.3e+07 insns / frame</title></circle>
+<circle class="s1" cx="220.9" cy="74.6" r="4" stroke="none"><title>vyr Exact @ 64ec376: 6.32e+07 insns / frame</title></circle>
+<circle class="s1" cx="235.5" cy="74.6" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 6.32e+07 insns / frame</title></circle>
+<circle class="s1" cx="250.2" cy="74.6" r="4" stroke="none"><title>vyr Exact @ dd84be1: 6.32e+07 insns / frame</title></circle>
+<circle class="s1" cx="279.6" cy="74.6" r="4" stroke="none"><title>vyr Exact @ f2f0724: 6.32e+07 insns / frame</title></circle>
+<circle class="s1" cx="294.3" cy="71.2" r="4" stroke="none"><title>vyr Exact @ a2f0340: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="323.7" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="338.3" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="353.0" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="367.7" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 2469624: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="382.4" cy="71.2" r="4" stroke="none"><title>vyr Exact @ d52d23a: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="397.1" cy="71.2" r="4" stroke="none"><title>vyr Exact @ b609831: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="426.5" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 153ae63: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="441.1" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 018b366: 6.42e+07 insns / frame</title></circle>
+<circle class="s1" cx="455.8" cy="70.3" r="4" stroke="none"><title>vyr Exact @ cb29f52: 6.44e+07 insns / frame</title></circle>
+<circle class="s1" cx="470.5" cy="70.3" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 6.44e+07 insns / frame</title></circle>
+<circle class="s1" cx="485.2" cy="70.3" r="4" stroke="none"><title>vyr Exact @ 31970f3: 6.44e+07 insns / frame</title></circle>
+<circle class="s1" cx="499.9" cy="114.1" r="4" stroke="none"><title>vyr Exact @ f0a101a: 5.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="514.6" cy="114.1" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 5.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="529.3" cy="114.1" r="4" stroke="none"><title>vyr Exact @ 4da4133: 5.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="543.9" cy="114.1" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 5.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="558.6" cy="114.1" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 5.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="573.3" cy="114.1" r="4" stroke="none"><title>vyr Exact @ b93eec1: 5.13e+07 insns / frame</title></circle>
+<circle class="s1" cx="588.0" cy="124.5" r="4" stroke="none"><title>vyr Exact @ 5482dad: 4.82e+07 insns / frame</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">vyr Exact</text>
+<polyline class="s2 ln" points="455.8,120.0 470.5,120.0 485.2,120.0 499.9,163.4 514.6,163.4 529.3,163.4 543.9,163.4 558.6,163.4 573.3,163.4 588.0,173.8" stroke-width="2"/>
+<circle class="s2" cx="455.8" cy="120.0" r="4" stroke="none"><title>vyr Fast @ cb29f52: 4.96e+07 insns / frame</title></circle>
+<circle class="s2" cx="470.5" cy="120.0" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 4.96e+07 insns / frame</title></circle>
+<circle class="s2" cx="485.2" cy="120.0" r="4" stroke="none"><title>vyr Fast @ 31970f3: 4.96e+07 insns / frame</title></circle>
+<circle class="s2" cx="499.9" cy="163.4" r="4" stroke="none"><title>vyr Fast @ f0a101a: 3.66e+07 insns / frame</title></circle>
+<circle class="s2" cx="514.6" cy="163.4" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 3.66e+07 insns / frame</title></circle>
+<circle class="s2" cx="529.3" cy="163.4" r="4" stroke="none"><title>vyr Fast @ 4da4133: 3.66e+07 insns / frame</title></circle>
+<circle class="s2" cx="543.9" cy="163.4" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 3.66e+07 insns / frame</title></circle>
+<circle class="s2" cx="558.6" cy="163.4" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 3.66e+07 insns / frame</title></circle>
+<circle class="s2" cx="573.3" cy="163.4" r="4" stroke="none"><title>vyr Fast @ b93eec1: 3.66e+07 insns / frame</title></circle>
+<circle class="s2" cx="588.0" cy="173.8" r="4" stroke="none"><title>vyr Fast @ 5482dad: 3.35e+07 insns / frame</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">vyr Fast</text>
+<polyline class="s3 ln" points="118.1,120.2 132.7,120.3 147.4,120.3 162.1,120.2 176.8,227.5 191.5,227.5 206.2,227.5 220.9,248.6 235.5,248.6 250.2,248.6 279.6,248.6 294.3,257.6 323.7,257.6 338.3,257.6 353.0,257.6 367.7,257.6 382.4,257.6 397.1,257.6 426.5,257.6 441.1,257.6 455.8,257.2 470.5,257.2 485.2,257.2 499.9,257.1 514.6,257.1 529.3,257.1 543.9,257.1 558.6,257.1 573.3,257.1 588.0,267.6" stroke-width="2"/>
+<circle class="s3" cx="118.1" cy="120.2" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 4.95e+07 insns / frame</title></circle>
+<circle class="s3" cx="132.7" cy="120.3" r="4" stroke="none"><title>vyr Draft @ cab0038: 4.95e+07 insns / frame</title></circle>
+<circle class="s3" cx="147.4" cy="120.3" r="4" stroke="none"><title>vyr Draft @ 1306369: 4.95e+07 insns / frame</title></circle>
+<circle class="s3" cx="162.1" cy="120.2" r="4" stroke="none"><title>vyr Draft @ e93fa79: 4.95e+07 insns / frame</title></circle>
+<circle class="s3" cx="176.8" cy="227.5" r="4" stroke="none"><title>vyr Draft @ 39cb441: 1.75e+07 insns / frame</title></circle>
+<circle class="s3" cx="191.5" cy="227.5" r="4" stroke="none"><title>vyr Draft @ d6fd574: 1.75e+07 insns / frame</title></circle>
+<circle class="s3" cx="206.2" cy="227.5" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 1.75e+07 insns / frame</title></circle>
+<circle class="s3" cx="220.9" cy="248.6" r="4" stroke="none"><title>vyr Draft @ 64ec376: 1.12e+07 insns / frame</title></circle>
+<circle class="s3" cx="235.5" cy="248.6" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 1.12e+07 insns / frame</title></circle>
+<circle class="s3" cx="250.2" cy="248.6" r="4" stroke="none"><title>vyr Draft @ dd84be1: 1.12e+07 insns / frame</title></circle>
+<circle class="s3" cx="279.6" cy="248.6" r="4" stroke="none"><title>vyr Draft @ f2f0724: 1.12e+07 insns / frame</title></circle>
+<circle class="s3" cx="294.3" cy="257.6" r="4" stroke="none"><title>vyr Draft @ a2f0340: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="323.7" cy="257.6" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="338.3" cy="257.6" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="353.0" cy="257.6" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="367.7" cy="257.6" r="4" stroke="none"><title>vyr Draft @ 2469624: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="382.4" cy="257.6" r="4" stroke="none"><title>vyr Draft @ d52d23a: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="397.1" cy="257.6" r="4" stroke="none"><title>vyr Draft @ b609831: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="426.5" cy="257.6" r="4" stroke="none"><title>vyr Draft @ 153ae63: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="441.1" cy="257.6" r="4" stroke="none"><title>vyr Draft @ 018b366: 8.48e+06 insns / frame</title></circle>
+<circle class="s3" cx="455.8" cy="257.2" r="4" stroke="none"><title>vyr Draft @ cb29f52: 8.6e+06 insns / frame</title></circle>
+<circle class="s3" cx="470.5" cy="257.2" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 8.6e+06 insns / frame</title></circle>
+<circle class="s3" cx="485.2" cy="257.2" r="4" stroke="none"><title>vyr Draft @ 31970f3: 8.6e+06 insns / frame</title></circle>
+<circle class="s3" cx="499.9" cy="257.1" r="4" stroke="none"><title>vyr Draft @ f0a101a: 8.62e+06 insns / frame</title></circle>
+<circle class="s3" cx="514.6" cy="257.1" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 8.62e+06 insns / frame</title></circle>
+<circle class="s3" cx="529.3" cy="257.1" r="4" stroke="none"><title>vyr Draft @ 4da4133: 8.62e+06 insns / frame</title></circle>
+<circle class="s3" cx="543.9" cy="257.1" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 8.62e+06 insns / frame</title></circle>
+<circle class="s3" cx="558.6" cy="257.1" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 8.62e+06 insns / frame</title></circle>
+<circle class="s3" cx="573.3" cy="257.1" r="4" stroke="none"><title>vyr Draft @ b93eec1: 8.62e+06 insns / frame</title></circle>
+<circle class="s3" cx="588.0" cy="267.6" r="4" stroke="none"><title>vyr Draft @ 5482dad: 5.51e+06 insns / frame</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">vyr Draft</text>
+</svg>
+</a><figcaption>Kept only so the two can be compared. Every number published before 2026-07-24 was this series, silently.</figcaption></figure>
+<figure><a href="m4-fold-share.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="How much of the measured frame is the BENCHMARK hashing itself" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">How much of the measured frame is the BENCHMARK hashing itself</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">8</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">17</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">25</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">34</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">42</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">% of total</text>
+<polyline class="s1 ln" points="103.4,250.2 118.1,257.0 132.7,257.0 147.4,257.0 162.1,257.0 176.8,257.0 191.5,257.0 206.2,257.0 220.9,257.1 235.5,257.1 250.2,257.1 279.6,257.1 294.3,257.5 323.7,257.5 338.3,257.5 353.0,257.5 367.7,257.5 382.4,257.5 397.1,257.5 426.5,257.5 441.1,257.5 455.8,257.6 470.5,257.6 485.2,257.6 499.9,250.4 514.6,250.4 529.3,250.4 543.9,250.4 558.6,250.4 573.3,250.4 588.0,286.0" stroke-width="2"/>
+<circle class="s1" cx="103.4" cy="250.2" r="4" stroke="none"><title>vyr Exact @ e08aa63: 6 % of total</title></circle>
+<circle class="s1" cx="118.1" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 5 % of total</title></circle>
+<circle class="s1" cx="132.7" cy="257.0" r="4" stroke="none"><title>vyr Exact @ cab0038: 5 % of total</title></circle>
+<circle class="s1" cx="147.4" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 1306369: 5 % of total</title></circle>
+<circle class="s1" cx="162.1" cy="257.0" r="4" stroke="none"><title>vyr Exact @ e93fa79: 5 % of total</title></circle>
+<circle class="s1" cx="176.8" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 39cb441: 5 % of total</title></circle>
+<circle class="s1" cx="191.5" cy="257.0" r="4" stroke="none"><title>vyr Exact @ d6fd574: 5 % of total</title></circle>
+<circle class="s1" cx="206.2" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 5 % of total</title></circle>
+<circle class="s1" cx="220.9" cy="257.1" r="4" stroke="none"><title>vyr Exact @ 64ec376: 5 % of total</title></circle>
+<circle class="s1" cx="235.5" cy="257.1" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 5 % of total</title></circle>
+<circle class="s1" cx="250.2" cy="257.1" r="4" stroke="none"><title>vyr Exact @ dd84be1: 5 % of total</title></circle>
+<circle class="s1" cx="279.6" cy="257.1" r="4" stroke="none"><title>vyr Exact @ f2f0724: 5 % of total</title></circle>
+<circle class="s1" cx="294.3" cy="257.5" r="4" stroke="none"><title>vyr Exact @ a2f0340: 5 % of total</title></circle>
+<circle class="s1" cx="323.7" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 5 % of total</title></circle>
+<circle class="s1" cx="338.3" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 5 % of total</title></circle>
+<circle class="s1" cx="353.0" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 5 % of total</title></circle>
+<circle class="s1" cx="367.7" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 2469624: 5 % of total</title></circle>
+<circle class="s1" cx="382.4" cy="257.5" r="4" stroke="none"><title>vyr Exact @ d52d23a: 5 % of total</title></circle>
+<circle class="s1" cx="397.1" cy="257.5" r="4" stroke="none"><title>vyr Exact @ b609831: 5 % of total</title></circle>
+<circle class="s1" cx="426.5" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 153ae63: 5 % of total</title></circle>
+<circle class="s1" cx="441.1" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 018b366: 5 % of total</title></circle>
+<circle class="s1" cx="455.8" cy="257.6" r="4" stroke="none"><title>vyr Exact @ cb29f52: 5 % of total</title></circle>
+<circle class="s1" cx="470.5" cy="257.6" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 5 % of total</title></circle>
+<circle class="s1" cx="485.2" cy="257.6" r="4" stroke="none"><title>vyr Exact @ 31970f3: 5 % of total</title></circle>
+<circle class="s1" cx="499.9" cy="250.4" r="4" stroke="none"><title>vyr Exact @ f0a101a: 6 % of total</title></circle>
+<circle class="s1" cx="514.6" cy="250.4" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 6 % of total</title></circle>
+<circle class="s1" cx="529.3" cy="250.4" r="4" stroke="none"><title>vyr Exact @ 4da4133: 6 % of total</title></circle>
+<circle class="s1" cx="543.9" cy="250.4" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 6 % of total</title></circle>
+<circle class="s1" cx="558.6" cy="250.4" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 6 % of total</title></circle>
+<circle class="s1" cx="573.3" cy="250.4" r="4" stroke="none"><title>vyr Exact @ b93eec1: 6 % of total</title></circle>
+<circle class="s1" cx="588.0" cy="286.0" r="4" stroke="none"><title>vyr Exact @ 5482dad: 0 % of total</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">vyr Exact</text>
+<polyline class="s2 ln" points="455.8,249.1 470.5,249.1 485.2,249.1 499.9,236.1 514.6,236.1 529.3,236.1 543.9,236.1 558.6,236.1 573.3,236.1 588.0,286.0" stroke-width="2"/>
+<circle class="s2" cx="455.8" cy="249.1" r="4" stroke="none"><title>vyr Fast @ cb29f52: 6 % of total</title></circle>
+<circle class="s2" cx="470.5" cy="249.1" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 6 % of total</title></circle>
+<circle class="s2" cx="485.2" cy="249.1" r="4" stroke="none"><title>vyr Fast @ 31970f3: 6 % of total</title></circle>
+<circle class="s2" cx="499.9" cy="236.1" r="4" stroke="none"><title>vyr Fast @ f0a101a: 8 % of total</title></circle>
+<circle class="s2" cx="514.6" cy="236.1" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 8 % of total</title></circle>
+<circle class="s2" cx="529.3" cy="236.1" r="4" stroke="none"><title>vyr Fast @ 4da4133: 8 % of total</title></circle>
+<circle class="s2" cx="543.9" cy="236.1" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 8 % of total</title></circle>
+<circle class="s2" cx="558.6" cy="236.1" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 8 % of total</title></circle>
+<circle class="s2" cx="573.3" cy="236.1" r="4" stroke="none"><title>vyr Fast @ b93eec1: 8 % of total</title></circle>
+<circle class="s2" cx="588.0" cy="286.0" r="4" stroke="none"><title>vyr Fast @ 5482dad: 0 % of total</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">vyr Fast</text>
+<polyline class="s3 ln" points="118.1,249.1 132.7,249.1 147.4,249.1 162.1,249.1 176.8,181.4 191.5,181.4 206.2,181.4 220.9,122.3 235.5,122.3 250.2,122.2 279.6,122.2 294.3,70.3 323.7,70.3 338.3,70.4 353.0,70.4 367.7,70.4 382.4,70.4 397.1,70.4 426.5,70.4 441.1,70.4 455.8,73.5 470.5,73.5 485.2,73.5 499.9,74.0 514.6,74.0 529.3,74.0 543.9,74.0 558.6,74.0 573.3,74.0 588.0,286.0" stroke-width="2"/>
+<circle class="s3" cx="118.1" cy="249.1" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 6 % of total</title></circle>
+<circle class="s3" cx="132.7" cy="249.1" r="4" stroke="none"><title>vyr Draft @ cab0038: 6 % of total</title></circle>
+<circle class="s3" cx="147.4" cy="249.1" r="4" stroke="none"><title>vyr Draft @ 1306369: 6 % of total</title></circle>
+<circle class="s3" cx="162.1" cy="249.1" r="4" stroke="none"><title>vyr Draft @ e93fa79: 6 % of total</title></circle>
+<circle class="s3" cx="176.8" cy="181.4" r="4" stroke="none"><title>vyr Draft @ 39cb441: 18 % of total</title></circle>
+<circle class="s3" cx="191.5" cy="181.4" r="4" stroke="none"><title>vyr Draft @ d6fd574: 18 % of total</title></circle>
+<circle class="s3" cx="206.2" cy="181.4" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 18 % of total</title></circle>
+<circle class="s3" cx="220.9" cy="122.3" r="4" stroke="none"><title>vyr Draft @ 64ec376: 28 % of total</title></circle>
+<circle class="s3" cx="235.5" cy="122.3" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 28 % of total</title></circle>
+<circle class="s3" cx="250.2" cy="122.2" r="4" stroke="none"><title>vyr Draft @ dd84be1: 28 % of total</title></circle>
+<circle class="s3" cx="279.6" cy="122.2" r="4" stroke="none"><title>vyr Draft @ f2f0724: 28 % of total</title></circle>
+<circle class="s3" cx="294.3" cy="70.3" r="4" stroke="none"><title>vyr Draft @ a2f0340: 37 % of total</title></circle>
+<circle class="s3" cx="323.7" cy="70.3" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 37 % of total</title></circle>
+<circle class="s3" cx="338.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 37 % of total</title></circle>
+<circle class="s3" cx="353.0" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 37 % of total</title></circle>
+<circle class="s3" cx="367.7" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 2469624: 37 % of total</title></circle>
+<circle class="s3" cx="382.4" cy="70.4" r="4" stroke="none"><title>vyr Draft @ d52d23a: 37 % of total</title></circle>
+<circle class="s3" cx="397.1" cy="70.4" r="4" stroke="none"><title>vyr Draft @ b609831: 37 % of total</title></circle>
+<circle class="s3" cx="426.5" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 153ae63: 37 % of total</title></circle>
+<circle class="s3" cx="441.1" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 018b366: 37 % of total</title></circle>
+<circle class="s3" cx="455.8" cy="73.5" r="4" stroke="none"><title>vyr Draft @ cb29f52: 36 % of total</title></circle>
+<circle class="s3" cx="470.5" cy="73.5" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 36 % of total</title></circle>
+<circle class="s3" cx="485.2" cy="73.5" r="4" stroke="none"><title>vyr Draft @ 31970f3: 36 % of total</title></circle>
+<circle class="s3" cx="499.9" cy="74.0" r="4" stroke="none"><title>vyr Draft @ f0a101a: 36 % of total</title></circle>
+<circle class="s3" cx="514.6" cy="74.0" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 36 % of total</title></circle>
+<circle class="s3" cx="529.3" cy="74.0" r="4" stroke="none"><title>vyr Draft @ 4da4133: 36 % of total</title></circle>
+<circle class="s3" cx="543.9" cy="74.0" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 36 % of total</title></circle>
+<circle class="s3" cx="558.6" cy="74.0" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 36 % of total</title></circle>
+<circle class="s3" cx="573.3" cy="74.0" r="4" stroke="none"><title>vyr Draft @ b93eec1: 36 % of total</title></circle>
+<circle class="s3" cx="588.0" cy="286.0" r="4" stroke="none"><title>vyr Draft @ 5482dad: 0 % of total</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">vyr Draft</text>
+</svg>
+</a><figcaption>Error 4, made permanent and visible: the FNV fold is a fixed 3.11 M insns/frame, so it inflates a cheap tier far more than an expensive one.</figcaption></figure>
+<figure><a href="m4-heap.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 workload heap peak (counting allocator, emulated)" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 workload heap peak (counting allocator, emulated)</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">26</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">52</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">77</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">103</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">129</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
+<polyline class="s1 ln" points="103.4,86.2 118.1,86.2 132.7,86.2 147.4,86.2 162.1,86.2 176.8,86.2 191.5,86.2 206.2,86.2 220.9,86.2 235.5,86.2 250.2,86.2 279.6,86.2 294.3,86.2 323.7,86.2 338.3,86.2 353.0,86.2 367.7,86.2 382.4,86.2 397.1,86.2 426.5,86.2 441.1,86.2 455.8,86.2 470.5,86.2 485.2,86.2 499.9,74.9 514.6,74.9 529.3,74.9 543.9,74.9 558.6,74.9 573.3,74.9 588.0,74.9" stroke-width="2"/>
+<circle class="s1" cx="103.4" cy="86.2" r="4" stroke="none"><title>vyr Exact @ e08aa63: 104 KiB</title></circle>
+<circle class="s1" cx="118.1" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 104 KiB</title></circle>
+<circle class="s1" cx="132.7" cy="86.2" r="4" stroke="none"><title>vyr Exact @ cab0038: 104 KiB</title></circle>
+<circle class="s1" cx="147.4" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 1306369: 104 KiB</title></circle>
+<circle class="s1" cx="162.1" cy="86.2" r="4" stroke="none"><title>vyr Exact @ e93fa79: 104 KiB</title></circle>
+<circle class="s1" cx="176.8" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 39cb441: 104 KiB</title></circle>
+<circle class="s1" cx="191.5" cy="86.2" r="4" stroke="none"><title>vyr Exact @ d6fd574: 104 KiB</title></circle>
+<circle class="s1" cx="206.2" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 104 KiB</title></circle>
+<circle class="s1" cx="220.9" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 64ec376: 104 KiB</title></circle>
+<circle class="s1" cx="235.5" cy="86.2" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 104 KiB</title></circle>
+<circle class="s1" cx="250.2" cy="86.2" r="4" stroke="none"><title>vyr Exact @ dd84be1: 104 KiB</title></circle>
+<circle class="s1" cx="279.6" cy="86.2" r="4" stroke="none"><title>vyr Exact @ f2f0724: 104 KiB</title></circle>
+<circle class="s1" cx="294.3" cy="86.2" r="4" stroke="none"><title>vyr Exact @ a2f0340: 104 KiB</title></circle>
+<circle class="s1" cx="323.7" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 104 KiB</title></circle>
+<circle class="s1" cx="338.3" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 104 KiB</title></circle>
+<circle class="s1" cx="353.0" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 104 KiB</title></circle>
+<circle class="s1" cx="367.7" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 2469624: 104 KiB</title></circle>
+<circle class="s1" cx="382.4" cy="86.2" r="4" stroke="none"><title>vyr Exact @ d52d23a: 104 KiB</title></circle>
+<circle class="s1" cx="397.1" cy="86.2" r="4" stroke="none"><title>vyr Exact @ b609831: 104 KiB</title></circle>
+<circle class="s1" cx="426.5" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 153ae63: 104 KiB</title></circle>
+<circle class="s1" cx="441.1" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 018b366: 104 KiB</title></circle>
+<circle class="s1" cx="455.8" cy="86.2" r="4" stroke="none"><title>vyr Exact @ cb29f52: 104 KiB</title></circle>
+<circle class="s1" cx="470.5" cy="86.2" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 104 KiB</title></circle>
+<circle class="s1" cx="485.2" cy="86.2" r="4" stroke="none"><title>vyr Exact @ 31970f3: 104 KiB</title></circle>
+<circle class="s1" cx="499.9" cy="74.9" r="4" stroke="none"><title>vyr Exact @ f0a101a: 110 KiB</title></circle>
+<circle class="s1" cx="514.6" cy="74.9" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 110 KiB</title></circle>
+<circle class="s1" cx="529.3" cy="74.9" r="4" stroke="none"><title>vyr Exact @ 4da4133: 110 KiB</title></circle>
+<circle class="s1" cx="543.9" cy="74.9" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 110 KiB</title></circle>
+<circle class="s1" cx="558.6" cy="74.9" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 110 KiB</title></circle>
+<circle class="s1" cx="573.3" cy="74.9" r="4" stroke="none"><title>vyr Exact @ b93eec1: 110 KiB</title></circle>
+<circle class="s1" cx="588.0" cy="74.9" r="4" stroke="none"><title>vyr Exact @ 5482dad: 110 KiB</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">vyr Exact</text>
+<polyline class="s2 ln" points="455.8,85.3 470.5,85.3 485.2,85.3 499.9,70.3 514.6,70.3 529.3,70.3 543.9,70.3 558.6,70.3 573.3,70.3 588.0,70.3" stroke-width="2"/>
+<circle class="s2" cx="455.8" cy="85.3" r="4" stroke="none"><title>vyr Fast @ cb29f52: 104 KiB</title></circle>
+<circle class="s2" cx="470.5" cy="85.3" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 104 KiB</title></circle>
+<circle class="s2" cx="485.2" cy="85.3" r="4" stroke="none"><title>vyr Fast @ 31970f3: 104 KiB</title></circle>
+<circle class="s2" cx="499.9" cy="70.3" r="4" stroke="none"><title>vyr Fast @ f0a101a: 112 KiB</title></circle>
+<circle class="s2" cx="514.6" cy="70.3" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 112 KiB</title></circle>
+<circle class="s2" cx="529.3" cy="70.3" r="4" stroke="none"><title>vyr Fast @ 4da4133: 112 KiB</title></circle>
+<circle class="s2" cx="543.9" cy="70.3" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 112 KiB</title></circle>
+<circle class="s2" cx="558.6" cy="70.3" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 112 KiB</title></circle>
+<circle class="s2" cx="573.3" cy="70.3" r="4" stroke="none"><title>vyr Fast @ b93eec1: 112 KiB</title></circle>
+<circle class="s2" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Fast @ 5482dad: 112 KiB</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">vyr Fast</text>
+<polyline class="s3 ln" points="118.1,86.2 132.7,86.2 147.4,86.2 162.1,86.2 176.8,109.2 191.5,109.2 206.2,109.2 220.9,173.7 235.5,173.7 250.2,173.7 279.6,173.7 294.3,130.4 323.7,130.4 338.3,130.4 353.0,130.4 367.7,130.4 382.4,130.4 397.1,130.4 426.5,130.4 441.1,130.4 455.8,130.4 470.5,130.4 485.2,130.4 499.9,130.4 514.6,130.4 529.3,130.4 543.9,130.4 558.6,130.4 573.3,130.4 588.0,130.4" stroke-width="2"/>
+<circle class="s3" cx="118.1" cy="86.2" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 104 KiB</title></circle>
+<circle class="s3" cx="132.7" cy="86.2" r="4" stroke="none"><title>vyr Draft @ cab0038: 104 KiB</title></circle>
+<circle class="s3" cx="147.4" cy="86.2" r="4" stroke="none"><title>vyr Draft @ 1306369: 104 KiB</title></circle>
+<circle class="s3" cx="162.1" cy="86.2" r="4" stroke="none"><title>vyr Draft @ e93fa79: 104 KiB</title></circle>
+<circle class="s3" cx="176.8" cy="109.2" r="4" stroke="none"><title>vyr Draft @ 39cb441: 92 KiB</title></circle>
+<circle class="s3" cx="191.5" cy="109.2" r="4" stroke="none"><title>vyr Draft @ d6fd574: 92 KiB</title></circle>
+<circle class="s3" cx="206.2" cy="109.2" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 92 KiB</title></circle>
+<circle class="s3" cx="220.9" cy="173.7" r="4" stroke="none"><title>vyr Draft @ 64ec376: 58 KiB</title></circle>
+<circle class="s3" cx="235.5" cy="173.7" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 58 KiB</title></circle>
+<circle class="s3" cx="250.2" cy="173.7" r="4" stroke="none"><title>vyr Draft @ dd84be1: 58 KiB</title></circle>
+<circle class="s3" cx="279.6" cy="173.7" r="4" stroke="none"><title>vyr Draft @ f2f0724: 58 KiB</title></circle>
+<circle class="s3" cx="294.3" cy="130.4" r="4" stroke="none"><title>vyr Draft @ a2f0340: 81 KiB</title></circle>
+<circle class="s3" cx="323.7" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 81 KiB</title></circle>
+<circle class="s3" cx="338.3" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 81 KiB</title></circle>
+<circle class="s3" cx="353.0" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 81 KiB</title></circle>
+<circle class="s3" cx="367.7" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 2469624: 81 KiB</title></circle>
+<circle class="s3" cx="382.4" cy="130.4" r="4" stroke="none"><title>vyr Draft @ d52d23a: 81 KiB</title></circle>
+<circle class="s3" cx="397.1" cy="130.4" r="4" stroke="none"><title>vyr Draft @ b609831: 81 KiB</title></circle>
+<circle class="s3" cx="426.5" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 153ae63: 81 KiB</title></circle>
+<circle class="s3" cx="441.1" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 018b366: 81 KiB</title></circle>
+<circle class="s3" cx="455.8" cy="130.4" r="4" stroke="none"><title>vyr Draft @ cb29f52: 81 KiB</title></circle>
+<circle class="s3" cx="470.5" cy="130.4" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 81 KiB</title></circle>
+<circle class="s3" cx="485.2" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 31970f3: 81 KiB</title></circle>
+<circle class="s3" cx="499.9" cy="130.4" r="4" stroke="none"><title>vyr Draft @ f0a101a: 81 KiB</title></circle>
+<circle class="s3" cx="514.6" cy="130.4" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 81 KiB</title></circle>
+<circle class="s3" cx="529.3" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 4da4133: 81 KiB</title></circle>
+<circle class="s3" cx="543.9" cy="130.4" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 81 KiB</title></circle>
+<circle class="s3" cx="558.6" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 81 KiB</title></circle>
+<circle class="s3" cx="573.3" cy="130.4" r="4" stroke="none"><title>vyr Draft @ b93eec1: 81 KiB</title></circle>
+<circle class="s3" cx="588.0" cy="130.4" r="4" stroke="none"><title>vyr Draft @ 5482dad: 81 KiB</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">vyr Draft</text>
+</svg>
+</a></figure>
+<figure><a href="m4-flash.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 flash — text+data of the measured ELF" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 flash — text+data of the measured ELF</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">108</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">216</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">324</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">432</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">540</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
+<polyline class="s1 ln" points="103.4,84.9 118.1,78.7 132.7,78.3 147.4,78.3 162.1,78.3 176.8,77.4 191.5,77.4 206.2,77.0 220.9,76.4 235.5,76.4 250.2,74.2 279.6,74.2 294.3,73.2 323.7,73.2 338.3,72.2 353.0,72.2 367.7,72.2 382.4,72.2 397.1,72.2 426.5,72.2 441.1,72.2 455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.4" stroke-width="2"/>
+<circle class="s1" cx="103.4" cy="84.9" r="4" stroke="none"><title>vyr Exact @ e08aa63: 438 KiB</title></circle>
+<circle class="s1" cx="118.1" cy="78.7" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 451 KiB</title></circle>
+<circle class="s1" cx="132.7" cy="78.3" r="4" stroke="none"><title>vyr Exact @ cab0038: 452 KiB</title></circle>
+<circle class="s1" cx="147.4" cy="78.3" r="4" stroke="none"><title>vyr Exact @ 1306369: 452 KiB</title></circle>
+<circle class="s1" cx="162.1" cy="78.3" r="4" stroke="none"><title>vyr Exact @ e93fa79: 452 KiB</title></circle>
+<circle class="s1" cx="176.8" cy="77.4" r="4" stroke="none"><title>vyr Exact @ 39cb441: 454 KiB</title></circle>
+<circle class="s1" cx="191.5" cy="77.4" r="4" stroke="none"><title>vyr Exact @ d6fd574: 454 KiB</title></circle>
+<circle class="s1" cx="206.2" cy="77.0" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 455 KiB</title></circle>
+<circle class="s1" cx="220.9" cy="76.4" r="4" stroke="none"><title>vyr Exact @ 64ec376: 456 KiB</title></circle>
+<circle class="s1" cx="235.5" cy="76.4" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 456 KiB</title></circle>
+<circle class="s1" cx="250.2" cy="74.2" r="4" stroke="none"><title>vyr Exact @ dd84be1: 461 KiB</title></circle>
+<circle class="s1" cx="279.6" cy="74.2" r="4" stroke="none"><title>vyr Exact @ f2f0724: 461 KiB</title></circle>
+<circle class="s1" cx="294.3" cy="73.2" r="4" stroke="none"><title>vyr Exact @ a2f0340: 463 KiB</title></circle>
+<circle class="s1" cx="323.7" cy="73.2" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 463 KiB</title></circle>
+<circle class="s1" cx="338.3" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 465 KiB</title></circle>
+<circle class="s1" cx="353.0" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 465 KiB</title></circle>
+<circle class="s1" cx="367.7" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 2469624: 465 KiB</title></circle>
+<circle class="s1" cx="382.4" cy="72.2" r="4" stroke="none"><title>vyr Exact @ d52d23a: 465 KiB</title></circle>
+<circle class="s1" cx="397.1" cy="72.2" r="4" stroke="none"><title>vyr Exact @ b609831: 465 KiB</title></circle>
+<circle class="s1" cx="426.5" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 153ae63: 465 KiB</title></circle>
+<circle class="s1" cx="441.1" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 018b366: 465 KiB</title></circle>
+<circle class="s1" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Exact @ cb29f52: 468 KiB</title></circle>
+<circle class="s1" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 468 KiB</title></circle>
+<circle class="s1" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 31970f3: 468 KiB</title></circle>
+<circle class="s1" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Exact @ f0a101a: 469 KiB</title></circle>
+<circle class="s1" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 469 KiB</title></circle>
+<circle class="s1" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 4da4133: 469 KiB</title></circle>
+<circle class="s1" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 469 KiB</title></circle>
+<circle class="s1" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 469 KiB</title></circle>
+<circle class="s1" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Exact @ b93eec1: 469 KiB</title></circle>
+<circle class="s1" cx="588.0" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 5482dad: 469 KiB</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">vyr Exact</text>
+<polyline class="s2 ln" points="455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.3" stroke-width="2"/>
+<circle class="s2" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Fast @ cb29f52: 468 KiB</title></circle>
+<circle class="s2" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 468 KiB</title></circle>
+<circle class="s2" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Fast @ 31970f3: 468 KiB</title></circle>
+<circle class="s2" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Fast @ f0a101a: 469 KiB</title></circle>
+<circle class="s2" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 469 KiB</title></circle>
+<circle class="s2" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Fast @ 4da4133: 469 KiB</title></circle>
+<circle class="s2" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 469 KiB</title></circle>
+<circle class="s2" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 469 KiB</title></circle>
+<circle class="s2" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Fast @ b93eec1: 469 KiB</title></circle>
+<circle class="s2" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Fast @ 5482dad: 469 KiB</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">vyr Fast</text>
+<polyline class="s3 ln" points="118.1,78.7 132.7,78.3 147.4,78.3 162.1,78.3 176.8,77.4 191.5,77.4 206.2,77.0 220.9,76.4 235.5,76.4 250.2,74.2 279.6,74.2 294.3,73.2 323.7,73.2 338.3,72.2 353.0,72.2 367.7,72.2 382.4,72.2 397.1,72.2 426.5,72.2 441.1,72.2 455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.3" stroke-width="2"/>
+<circle class="s3" cx="118.1" cy="78.7" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 451 KiB</title></circle>
+<circle class="s3" cx="132.7" cy="78.3" r="4" stroke="none"><title>vyr Draft @ cab0038: 452 KiB</title></circle>
+<circle class="s3" cx="147.4" cy="78.3" r="4" stroke="none"><title>vyr Draft @ 1306369: 452 KiB</title></circle>
+<circle class="s3" cx="162.1" cy="78.3" r="4" stroke="none"><title>vyr Draft @ e93fa79: 452 KiB</title></circle>
+<circle class="s3" cx="176.8" cy="77.4" r="4" stroke="none"><title>vyr Draft @ 39cb441: 454 KiB</title></circle>
+<circle class="s3" cx="191.5" cy="77.4" r="4" stroke="none"><title>vyr Draft @ d6fd574: 454 KiB</title></circle>
+<circle class="s3" cx="206.2" cy="77.0" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 455 KiB</title></circle>
+<circle class="s3" cx="220.9" cy="76.4" r="4" stroke="none"><title>vyr Draft @ 64ec376: 456 KiB</title></circle>
+<circle class="s3" cx="235.5" cy="76.4" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 456 KiB</title></circle>
+<circle class="s3" cx="250.2" cy="74.2" r="4" stroke="none"><title>vyr Draft @ dd84be1: 461 KiB</title></circle>
+<circle class="s3" cx="279.6" cy="74.2" r="4" stroke="none"><title>vyr Draft @ f2f0724: 461 KiB</title></circle>
+<circle class="s3" cx="294.3" cy="73.2" r="4" stroke="none"><title>vyr Draft @ a2f0340: 463 KiB</title></circle>
+<circle class="s3" cx="323.7" cy="73.2" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 463 KiB</title></circle>
+<circle class="s3" cx="338.3" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 465 KiB</title></circle>
+<circle class="s3" cx="353.0" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 465 KiB</title></circle>
+<circle class="s3" cx="367.7" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 2469624: 465 KiB</title></circle>
+<circle class="s3" cx="382.4" cy="72.2" r="4" stroke="none"><title>vyr Draft @ d52d23a: 465 KiB</title></circle>
+<circle class="s3" cx="397.1" cy="72.2" r="4" stroke="none"><title>vyr Draft @ b609831: 465 KiB</title></circle>
+<circle class="s3" cx="426.5" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 153ae63: 465 KiB</title></circle>
+<circle class="s3" cx="441.1" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 018b366: 465 KiB</title></circle>
+<circle class="s3" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Draft @ cb29f52: 468 KiB</title></circle>
+<circle class="s3" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 468 KiB</title></circle>
+<circle class="s3" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Draft @ 31970f3: 468 KiB</title></circle>
+<circle class="s3" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Draft @ f0a101a: 469 KiB</title></circle>
+<circle class="s3" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 469 KiB</title></circle>
+<circle class="s3" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 4da4133: 469 KiB</title></circle>
+<circle class="s3" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 469 KiB</title></circle>
+<circle class="s3" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 469 KiB</title></circle>
+<circle class="s3" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ b93eec1: 469 KiB</title></circle>
+<circle class="s3" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Draft @ 5482dad: 469 KiB</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">vyr Draft</text>
+</svg>
+</a><figcaption>The run-qemu vehicle at each tier, not the size matrix — this is the binary the instruction count was taken on.</figcaption></figure>
+<figure><a href="host-ns-frame.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Host (x86-64) frame cost — the same scene, the other platform" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Host (x86-64) frame cost — the same scene, the other platform</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">5.91e+04</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">1.18e+05</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">1.77e+05</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">2.36e+05</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">2.95e+05</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / frame</text>
+<polyline class="s1 ln" points="485.2,77.8 499.9,75.8 514.6,73.1 529.3,75.1 543.9,76.2 558.6,72.9 573.3,73.5 588.0,70.3" stroke-width="2"/>
+<circle class="s1" cx="485.2" cy="77.8" r="4" stroke="none"><title>host Exact @ 31970f3: 2.48e+05 ns / frame</title></circle>
+<circle class="s1" cx="499.9" cy="75.8" r="4" stroke="none"><title>host Exact @ f0a101a: 2.5e+05 ns / frame</title></circle>
+<circle class="s1" cx="514.6" cy="73.1" r="4" stroke="none"><title>host Exact @ d0d8a0f: 2.54e+05 ns / frame</title></circle>
+<circle class="s1" cx="529.3" cy="75.1" r="4" stroke="none"><title>host Exact @ 4da4133: 2.51e+05 ns / frame</title></circle>
+<circle class="s1" cx="543.9" cy="76.2" r="4" stroke="none"><title>host Exact @ a9c8a4f: 2.5e+05 ns / frame</title></circle>
+<circle class="s1" cx="558.6" cy="72.9" r="4" stroke="none"><title>host Exact @ 07d38cc: 2.54e+05 ns / frame</title></circle>
+<circle class="s1" cx="573.3" cy="73.5" r="4" stroke="none"><title>host Exact @ b93eec1: 2.53e+05 ns / frame</title></circle>
+<circle class="s1" cx="588.0" cy="70.3" r="4" stroke="none"><title>host Exact @ 5482dad: 2.57e+05 ns / frame</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">host Exact</text>
+<polyline class="s2 ln" points="485.2,85.7 499.9,83.1 514.6,85.6 529.3,86.2 543.9,85.4 558.6,85.7 573.3,86.8 588.0,82.0" stroke-width="2"/>
+<circle class="s2" cx="485.2" cy="85.7" r="4" stroke="none"><title>host Fast @ 31970f3: 2.39e+05 ns / frame</title></circle>
+<circle class="s2" cx="499.9" cy="83.1" r="4" stroke="none"><title>host Fast @ f0a101a: 2.42e+05 ns / frame</title></circle>
+<circle class="s2" cx="514.6" cy="85.6" r="4" stroke="none"><title>host Fast @ d0d8a0f: 2.39e+05 ns / frame</title></circle>
+<circle class="s2" cx="529.3" cy="86.2" r="4" stroke="none"><title>host Fast @ 4da4133: 2.38e+05 ns / frame</title></circle>
+<circle class="s2" cx="543.9" cy="85.4" r="4" stroke="none"><title>host Fast @ a9c8a4f: 2.39e+05 ns / frame</title></circle>
+<circle class="s2" cx="558.6" cy="85.7" r="4" stroke="none"><title>host Fast @ 07d38cc: 2.39e+05 ns / frame</title></circle>
+<circle class="s2" cx="573.3" cy="86.8" r="4" stroke="none"><title>host Fast @ b93eec1: 2.37e+05 ns / frame</title></circle>
+<circle class="s2" cx="588.0" cy="82.0" r="4" stroke="none"><title>host Fast @ 5482dad: 2.43e+05 ns / frame</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">host Fast</text>
+<polyline class="s3 ln" points="485.2,236.3 499.9,236.2 514.6,236.6 529.3,236.4 543.9,237.1 558.6,236.8 573.3,236.8 588.0,236.1" stroke-width="2"/>
+<circle class="s3" cx="485.2" cy="236.3" r="4" stroke="none"><title>host Draft @ 31970f3: 5.92e+04 ns / frame</title></circle>
+<circle class="s3" cx="499.9" cy="236.2" r="4" stroke="none"><title>host Draft @ f0a101a: 5.94e+04 ns / frame</title></circle>
+<circle class="s3" cx="514.6" cy="236.6" r="4" stroke="none"><title>host Draft @ d0d8a0f: 5.88e+04 ns / frame</title></circle>
+<circle class="s3" cx="529.3" cy="236.4" r="4" stroke="none"><title>host Draft @ 4da4133: 5.91e+04 ns / frame</title></circle>
+<circle class="s3" cx="543.9" cy="237.1" r="4" stroke="none"><title>host Draft @ a9c8a4f: 5.82e+04 ns / frame</title></circle>
+<circle class="s3" cx="558.6" cy="236.8" r="4" stroke="none"><title>host Draft @ 07d38cc: 5.86e+04 ns / frame</title></circle>
+<circle class="s3" cx="573.3" cy="236.8" r="4" stroke="none"><title>host Draft @ b93eec1: 5.86e+04 ns / frame</title></circle>
+<circle class="s3" cx="588.0" cy="236.1" r="4" stroke="none"><title>host Draft @ 5482dad: 5.94e+04 ns / frame</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">host Draft</text>
+</svg>
+</a><figcaption>Side by side with the M4 series above: a change that moves one and not the other is a platform pathology. x86-64 has hardware f64 and the M4F does not — that asymmetry hid #32's soft-float trig bill for months.</figcaption></figure>
 <figure><a href="size-flash.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Flash on the M4 (release-mcu, text+data)" font-size="11">
 <style>
   .surface { fill: #fcfcfb; }
@@ -385,7 +1216,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Flash on the M4 (release-mcu, text+data)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -402,88 +1234,30 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">663</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
-<polyline class="s1" points="331.0,133.4 588.0,132.3" fill="none" stroke-width="2"/>
-<circle class="s1" cx="331.0" cy="133.4" r="4" stroke="none"><title>code-only @ f2f0724*: 408 KiB</title></circle>
-<circle class="s1" cx="588.0" cy="132.3" r="4" stroke="none"><title>code-only @ 3e7c620*: 411 KiB</title></circle>
+<polyline class="s1 ln" points="264.9,133.4 411.8,132.3" stroke-width="2"/>
+<circle class="s1" cx="264.9" cy="133.4" r="4" stroke="none"><title>code-only @ f2f0724*: 408 KiB</title></circle>
+<circle class="s1" cx="411.8" cy="132.3" r="4" stroke="none"><title>code-only @ 3e7c620*: 411 KiB</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">code-only</text>
-<polyline class="s2" points="331.0,73.3 588.0,72.2" fill="none" stroke-width="2"/>
-<circle class="s2" cx="331.0" cy="73.3" r="4" stroke="none"><title>+font @ f2f0724*: 569 KiB</title></circle>
-<circle class="s2" cx="588.0" cy="72.2" r="4" stroke="none"><title>+font @ 3e7c620*: 572 KiB</title></circle>
+<polyline class="s2 ln" points="264.9,73.3 411.8,72.2" stroke-width="2"/>
+<circle class="s2" cx="264.9" cy="73.3" r="4" stroke="none"><title>+font @ f2f0724*: 569 KiB</title></circle>
+<circle class="s2" cx="411.8" cy="72.2" r="4" stroke="none"><title>+font @ 3e7c620*: 572 KiB</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">+font</text>
-<polyline class="s3" points="331.0,71.5 588.0,70.3" fill="none" stroke-width="2"/>
-<circle class="s3" cx="331.0" cy="71.5" r="4" stroke="none"><title>+font+image @ f2f0724*: 574 KiB</title></circle>
-<circle class="s3" cx="588.0" cy="70.3" r="4" stroke="none"><title>+font+image @ 3e7c620*: 577 KiB</title></circle>
+<polyline class="s3 ln" points="264.9,71.5 411.8,70.3" stroke-width="2"/>
+<circle class="s3" cx="264.9" cy="71.5" r="4" stroke="none"><title>+font+image @ f2f0724*: 574 KiB</title></circle>
+<circle class="s3" cx="411.8" cy="70.3" r="4" stroke="none"><title>+font+image @ 3e7c620*: 577 KiB</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">+font+image</text>
-</svg>
-</a></figure>
-<figure><a href="mem-heap.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 workload heap peak (emulated)" font-size="11">
-<style>
-  .surface { fill: #fcfcfb; }
-  .grid    { stroke: #e1e0d9; stroke-width: 1; }
-  .axis    { stroke: #c3c2b7; stroke-width: 1; }
-  .t-pri   { fill: #0b0b0b; }
-  .t-sec   { fill: #52514e; }
-  .t-mut   { fill: #898781; }
-  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .tick    { font-variant-numeric: tabular-nums; }
-  @media (prefers-color-scheme: dark) {
-    .surface { fill: #1a1a19; }
-    .grid    { stroke: #2c2c2a; }
-    .axis    { stroke: #383835; }
-    .t-pri   { fill: #ffffff; }
-    .t-sec   { fill: #c3c2b7; }
-    .t-mut   { fill: #898781; }
-    .s1 { fill: #3987e5; stroke: #3987e5; }
-    .s2 { fill: #d95926; stroke: #d95926; }
-    .s3 { fill: #199e70; stroke: #199e70; }
-    .s4 { fill: #c98500; stroke: #c98500; }
-    .s5 { fill: #d55181; stroke: #d55181; }
-    .s6 { fill: #008300; stroke: #008300; }
-  }
-
-  .s1 { fill: #2a78d6; stroke: #2a78d6; }
-  .s2 { fill: #eb6834; stroke: #eb6834; }
-  .s3 { fill: #1baf7a; stroke: #1baf7a; }
-  .s4 { fill: #eda100; stroke: #eda100; }
-  .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
-<rect class="surface" width="760" height="330"/>
-<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 workload heap peak (emulated)</text>
-<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
-<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
-<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
-<text class="t-mut tick" x="66" y="240.4" text-anchor="end">24</text>
-<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
-<text class="t-mut tick" x="66" y="190.8" text-anchor="end">48</text>
-<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
-<text class="t-mut tick" x="66" y="141.2" text-anchor="end">72</text>
-<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
-<text class="t-mut tick" x="66" y="91.6" text-anchor="end">96</text>
-<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
-<text class="t-mut tick" x="66" y="42.0" text-anchor="end">119</text>
-<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
-<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
-<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
-<polyline class="s1" points="331.0,164.8 588.0,118.0" fill="none" stroke-width="2"/>
-<circle class="s1" cx="331.0" cy="164.8" r="4" stroke="none"><title>Draft @ f2f0724*: 58 KiB</title></circle>
-<circle class="s1" cx="588.0" cy="118.0" r="4" stroke="none"><title>Draft @ 3e7c620*: 81 KiB</title></circle>
-<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
-<text class="t-sec" x="620" y="49">Draft</text>
-<circle class="s2" cx="331.0" cy="70.3" r="4" stroke="none"><title>Exact @ f2f0724*: 104 KiB</title></circle>
-<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
-<text class="t-sec" x="620" y="66">Exact</text>
 </svg>
 </a></figure>
 <figure><a href="ladder-bridge.svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Ladder cost — the bridge series (spans every run)" font-size="11">
@@ -516,50 +1290,52 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Ladder cost — the bridge series (spans every run)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="66" y="290.0" text-anchor="end">0.00</text>
 <line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
-<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.66</text>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">1.65</text>
 <line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
-<text class="t-mut tick" x="66" y="190.8" text-anchor="end">3.31</text>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">3.30</text>
 <line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
-<text class="t-mut tick" x="66" y="141.2" text-anchor="end">4.97</text>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">4.95</text>
 <line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
-<text class="t-mut tick" x="66" y="91.6" text-anchor="end">6.62</text>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">6.60</text>
 <line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
-<text class="t-mut tick" x="66" y="42.0" text-anchor="end">8.28</text>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">8.25</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
-<polyline class="s1" points="74.0,233.3 202.5,232.6 331.0,231.9 459.5,232.1 588.0,233.2" fill="none" stroke-width="2"/>
-<circle class="s1" cx="74.0" cy="233.3" r="4" stroke="none"><title>480×270 full @ 21427f2: 1.76 ns / px</title></circle>
-<circle class="s1" cx="202.5" cy="232.6" r="4" stroke="none"><title>480×270 full @ 21427f2: 1.78 ns / px</title></circle>
-<circle class="s1" cx="331.0" cy="231.9" r="4" stroke="none"><title>480×270 full @ f2f0724*: 1.81 ns / px</title></circle>
-<circle class="s1" cx="459.5" cy="232.1" r="4" stroke="none"><title>480×270 full @ 7b5a662: 1.80 ns / px</title></circle>
-<circle class="s1" cx="588.0" cy="233.2" r="4" stroke="none"><title>480×270 full @ 3e7c620*: 1.76 ns / px</title></circle>
+<polyline class="s1 ln" points="74.0,233.2 88.7,232.4 309.0,231.9 411.8,233.0" stroke-width="2"/>
+<circle class="s1" cx="74.0" cy="233.2" r="4" stroke="none"><title>480×270 full @ 21427f2: 1.76 ns / px</title></circle>
+<circle class="s1" cx="88.7" cy="232.4" r="4" stroke="none"><title>480×270 full @ 21427f2: 1.78 ns / px</title></circle>
+<circle class="s1" cx="309.0" cy="231.9" r="4" stroke="none"><title>480×270 full @ 7b5a662: 1.80 ns / px</title></circle>
+<circle class="s1" cx="411.8" cy="233.0" r="4" stroke="none"><title>480×270 full @ 3e7c620*: 1.76 ns / px</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">480×270 full</text>
-<polyline class="s2" points="74.0,72.9 202.5,71.3 331.0,70.3 459.5,71.0 588.0,73.8" fill="none" stroke-width="2"/>
-<circle class="s2" cx="74.0" cy="72.9" r="4" stroke="none"><title>480×270 incremental @ 21427f2: 7.12 ns / px</title></circle>
-<circle class="s2" cx="202.5" cy="71.3" r="4" stroke="none"><title>480×270 incremental @ 21427f2: 7.17 ns / px</title></circle>
-<circle class="s2" cx="331.0" cy="70.3" r="4" stroke="none"><title>480×270 incremental @ f2f0724*: 7.20 ns / px</title></circle>
-<circle class="s2" cx="459.5" cy="71.0" r="4" stroke="none"><title>480×270 incremental @ 7b5a662: 7.18 ns / px</title></circle>
-<circle class="s2" cx="588.0" cy="73.8" r="4" stroke="none"><title>480×270 incremental @ 3e7c620*: 7.08 ns / px</title></circle>
+<polyline class="s2 ln" points="74.0,72.2 88.7,70.7 309.0,70.3 411.8,73.1" stroke-width="2"/>
+<circle class="s2" cx="74.0" cy="72.2" r="4" stroke="none"><title>480×270 incremental @ 21427f2: 7.12 ns / px</title></circle>
+<circle class="s2" cx="88.7" cy="70.7" r="4" stroke="none"><title>480×270 incremental @ 21427f2: 7.17 ns / px</title></circle>
+<circle class="s2" cx="309.0" cy="70.3" r="4" stroke="none"><title>480×270 incremental @ 7b5a662: 7.18 ns / px</title></circle>
+<circle class="s2" cx="411.8" cy="73.1" r="4" stroke="none"><title>480×270 incremental @ 3e7c620*: 7.08 ns / px</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">480×270 incremental</text>
-<polyline class="s3" points="74.0,230.1 202.5,230.6 331.0,236.7 459.5,234.5 588.0,235.5" fill="none" stroke-width="2"/>
-<circle class="s3" cx="74.0" cy="230.1" r="4" stroke="none"><title>4K full @ 21427f2: 1.87 ns / px</title></circle>
-<circle class="s3" cx="202.5" cy="230.6" r="4" stroke="none"><title>4K full @ 21427f2: 1.85 ns / px</title></circle>
-<circle class="s3" cx="331.0" cy="236.7" r="4" stroke="none"><title>4K full @ f2f0724*: 1.64 ns / px</title></circle>
-<circle class="s3" cx="459.5" cy="234.5" r="4" stroke="none"><title>4K full @ 7b5a662: 1.72 ns / px</title></circle>
-<circle class="s3" cx="588.0" cy="235.5" r="4" stroke="none"><title>4K full @ 3e7c620*: 1.69 ns / px</title></circle>
+<polyline class="s3 ln" points="74.0,229.9 88.7,230.4 309.0,234.4 411.8,235.3" stroke-width="2"/>
+<circle class="s3" cx="74.0" cy="229.9" r="4" stroke="none"><title>4K full @ 21427f2: 1.87 ns / px</title></circle>
+<circle class="s3" cx="88.7" cy="230.4" r="4" stroke="none"><title>4K full @ 21427f2: 1.85 ns / px</title></circle>
+<circle class="s3" cx="309.0" cy="234.4" r="4" stroke="none"><title>4K full @ 7b5a662: 1.72 ns / px</title></circle>
+<circle class="s3" cx="411.8" cy="235.3" r="4" stroke="none"><title>4K full @ 3e7c620*: 1.69 ns / px</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">4K full</text>
 </svg>
@@ -594,7 +1370,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Primitive cost (host, vyr-bench median)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -611,29 +1388,33 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">66</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
-<polyline class="s1" points="331.0,277.0 588.0,277.1" fill="none" stroke-width="2"/>
-<circle class="s1" cx="331.0" cy="277.0" r="4" stroke="none"><title>fill_rrect @ f2f0724*: 2.4 ns / px</title></circle>
-<circle class="s1" cx="588.0" cy="277.1" r="4" stroke="none"><title>fill_rrect @ 3e7c620*: 2.4 ns / px</title></circle>
+<polyline class="s1 ln" points="264.9,277.0 411.8,277.1" stroke-width="2"/>
+<circle class="s1" cx="264.9" cy="277.0" r="4" stroke="none"><title>fill_rrect @ f2f0724*: 2.4 ns / px</title></circle>
+<circle class="s1" cx="411.8" cy="277.1" r="4" stroke="none"><title>fill_rrect @ 3e7c620*: 2.4 ns / px</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">fill_rrect</text>
-<polyline class="s2" points="331.0,261.7 588.0,272.1" fill="none" stroke-width="2"/>
-<circle class="s2" cx="331.0" cy="261.7" r="4" stroke="none"><title>disc @ f2f0724*: 6.4 ns / px</title></circle>
-<circle class="s2" cx="588.0" cy="272.1" r="4" stroke="none"><title>disc @ 3e7c620*: 3.7 ns / px</title></circle>
+<polyline class="s2 ln" points="264.9,261.7 411.8,272.1" stroke-width="2"/>
+<circle class="s2" cx="264.9" cy="261.7" r="4" stroke="none"><title>disc @ f2f0724*: 6.4 ns / px</title></circle>
+<circle class="s2" cx="411.8" cy="272.1" r="4" stroke="none"><title>disc @ 3e7c620*: 3.7 ns / px</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">disc</text>
-<polyline class="s3" points="331.0,252.3 588.0,260.4" fill="none" stroke-width="2"/>
-<circle class="s3" cx="331.0" cy="252.3" r="4" stroke="none"><title>gradient @ f2f0724*: 8.9 ns / px</title></circle>
-<circle class="s3" cx="588.0" cy="260.4" r="4" stroke="none"><title>gradient @ 3e7c620*: 6.8 ns / px</title></circle>
+<polyline class="s3 ln" points="264.9,252.3 411.8,260.4" stroke-width="2"/>
+<circle class="s3" cx="264.9" cy="252.3" r="4" stroke="none"><title>gradient @ f2f0724*: 8.9 ns / px</title></circle>
+<circle class="s3" cx="411.8" cy="260.4" r="4" stroke="none"><title>gradient @ 3e7c620*: 6.8 ns / px</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">gradient</text>
-<polyline class="s4" points="331.0,70.3 588.0,167.0" fill="none" stroke-width="2"/>
-<circle class="s4" cx="331.0" cy="70.3" r="4" stroke="none"><title>line @ f2f0724*: 57 ns / px</title></circle>
-<circle class="s4" cx="588.0" cy="167.0" r="4" stroke="none"><title>line @ 3e7c620*: 32 ns / px</title></circle>
+<polyline class="s4 ln" points="264.9,70.3 411.8,167.0" stroke-width="2"/>
+<circle class="s4" cx="264.9" cy="70.3" r="4" stroke="none"><title>line @ f2f0724*: 57 ns / px</title></circle>
+<circle class="s4" cx="411.8" cy="167.0" r="4" stroke="none"><title>line @ 3e7c620*: 32 ns / px</title></circle>
 <rect class="s4" x="604" y="91" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="100">line</text>
 </svg>
@@ -668,7 +1449,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Scene cost (host, vyr-bench median)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -685,19 +1467,23 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">6.9</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / px</text>
-<polyline class="s1" points="331.0,70.3 588.0,78.1" fill="none" stroke-width="2"/>
-<circle class="s1" cx="331.0" cy="70.3" r="4" stroke="none"><title>ir Exact @ f2f0724*: 6 ns / px</title></circle>
-<circle class="s1" cx="588.0" cy="78.1" r="4" stroke="none"><title>ir Exact @ 3e7c620*: 5.8 ns / px</title></circle>
+<polyline class="s1 ln" points="264.9,70.3 411.8,78.1" stroke-width="2"/>
+<circle class="s1" cx="264.9" cy="70.3" r="4" stroke="none"><title>ir Exact @ f2f0724*: 6 ns / px</title></circle>
+<circle class="s1" cx="411.8" cy="78.1" r="4" stroke="none"><title>ir Exact @ 3e7c620*: 5.8 ns / px</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">ir Exact</text>
-<polyline class="s2" points="331.0,247.1 588.0,250.9" fill="none" stroke-width="2"/>
-<circle class="s2" cx="331.0" cy="247.1" r="4" stroke="none"><title>ir Draft @ f2f0724*: 1.1 ns / px</title></circle>
-<circle class="s2" cx="588.0" cy="250.9" r="4" stroke="none"><title>ir Draft @ 3e7c620*: 0.97 ns / px</title></circle>
+<polyline class="s2 ln" points="264.9,247.1 411.8,250.9" stroke-width="2"/>
+<circle class="s2" cx="264.9" cy="247.1" r="4" stroke="none"><title>ir Draft @ f2f0724*: 1.1 ns / px</title></circle>
+<circle class="s2" cx="411.8" cy="250.9" r="4" stroke="none"><title>ir Draft @ 3e7c620*: 0.97 ns / px</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">ir Draft</text>
 </svg>
@@ -732,7 +1518,8 @@ one-point line.</p>
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Draft fast-path coverage (emulated M4)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -749,26 +1536,61 @@ one-point line.</p>
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">111</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">%</text>
-<polyline class="s1" points="331.0,70.3 588.0,70.3" fill="none" stroke-width="2"/>
-<circle class="s1" cx="331.0" cy="70.3" r="4" stroke="none"><title>coverage @ f2f0724*: 97 %</title></circle>
-<circle class="s1" cx="588.0" cy="70.3" r="4" stroke="none"><title>coverage @ 3e7c620*: 97 %</title></circle>
+<polyline class="s1 ln" points="264.9,70.3 411.8,70.3" stroke-width="2"/>
+<circle class="s1" cx="264.9" cy="70.3" r="4" stroke="none"><title>coverage @ f2f0724*: 97 %</title></circle>
+<circle class="s1" cx="411.8" cy="70.3" r="4" stroke="none"><title>coverage @ 3e7c620*: 97 %</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">coverage</text>
 </svg>
 </a></figure>
 
 <h2>Coverage — what each run measured</h2>
-<table><tr><th>run</th><th>commit</th><th>when</th><th>ladder</th><th>anim</th><th>arm</th><th>bench</th><th>size</th><th>m4_qemu</th><th>insns</th><th>silicon</th><th>board_anim</th></tr>
-<tr><td>0</td><td><code>21427f2</code></td><td><code>2026-06-11T10:58:19Z</code></td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
-<tr><td>1</td><td><code>21427f2</code></td><td><code>2026-06-11T11:03:51Z</code></td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
-<tr><td>2</td><td><code>f2f0724*</code></td><td><code>2026-06-12T09:55:49Z</code></td><td>·</td><td>·</td><td>·</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td></tr>
-<tr><td>3</td><td><code>7b5a662</code></td><td><code>2026-06-12T13:34:16Z</code></td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
-<tr><td>4</td><td><code>3e7c620*</code></td><td><code>2026-07-23T09:39:50Z</code></td><td>●</td><td>●</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>·</td></tr>
+<table><tr><th>run</th><th>commit</th><th>when</th><th>matrix</th><th>ladder</th><th>anim</th><th>arm</th><th>bench</th><th>size</th><th>m4_qemu</th><th>silicon</th><th>board_anim</th></tr>
+<tr><td>0</td><td><code>21427f2</code></td><td><code>2026-06-11T10:58:19Z</code></td><td>·</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>1</td><td><code>21427f2</code></td><td><code>2026-06-11T11:03:51Z</code></td><td>·</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>2</td><td><code>e08aa63</code></td><td><code>2026-07-24T10:58:15+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>3</td><td><code>5da42a2</code></td><td><code>2026-07-24T10:58:32+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>4</td><td><code>cab0038</code></td><td><code>2026-07-24T10:58:49+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>5</td><td><code>1306369</code></td><td><code>2026-07-24T10:59:03+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>6</td><td><code>e93fa79</code></td><td><code>2026-07-24T10:59:19+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>7</td><td><code>39cb441</code></td><td><code>2026-07-24T10:59:36+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>8</td><td><code>d6fd574</code></td><td><code>2026-07-24T10:59:50+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>9</td><td><code>4e06c48</code></td><td><code>2026-07-24T11:00:06+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>10</td><td><code>64ec376</code></td><td><code>2026-07-24T11:00:23+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>11</td><td><code>faaf4e6</code></td><td><code>2026-07-24T11:00:37+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>12</td><td><code>dd84be1</code></td><td><code>2026-07-24T11:00:54+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>13</td><td><code>f2f0724*</code></td><td><code>2026-06-12T09:55:49Z</code></td><td>·</td><td>·</td><td>·</td><td>·</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td></tr>
+<tr><td>14</td><td><code>f2f0724</code></td><td><code>2026-07-24T11:01:08+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>15</td><td><code>a2f0340</code></td><td><code>2026-07-24T11:01:25+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>16</td><td><code>7b5a662</code></td><td><code>2026-06-12T13:34:16Z</code></td><td>·</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>17</td><td><code>8da26b3</code></td><td><code>2026-07-24T11:01:39+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>18</td><td><code>7ce2eb9</code></td><td><code>2026-07-24T11:01:57+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>19</td><td><code>5e42dac</code></td><td><code>2026-07-24T11:02:12+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>20</td><td><code>2469624</code></td><td><code>2026-07-24T11:02:27+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>21</td><td><code>d52d23a</code></td><td><code>2026-07-24T11:02:42+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>22</td><td><code>b609831</code></td><td><code>2026-07-24T11:02:57+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>23</td><td><code>3e7c620*</code></td><td><code>2026-07-23T09:39:50Z</code></td><td>·</td><td>●</td><td>●</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>·</td></tr>
+<tr><td>24</td><td><code>153ae63</code></td><td><code>2026-07-24T11:03:12+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>25</td><td><code>018b366</code></td><td><code>2026-07-24T11:03:28+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>26</td><td><code>cb29f52</code></td><td><code>2026-07-24T11:03:53+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>27</td><td><code>d4b7c66</code></td><td><code>2026-07-24T11:04:15+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>28</td><td><code>31970f3</code></td><td><code>2026-07-24T11:04:37+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>29</td><td><code>f0a101a</code></td><td><code>2026-07-24T11:05:01+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>30</td><td><code>d0d8a0f</code></td><td><code>2026-07-24T11:05:23+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>31</td><td><code>4da4133</code></td><td><code>2026-07-24T11:05:45+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>32</td><td><code>a9c8a4f</code></td><td><code>2026-07-24T11:06:10+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>33</td><td><code>07d38cc</code></td><td><code>2026-07-24T11:06:32+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>34</td><td><code>b93eec1</code></td><td><code>2026-07-24T11:06:54+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
+<tr><td>35</td><td><code>5482dad</code></td><td><code>2026-07-24T11:08:36+1000</code></td><td>●</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td></tr>
 </table>
 <p class="lede">● recorded · nothing recorded. <code>*</code> = measured against
 a dirty worktree. Host wall-clock numbers are desktop-host numbers; emulated

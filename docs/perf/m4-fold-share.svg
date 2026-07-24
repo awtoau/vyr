@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="How much of the measured frame is the BENCHMARK hashing itself" font-size="11">
+<style>
+  .surface { fill: #fcfcfb; }
+  .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  .t-pri   { fill: #0b0b0b; }
+  .t-sec   { fill: #52514e; }
+  .t-mut   { fill: #898781; }
+  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick    { font-variant-numeric: tabular-nums; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .grid    { stroke: #2c2c2a; }
+    .axis    { stroke: #383835; }
+    .t-pri   { fill: #ffffff; }
+    .t-sec   { fill: #c3c2b7; }
+    .t-mut   { fill: #898781; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .s5 { fill: #d55181; stroke: #d55181; }
+    .s6 { fill: #008300; stroke: #008300; }
+  }
+
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .s5 { fill: #e87ba4; stroke: #e87ba4; }
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
+<rect class="surface" width="760" height="330"/>
+<text class="t-pri" x="74" y="22" font-size="13" font-weight="600">How much of the measured frame is the BENCHMARK hashing itself</text>
+<line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="66" y="290.0" text-anchor="end">0</text>
+<line class="grid" x1="74" y1="236.4" x2="588" y2="236.4"/>
+<text class="t-mut tick" x="66" y="240.4" text-anchor="end">8</text>
+<line class="grid" x1="74" y1="186.8" x2="588" y2="186.8"/>
+<text class="t-mut tick" x="66" y="190.8" text-anchor="end">17</text>
+<line class="grid" x1="74" y1="137.2" x2="588" y2="137.2"/>
+<text class="t-mut tick" x="66" y="141.2" text-anchor="end">25</text>
+<line class="grid" x1="74" y1="87.6" x2="588" y2="87.6"/>
+<text class="t-mut tick" x="66" y="91.6" text-anchor="end">34</text>
+<line class="grid" x1="74" y1="38.0" x2="588" y2="38.0"/>
+<text class="t-mut tick" x="66" y="42.0" text-anchor="end">42</text>
+<line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
+<text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
+<text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">% of total</text>
+<polyline class="s1 ln" points="103.4,250.2 118.1,257.0 132.7,257.0 147.4,257.0 162.1,257.0 176.8,257.0 191.5,257.0 206.2,257.0 220.9,257.1 235.5,257.1 250.2,257.1 279.6,257.1 294.3,257.5 323.7,257.5 338.3,257.5 353.0,257.5 367.7,257.5 382.4,257.5 397.1,257.5 426.5,257.5 441.1,257.5 455.8,257.6 470.5,257.6 485.2,257.6 499.9,250.4 514.6,250.4 529.3,250.4 543.9,250.4 558.6,250.4 573.3,250.4 588.0,286.0" stroke-width="2"/>
+<circle class="s1" cx="103.4" cy="250.2" r="4" stroke="none"><title>vyr Exact @ e08aa63: 6 % of total</title></circle>
+<circle class="s1" cx="118.1" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 5 % of total</title></circle>
+<circle class="s1" cx="132.7" cy="257.0" r="4" stroke="none"><title>vyr Exact @ cab0038: 5 % of total</title></circle>
+<circle class="s1" cx="147.4" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 1306369: 5 % of total</title></circle>
+<circle class="s1" cx="162.1" cy="257.0" r="4" stroke="none"><title>vyr Exact @ e93fa79: 5 % of total</title></circle>
+<circle class="s1" cx="176.8" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 39cb441: 5 % of total</title></circle>
+<circle class="s1" cx="191.5" cy="257.0" r="4" stroke="none"><title>vyr Exact @ d6fd574: 5 % of total</title></circle>
+<circle class="s1" cx="206.2" cy="257.0" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 5 % of total</title></circle>
+<circle class="s1" cx="220.9" cy="257.1" r="4" stroke="none"><title>vyr Exact @ 64ec376: 5 % of total</title></circle>
+<circle class="s1" cx="235.5" cy="257.1" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 5 % of total</title></circle>
+<circle class="s1" cx="250.2" cy="257.1" r="4" stroke="none"><title>vyr Exact @ dd84be1: 5 % of total</title></circle>
+<circle class="s1" cx="279.6" cy="257.1" r="4" stroke="none"><title>vyr Exact @ f2f0724: 5 % of total</title></circle>
+<circle class="s1" cx="294.3" cy="257.5" r="4" stroke="none"><title>vyr Exact @ a2f0340: 5 % of total</title></circle>
+<circle class="s1" cx="323.7" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 5 % of total</title></circle>
+<circle class="s1" cx="338.3" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 5 % of total</title></circle>
+<circle class="s1" cx="353.0" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 5 % of total</title></circle>
+<circle class="s1" cx="367.7" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 2469624: 5 % of total</title></circle>
+<circle class="s1" cx="382.4" cy="257.5" r="4" stroke="none"><title>vyr Exact @ d52d23a: 5 % of total</title></circle>
+<circle class="s1" cx="397.1" cy="257.5" r="4" stroke="none"><title>vyr Exact @ b609831: 5 % of total</title></circle>
+<circle class="s1" cx="426.5" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 153ae63: 5 % of total</title></circle>
+<circle class="s1" cx="441.1" cy="257.5" r="4" stroke="none"><title>vyr Exact @ 018b366: 5 % of total</title></circle>
+<circle class="s1" cx="455.8" cy="257.6" r="4" stroke="none"><title>vyr Exact @ cb29f52: 5 % of total</title></circle>
+<circle class="s1" cx="470.5" cy="257.6" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 5 % of total</title></circle>
+<circle class="s1" cx="485.2" cy="257.6" r="4" stroke="none"><title>vyr Exact @ 31970f3: 5 % of total</title></circle>
+<circle class="s1" cx="499.9" cy="250.4" r="4" stroke="none"><title>vyr Exact @ f0a101a: 6 % of total</title></circle>
+<circle class="s1" cx="514.6" cy="250.4" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 6 % of total</title></circle>
+<circle class="s1" cx="529.3" cy="250.4" r="4" stroke="none"><title>vyr Exact @ 4da4133: 6 % of total</title></circle>
+<circle class="s1" cx="543.9" cy="250.4" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 6 % of total</title></circle>
+<circle class="s1" cx="558.6" cy="250.4" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 6 % of total</title></circle>
+<circle class="s1" cx="573.3" cy="250.4" r="4" stroke="none"><title>vyr Exact @ b93eec1: 6 % of total</title></circle>
+<circle class="s1" cx="588.0" cy="286.0" r="4" stroke="none"><title>vyr Exact @ 5482dad: 0 % of total</title></circle>
+<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="49">vyr Exact</text>
+<polyline class="s2 ln" points="455.8,249.1 470.5,249.1 485.2,249.1 499.9,236.1 514.6,236.1 529.3,236.1 543.9,236.1 558.6,236.1 573.3,236.1 588.0,286.0" stroke-width="2"/>
+<circle class="s2" cx="455.8" cy="249.1" r="4" stroke="none"><title>vyr Fast @ cb29f52: 6 % of total</title></circle>
+<circle class="s2" cx="470.5" cy="249.1" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 6 % of total</title></circle>
+<circle class="s2" cx="485.2" cy="249.1" r="4" stroke="none"><title>vyr Fast @ 31970f3: 6 % of total</title></circle>
+<circle class="s2" cx="499.9" cy="236.1" r="4" stroke="none"><title>vyr Fast @ f0a101a: 8 % of total</title></circle>
+<circle class="s2" cx="514.6" cy="236.1" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 8 % of total</title></circle>
+<circle class="s2" cx="529.3" cy="236.1" r="4" stroke="none"><title>vyr Fast @ 4da4133: 8 % of total</title></circle>
+<circle class="s2" cx="543.9" cy="236.1" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 8 % of total</title></circle>
+<circle class="s2" cx="558.6" cy="236.1" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 8 % of total</title></circle>
+<circle class="s2" cx="573.3" cy="236.1" r="4" stroke="none"><title>vyr Fast @ b93eec1: 8 % of total</title></circle>
+<circle class="s2" cx="588.0" cy="286.0" r="4" stroke="none"><title>vyr Fast @ 5482dad: 0 % of total</title></circle>
+<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="66">vyr Fast</text>
+<polyline class="s3 ln" points="118.1,249.1 132.7,249.1 147.4,249.1 162.1,249.1 176.8,181.4 191.5,181.4 206.2,181.4 220.9,122.3 235.5,122.3 250.2,122.2 279.6,122.2 294.3,70.3 323.7,70.3 338.3,70.4 353.0,70.4 367.7,70.4 382.4,70.4 397.1,70.4 426.5,70.4 441.1,70.4 455.8,73.5 470.5,73.5 485.2,73.5 499.9,74.0 514.6,74.0 529.3,74.0 543.9,74.0 558.6,74.0 573.3,74.0 588.0,286.0" stroke-width="2"/>
+<circle class="s3" cx="118.1" cy="249.1" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 6 % of total</title></circle>
+<circle class="s3" cx="132.7" cy="249.1" r="4" stroke="none"><title>vyr Draft @ cab0038: 6 % of total</title></circle>
+<circle class="s3" cx="147.4" cy="249.1" r="4" stroke="none"><title>vyr Draft @ 1306369: 6 % of total</title></circle>
+<circle class="s3" cx="162.1" cy="249.1" r="4" stroke="none"><title>vyr Draft @ e93fa79: 6 % of total</title></circle>
+<circle class="s3" cx="176.8" cy="181.4" r="4" stroke="none"><title>vyr Draft @ 39cb441: 18 % of total</title></circle>
+<circle class="s3" cx="191.5" cy="181.4" r="4" stroke="none"><title>vyr Draft @ d6fd574: 18 % of total</title></circle>
+<circle class="s3" cx="206.2" cy="181.4" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 18 % of total</title></circle>
+<circle class="s3" cx="220.9" cy="122.3" r="4" stroke="none"><title>vyr Draft @ 64ec376: 28 % of total</title></circle>
+<circle class="s3" cx="235.5" cy="122.3" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 28 % of total</title></circle>
+<circle class="s3" cx="250.2" cy="122.2" r="4" stroke="none"><title>vyr Draft @ dd84be1: 28 % of total</title></circle>
+<circle class="s3" cx="279.6" cy="122.2" r="4" stroke="none"><title>vyr Draft @ f2f0724: 28 % of total</title></circle>
+<circle class="s3" cx="294.3" cy="70.3" r="4" stroke="none"><title>vyr Draft @ a2f0340: 37 % of total</title></circle>
+<circle class="s3" cx="323.7" cy="70.3" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 37 % of total</title></circle>
+<circle class="s3" cx="338.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 37 % of total</title></circle>
+<circle class="s3" cx="353.0" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 37 % of total</title></circle>
+<circle class="s3" cx="367.7" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 2469624: 37 % of total</title></circle>
+<circle class="s3" cx="382.4" cy="70.4" r="4" stroke="none"><title>vyr Draft @ d52d23a: 37 % of total</title></circle>
+<circle class="s3" cx="397.1" cy="70.4" r="4" stroke="none"><title>vyr Draft @ b609831: 37 % of total</title></circle>
+<circle class="s3" cx="426.5" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 153ae63: 37 % of total</title></circle>
+<circle class="s3" cx="441.1" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 018b366: 37 % of total</title></circle>
+<circle class="s3" cx="455.8" cy="73.5" r="4" stroke="none"><title>vyr Draft @ cb29f52: 36 % of total</title></circle>
+<circle class="s3" cx="470.5" cy="73.5" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 36 % of total</title></circle>
+<circle class="s3" cx="485.2" cy="73.5" r="4" stroke="none"><title>vyr Draft @ 31970f3: 36 % of total</title></circle>
+<circle class="s3" cx="499.9" cy="74.0" r="4" stroke="none"><title>vyr Draft @ f0a101a: 36 % of total</title></circle>
+<circle class="s3" cx="514.6" cy="74.0" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 36 % of total</title></circle>
+<circle class="s3" cx="529.3" cy="74.0" r="4" stroke="none"><title>vyr Draft @ 4da4133: 36 % of total</title></circle>
+<circle class="s3" cx="543.9" cy="74.0" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 36 % of total</title></circle>
+<circle class="s3" cx="558.6" cy="74.0" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 36 % of total</title></circle>
+<circle class="s3" cx="573.3" cy="74.0" r="4" stroke="none"><title>vyr Draft @ b93eec1: 36 % of total</title></circle>
+<circle class="s3" cx="588.0" cy="286.0" r="4" stroke="none"><title>vyr Draft @ 5482dad: 0 % of total</title></circle>
+<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<text class="t-sec" x="620" y="83">vyr Draft</text>
+</svg>

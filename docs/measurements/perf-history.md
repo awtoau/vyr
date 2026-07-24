@@ -273,20 +273,96 @@ deterministic world-space polygon pre-clipping — **#40**.
 
 ---
 
-## Running scoreboard
+## 2026-07-24 — the ledger rebuilt from one instrument
 
-Exact, M4, `release-mcu`, plugin-counted, **including** the benchmark's own hash
-fold (see error 4 — render-only is lower):
+The four errors above all have the same shape: **the instrument kept changing
+under the numbers.** The fix is structural, not another correction.
 
-| date | commit | Exact insns/frame | what changed |
-|---|---|--:|---|
-| 07-23 | pre-plugin | *(unmeasurable)* | `SYS_CLOCK` was wall time |
-| 07-23 | `3e7c620` | 64,178,227 | first exact count |
-| 07-23 | `56da347` | 64,422,179 | error 2 corrected (build profile) |
-| 07-24 | `f0a101a` | **51,349,644** | #32 contour memo |
-| 07-24 | `a9c8a4f` | 51,349,644 | gutter swept; no behaviour change |
+`scripts/perf-harness.py` is now the only thing that may produce an M4
+instruction figure, and `scripts/perf-replay.py` walks history calling it —
+**old commits measured with TODAY's tools, never with their own**. (The
+previous sweep, `scripts/m4-history-sweep.py`, deliberately used each commit's
+own `dev.py` "to be honest". That was backwards: the harness is the instrument
+and must be held constant; only the renderer varies.)
 
-LVGL anchor: `9,220,422` → **`7,112,541`** at `56da347` (error 3).
+Method, for the record: 50 commits from `e08aa63` to HEAD collapse to **31
+distinct build states** (19 commits compile byte-identically to their
+predecessor) (the git trees of `vyr-core`, `vyr-size`, `vyr-bench`,
+`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`); commits sharing a build key
+compile byte-identically, so the group is measured once and the rest are
+recorded as `covers`. **31 measured, 0 skipped.** Every count repeated and
+required to be bit-identical — a disagreement is recorded as a FAILED cell,
+never averaged. A build whose frame hash does not match the host leg's has its
+timing **suppressed rather than annotated**: a firmware that renders the wrong
+pixels reports nothing.
+
+**The replay reproduces every historically published figure exactly** — 64,178,227
+at `3e7c620`, 64,422,179 at `56da347`, 51,349,644 at `f0a101a`, fold 3,110,434 —
+which is the evidence that the instrument, not the memory of it, is what the
+new series rests on.
+
+`docs/perf/history.jsonl` is **schema 3**: the `insns` section is gone, replaced
+by a `matrix` whose cells are keyed by platform × tier × opt-level and record
+`insns_per_frame_total`, `harness_fold_insns` and `insns_per_frame_render_only`
+as three separate mandatory fields. The SYS_CLOCK-derived rows are **deleted,
+not relabelled**.
+
+### Running scoreboard — Exact, M4, `release-mcu` (`z`), plugin-counted
+
+Now stated **render-only**, with the benchmark's own fold beside it rather than
+inside it:
+
+| date | commit | render-only | total | fold | what changed |
+|---|---|--:|--:|--:|---|
+| 06-12 | `e08aa63` | 59,911,226 | 63,799,226 | 3,888,000 | first M4 vehicle. **Its output differs** — frame hash `0x6b0c51567a991741` — so this row and the next are not comparable to what follows |
+| 06-12 | `5da42a2` | 59,910,683 | 63,021,083 | 3,110,400 | Draft tier arrives (46,431,232 render-only) |
+| 06-12 | `cab0038` | 59,862,069 | 62,972,469 | 3,110,400 | F8 gate-1 fixes; hash settles at `0x24dcaff531c6eb01` and never moves again |
+| 06-12 | `64ec376` | 60,052,742 | 63,163,142 | 3,110,400 | Draft gutter-less: Draft 8,054,140 render-only |
+| 06-12 | `a2f0340` | 61,066,933 | 64,177,367 | 3,110,434 | Draft direct-RGB888 (5,366,076); Exact drifts up |
+| 07-23 | `2469624` *(covers `3e7c620`)* | 61,067,793 | 64,178,227 | 3,110,434 | the first exact count, reproduced to the instruction |
+| 07-23 | `cb29f52` *(covers `56da347`)* | 61,311,745 | 64,422,179 | 3,110,434 | `Fast` lands (46,474,601 render-only) |
+| 07-24 | `f0a101a` | **48,239,194** | **51,349,644** | 3,110,450 | #32 contour memo — **−21.3 % render-only** |
+| 07-24 | `07d38cc` | 48,239,194 | 51,349,644 | 3,110,450 | no behaviour change |
+| 07-24 | `5482dad` | **48,239,550** | 48,239,550 | **0** | #44 — the fold leaves the timed window; total IS render-only, by construction |
+
+**The two methods agree to 356 instructions in 48 M.** The differential
+(rebuild with the fold folding an empty slice, difference the counts) put Exact
+render-only at 48,239,194; #44's structural removal measures 48,239,550. Draft:
+5,511,158 vs 5,511,165 — **7 instructions apart**. Two independent routes to the
+same number is the strongest evidence in this file.
+
+Draft, render-only, over the same span: 46,431,232 → 14,363,581 (`39cb441`,
+integer curves) → 8,054,140 (`64ec376`, gutter-less) → 5,366,076 (`a2f0340`,
+direct RGB888) → **5,511,165** today. The published Draft numbers were ~8.6 M
+because 3.11 M of every Draft "frame" was the benchmark hashing itself.
+
+The fold was **3,110,4xx insns/frame** at every commit from `5da42a2` to
+`b93eec1` and at every tier — 388,800 bytes × 8.00 insns/byte — i.e. 6.1 % of
+Exact and **36.1 % of Draft**, until #44 removed it from the window. (At
+`e08aa63` it was 3,888,000, i.e. 10.0 insns/byte; the first vehicle's fold was
+itself dearer. Nobody had noticed, because nobody had ever measured the fold
+separately.) It also moved with `opt-level` — 3.11 M at `z`, 2.72 M at `s`,
+2.24 M at `2` — which is why subtracting a fold measured elsewhere was never
+sound, and why #44 removing it beats #4x-style bookkeeping.
+
+LVGL anchor: `9,220,422` → **`7,112,541`** at `56da347` (error 3), of which
+**3,888,238** is its own fold — measured by the same differential rebuild used
+on vyr, and agreeing to 323 instructions with `scripts/m4-attribute.py`'s
+independent per-symbol attribution of `flush_cb` (3,888,561). Its render-only
+is therefore **3,224,303**, and **vyr Draft is 1.71x that**. Until #44's LVGL
+half lands, this ratio is mixed provenance — vyr's side structural, LVGL's a
+subtraction — and the ledger records which is which per cell.
+**Deliberately not replayed** — see the judgement note below.
+
+### Why the LVGL anchor is an anchor and not a series
+
+Its harness changed at `56da347` (it had been drawing a tick-marked scale,
+value arc and knob vyr never drew), so any earlier LVGL number measures a
+**different scene**; and the anchor tracks current upstream by design. A
+replayed LVGL "series" would mix upstream drift with a harness change and mean
+nothing. It is therefore measured **once per run, current**, by the same
+instrument and with its fold priced the same differential way
+(`perf-harness.py --lvgl`).
 
 ---
 
@@ -294,7 +370,7 @@ LVGL anchor: `9,220,422` → **`7,112,541`** at `56da347` (error 3).
 
 | issue | worth | risk |
 |---|--:|---|
-| ~~[#33](https://github.com/awtoau/vyr/issues/33)~~ `opt-level` z→2 | **26.0 M Exact / 19.9 M Fast / 2.1 M Draft** | **decided 07-24: keep `z`.** +183 KiB flash, and the plan's smaller candidate part (H735-DK) has 1 MiB. Pixels, heap peak and stack depth are opt-level-invariant, so this is flash-for-instructions and nothing else. `s` is dominated by `2` on BOTH axes. `lvgl-gap.md` §0.3 |
+| [#33](https://github.com/awtoau/vyr/issues/33) `opt-level` z→2 | **26.0 M Exact / 19.9 M Fast / 2.1 M Draft** *(totals; render-only in the ledger)* | **measured 07-24, not decided.** `opt-level` is a permanent dimension of the matrix, and which level to ship is a deployment choice — it moves with the part, the flash budget and the compiler. The trade is +183 KiB flash for those instructions; heap peak, stack watermark and every frame hash are opt-level-invariant; `s` is dominated by `2` on BOTH axes. **The fold is not invariant** — 3.11 M at `z`, 2.72 M at `s`, 2.24 M at `2`/`3` — so a render-only figure must be taken per level, never scaled. `lvgl-gap.md` §0.3 |
 | [#40](https://github.com/awtoau/vyr/issues/40) polygon pre-clip | 9.2 M + 22.5 KB RAM | fixes the #42 p0 as well |
 | [#37](https://github.com/awtoau/vyr/issues/37) narrow scalar pipeline | ~21 M | needs tiny-skia work; may be byte-identical |
 | [#34](https://github.com/awtoau/vyr/issues/34) IR resolve-once | 1.27 M (23 % of Draft) | none |
@@ -306,8 +382,14 @@ LVGL anchor: `9,220,422` → **`7,112,541`** at `56da347` (error 3).
 
 **Every measurement must land in the ledger**, not only in a commit message or a
 `tmp/*.json`. `docs/perf/history.jsonl` is the single measurement history
-(schema 2, one append-only row per run, written **only** by `./dev.py track`);
-`docs/perf/index.html` is regenerated from it.
+(**schema 3**, one row per run, written **only** by `./dev.py track` or the
+replay rebuild); `docs/perf/index.html` is regenerated from it.
+
+**Instruction counts have exactly one source: `scripts/perf-harness.py`.** Not
+`dev.py qemu-m4` (its SYS_CLOCK line is wall time), not a number pasted from a
+commit message. The harness records `total`, `harness_fold_insns` and
+`render_only` per cell, keyed by platform × tier × opt-level, with the QEMU
+version, plugin path, ELF SHA-256 and repeat count beside them.
 
 The rule, after every landed change that could move a number:
 
@@ -330,10 +412,11 @@ Three constraints that make the series trustworthy:
    observations stay in the tables. This is exactly the failure the retired
    `docs/metrics/` ledger had — seven "history" charts drawn from one row.
 
-**Known gap:** rows exist for `3e7c620` and earlier, but `f0a101a` (the memo)
-and `a9c8a4f` (the gutter sweep) are recorded here in prose and **not yet in the
-ledger** — they were measured while the tree was mid-flight. They should be
-backfilled by re-running the measurements at those commits, or accepted as
-prose-only with the next row picking up the trend.
+~~**Known gap:** `f0a101a` and `a9c8a4f` are recorded in prose and not in the
+ledger.~~ **Closed 07-24 by the replay** — every M4-capable commit from
+`e08aa63` to HEAD now has a ledger row, and a row that could not be measured
+would be recorded as a `skip` with its reason rather than omitted. Constraint 2
+above is unchanged in spirit: the replay *measures* the gap rather than
+back-filling a guess, which is the only legitimate way to close one.
 
 Provenance for every regeneration command: [`performance.md`](../performance.md) §6.

@@ -6,6 +6,24 @@ STM32F405/M4F, exact architectural instruction counts — never `SYS_CLOCK`, see
 number below has a command in §1.1 that regenerates it. **The figures are
 perishable; the model is not.**
 
+> **Read this before any number below (added 2026-07-24).** Two things have
+> moved under this document, and both change which column is quotable:
+>
+> - **#44 took vyr's hash fold out of the timed window.** Every "published
+>   insns/frame" figure in the vyr rows below therefore no longer exists as a
+>   vyr number — the current vyr totals ARE its render-only figures. **The
+>   `render only` columns below are unchanged and remain the comparable ones.**
+> - **The LVGL anchor still folds inside its `flush_cb`**, so its render-only
+>   figure is a two-build difference, flagged as such in the ledger
+>   (`fold_provenance: measured-differential`) until #44's LVGL half lands.
+>
+> Current headline, one instrument, `5482dad`, `opt-level="z"` (the ledger's
+> latest matrix row): vyr **Exact 48,239,550** · **Fast 33,508,475** · **Draft
+> 5,511,165** render-only, against the LVGL anchor's **3,224,303** render-only —
+> so **Draft is 1.71x LVGL**, and 1.33x at `opt-level=2`. The attribution below
+> is unaffected: it apportions the render-only cost, which is exactly what it
+> always did.
+
 The starting question was: *LVGL anti-aliases and still costs 54.9 insn/px
 where vyr's no-AA `Draft` tier costs 66.4 — where does the 9.06x on `Exact` go?*
 
@@ -95,10 +113,25 @@ ELF pipeline, same scene, Δ against the shipped `z`:
 
 (LVGL anchor: 7,112,541 insns/frame, re-confirmed 2026-07-24 on the same
 plugin QEMU from a freshly built stock-mirror ELF — `62f343b54`,
-`tmp/qemu-insn-lvgl-33.json`. The ratios are whole-firmware, so they still
-include both harnesses' FNV fold: §0.1 applies on top, and the fold's own cost
-is itself opt-level-dependent, so a *render-only* ratio must be re-derived per
-level rather than carried across from §0.1.)
+`tmp/qemu-insn-lvgl-33.json`. **The ratios in the two rows above are
+whole-firmware and therefore include both harnesses' FNV fold** — they are kept
+only because the flash figures below are matched to them.)
+
+**Re-measured render-only at every level** (`5482dad`, after #44 removed vyr's
+fold from the window; LVGL's fold differenced in-cell at its own level). This
+is the table to quote, and it is why the `0.92x` above was never a win:
+
+| tier | `z` (shipped) | `s` | `2` | `3` |
+|---|--:|--:|--:|--:|
+| Exact | 48,239,550 | 30,165,894 | 23,100,873 | 22,328,886 |
+| Fast | 33,508,475 | 19,692,171 | 14,528,101 | 14,330,940 |
+| Draft | 5,511,165 | 4,568,990 | **4,277,394** | 4,268,521 |
+| ratio vs LVGL render-only (3,224,303), Exact | 14.96x | 9.36x | 7.16x | 6.92x |
+| ratio vs LVGL render-only, Draft | 1.71x | 1.42x | **1.33x** | 1.32x |
+
+At `opt-level=2` the totals say Draft beats LVGL by 8.4 %; render-only says
+Draft is **33 % dearer**. Same builds, same instrument — the difference is
+entirely which harness hashes more of its own output.
 
 **flash** (`arm-none-eabi-size`, Berkeley `text+data`, `release-mcu`, the size
 matrix's own three configs and its own method — comparable cell for cell with

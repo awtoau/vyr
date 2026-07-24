@@ -28,7 +28,8 @@
   .s3 { fill: #1baf7a; stroke: #1baf7a; }
   .s4 { fill: #eda100; stroke: #eda100; }
   .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }</style>
+  .s6 { fill: #008300; stroke: #008300; }
+  .ln { fill: none; }</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Flash on the M4 (release-mcu, text+data)</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -45,24 +46,28 @@
 <text class="t-mut tick" x="66" y="42.0" text-anchor="end">663</text>
 <line class="axis" x1="74" y1="286.0" x2="588" y2="286.0"/>
 <text class="t-mut tick" x="74.0" y="302" text-anchor="end" transform="rotate(-35 74.0 302)">21427f2</text>
-<text class="t-mut tick" x="202.5" y="302" text-anchor="end" transform="rotate(-35 202.5 302)">21427f2</text>
-<text class="t-mut tick" x="331.0" y="302" text-anchor="end" transform="rotate(-35 331.0 302)">f2f0724*</text>
-<text class="t-mut tick" x="459.5" y="302" text-anchor="end" transform="rotate(-35 459.5 302)">7b5a662</text>
-<text class="t-mut tick" x="588.0" y="302" text-anchor="end" transform="rotate(-35 588.0 302)">3e7c620*</text>
+<text class="t-mut tick" x="132.7" y="302" text-anchor="end" transform="rotate(-35 132.7 302)">cab0038</text>
+<text class="t-mut tick" x="191.5" y="302" text-anchor="end" transform="rotate(-35 191.5 302)">d6fd574</text>
+<text class="t-mut tick" x="250.2" y="302" text-anchor="end" transform="rotate(-35 250.2 302)">dd84be1</text>
+<text class="t-mut tick" x="309.0" y="302" text-anchor="end" transform="rotate(-35 309.0 302)">7b5a662</text>
+<text class="t-mut tick" x="367.7" y="302" text-anchor="end" transform="rotate(-35 367.7 302)">2469624</text>
+<text class="t-mut tick" x="426.5" y="302" text-anchor="end" transform="rotate(-35 426.5 302)">153ae63</text>
+<text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
+<text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
-<polyline class="s1" points="331.0,133.4 588.0,132.3" fill="none" stroke-width="2"/>
-<circle class="s1" cx="331.0" cy="133.4" r="4" stroke="none"><title>code-only @ f2f0724*: 408 KiB</title></circle>
-<circle class="s1" cx="588.0" cy="132.3" r="4" stroke="none"><title>code-only @ 3e7c620*: 411 KiB</title></circle>
+<polyline class="s1 ln" points="264.9,133.4 411.8,132.3" stroke-width="2"/>
+<circle class="s1" cx="264.9" cy="133.4" r="4" stroke="none"><title>code-only @ f2f0724*: 408 KiB</title></circle>
+<circle class="s1" cx="411.8" cy="132.3" r="4" stroke="none"><title>code-only @ 3e7c620*: 411 KiB</title></circle>
 <rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">code-only</text>
-<polyline class="s2" points="331.0,73.3 588.0,72.2" fill="none" stroke-width="2"/>
-<circle class="s2" cx="331.0" cy="73.3" r="4" stroke="none"><title>+font @ f2f0724*: 569 KiB</title></circle>
-<circle class="s2" cx="588.0" cy="72.2" r="4" stroke="none"><title>+font @ 3e7c620*: 572 KiB</title></circle>
+<polyline class="s2 ln" points="264.9,73.3 411.8,72.2" stroke-width="2"/>
+<circle class="s2" cx="264.9" cy="73.3" r="4" stroke="none"><title>+font @ f2f0724*: 569 KiB</title></circle>
+<circle class="s2" cx="411.8" cy="72.2" r="4" stroke="none"><title>+font @ 3e7c620*: 572 KiB</title></circle>
 <rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">+font</text>
-<polyline class="s3" points="331.0,71.5 588.0,70.3" fill="none" stroke-width="2"/>
-<circle class="s3" cx="331.0" cy="71.5" r="4" stroke="none"><title>+font+image @ f2f0724*: 574 KiB</title></circle>
-<circle class="s3" cx="588.0" cy="70.3" r="4" stroke="none"><title>+font+image @ 3e7c620*: 577 KiB</title></circle>
+<polyline class="s3 ln" points="264.9,71.5 411.8,70.3" stroke-width="2"/>
+<circle class="s3" cx="264.9" cy="71.5" r="4" stroke="none"><title>+font+image @ f2f0724*: 574 KiB</title></circle>
+<circle class="s3" cx="411.8" cy="70.3" r="4" stroke="none"><title>+font+image @ 3e7c620*: 577 KiB</title></circle>
 <rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">+font+image</text>
 </svg>
