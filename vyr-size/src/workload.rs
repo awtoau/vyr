@@ -49,7 +49,42 @@ pub const FIXTURE_H: u32 = 270;
 /// Horizontal band height: 480×16 ⇒ gutter pixmap (480+16)·(16+16)·4 =
 /// 63,488 B + band buffer 480·16·3 = 23,040 B — the F9 working-RAM model's
 /// reference band (docs/measurements/f9-static.md).
-pub const BAND_H: u32 = 16;
+///
+/// **16 unless `VYR_BAND_H` was set when the crate was compiled.** The band
+/// height is the renderer's working-set knob — it decides how much of the
+/// frame is live at once and therefore how the cost splits between per-band
+/// fixed work (pixmap clear, clip decisions, edge setup, re-walking the tree)
+/// and per-pixel work. `docs/measurements/lvgl-gap.md` §8 lists the band-count
+/// sensitivity experiment as NOT RUN precisely because this was a hard-coded
+/// constant; #37 needs it, because "the pipeline is expensive" and "we invoke
+/// the pipeline 17 times per frame" are different findings with different
+/// fixes. Every report line prints the value in force, so no measurement taken
+/// with a non-default band is ambiguous about what it measured.
+///
+/// A build.rs `rerun-if-env-changed` makes cargo notice the change; without
+/// that, a sweep would silently re-measure the same binary.
+pub const BAND_H: u32 = match option_env!("VYR_BAND_H") {
+    Some(s) => parse_band_h(s),
+    None => 16,
+};
+
+/// Decimal `u32` at compile time — `str::parse` is not const.
+const fn parse_band_h(s: &str) -> u32 {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let mut v: u32 = 0;
+    while i < b.len() {
+        let d = b[i];
+        assert!(
+            d >= b'0' && d <= b'9',
+            "VYR_BAND_H must be a decimal number"
+        );
+        v = v * 10 + (d - b'0') as u32;
+        i += 1;
+    }
+    assert!(v > 0, "VYR_BAND_H must be > 0");
+    v
+}
 
 /// Size of the caller-provided RGB888 band buffer. The CALLER places it —
 /// the M4 leg keeps it as a CCM static (SRAM is the heap's), the host leg
@@ -73,7 +108,7 @@ pub const CHECKER: &[u8] = include_bytes!("../assets/checker-24.rgba");
 /// 16-row band seams. ASCII-only text (the subset font's whole range).
 /// (`--features rig` animates `vyr-scene` instead and never reads this; the
 /// constant stays so flipping the feature off is a one-word change.)
-#[cfg_attr(feature = "rig", allow(dead_code))]
+#[cfg_attr(any(feature = "rig", feature = "probe"), allow(dead_code))]
 pub const FIXTURE_IR: &str = r##"{
   "schema_version": "0.6-vyvanse",
   "w": 480, "h": 270,
@@ -118,6 +153,7 @@ fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
     h
 }
 
+#[cfg_attr(feature = "probe", allow(dead_code))]
 fn phase(emit: &mut dyn FnMut(&str), heap: &dyn Fn() -> (usize, usize), name: &str) {
     let (live, peak) = heap();
     emit(&format!(
@@ -132,7 +168,7 @@ fn phase(emit: &mut dyn FnMut(&str), heap: &dyn Fn() -> (usize, usize), name: &s
 /// stats — whose glyph-cache counters are the Fonts registry's cumulative
 /// truth).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-fn render_frame_banded(
+pub(crate) fn render_frame_banded(
     req: &vyr_core::ir::Request,
     fonts: &mut Fonts,
     assets: &Assets,
@@ -207,15 +243,20 @@ pub fn run(
     band_buf: &mut [u8],
     quality: Quality,
 ) -> Result<u64, RenderError> {
-    #[cfg(feature = "rig")]
+    // #37: the probe REPLACES the workload (it is a different question, not a
+    // different scene) and wins over `rig` if both are somehow enabled.
+    #[cfg(feature = "probe")]
+    return crate::probe::run(emit, heap, clock_cs, band_buf, quality);
+    #[cfg(all(feature = "rig", not(feature = "probe")))]
     return run_animated(emit, heap, clock_cs, band_buf, quality);
-    #[cfg(not(feature = "rig"))]
+    #[cfg(not(any(feature = "rig", feature = "probe")))]
     run_static(emit, heap, clock_cs, band_buf, quality)
 }
 
 /// The original single-fixture workload: one frame, rendered over and over.
 /// See [`run`].
 #[cfg(not(feature = "rig"))]
+#[cfg_attr(feature = "probe", allow(dead_code))]
 fn run_static(
     emit: &mut dyn FnMut(&str),
     heap: &dyn Fn() -> (usize, usize),

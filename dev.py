@@ -32,6 +32,8 @@ COMMANDS = {
     "ci": "THE single comprehensive gate (run after every change): gate + M4 insn-count gate + bench + size-mcu + anim(+ARM) + ladder + track, run-all-collect-all, one summary. --quick (~1-2 min): Draft-only M4, 60 anim frames, no video/ARM. Full run = nightly unit.",
     "ladder": "F18 resolution ladder 120→4K: ns/px full+incremental, 60fps headroom, dirty %; gates vs vyr-rig/baseline.json when present (--record re-records — commit separately)",
     "track": "THE measurement ledger (#25, schema 3): append one row for the current commit to docs/perf/history.jsonl from whatever measurement artifacts are in ./tmp (the perf-harness MATRIX, ladder/anim/arm, size, qemu-m4, board silicon cycles) + committed bench medians, then regenerate docs/perf/index.html (flat sortable tables of every recorded value). Measures nothing itself; sections absent from ./tmp are simply not recorded. Instruction counts come ONLY from tmp/perf-harness-HEAD.json (scripts/perf-harness.py), which records render-only, the benchmark's own hash fold and the total as separate fields. --regen-only rebuilds the page without appending; --rebuild-from-replay <jsonl> rebuilds the whole file from a history replay.",
+    "probe": "#37 painter geometry probe (DIAGNOSTIC, gates nothing): build vyr-size --features probe and price a sweep of synthetic scenes on the emulated M4 in which draws / 16-px pipeline chunks / painted pixels vary INDEPENDENTLY, then fit cost = a·draws + b·chunks + c·px. Separates per-fill_path setup from pipeline structure from irreducible per-pixel work — the decomposition no whole-frame number can produce. --tiers exact,fast,draft; --opt z|s|3; --band-h 8,16,32 (the working-set axis); --attribute (per-symbol + memory-traffic share); --host (same cases on x86-64 under callgrind). See docs/design/painter-simd-tax.md.",
+    "insn-mix": "#37 exact instruction-CLASS x symbol attribution (hotblocks blocks x static disassembly, self-checking to 100.0000%): how much of each symbol is load/store (spill) vs arithmetic, plus an exact call census attributing memcpy and OUTLINED_FUNCTION_* to their CALLERS. Consumes the logs scripts/m4-attribute.py leaves in tmp/m4-attribute — no qemu time of its own.",
     "gate": "the full pre-commit gate: fmt-check + clippy + test + check-mcu",
 }
 
@@ -809,6 +811,18 @@ def cmd_ladder(rest: list[str]) -> int:
     return _run(args + rest)
 
 
+def cmd_probe(rest: list[str]) -> int:
+    # #37: the painter geometry probe. Diagnostic, never a gate — it answers
+    # "what shape is the cost", not "did the cost regress".
+    return _run(["python3", "scripts/painter-probe.py", *rest])
+
+
+def cmd_insn_mix(rest: list[str]) -> int:
+    # #37: instruction CLASS x symbol attribution, over the hotblocks logs
+    # scripts/m4-attribute.py leaves in tmp/m4-attribute (no qemu time).
+    return _run(["python3", "scripts/insn-mix.py", *rest])
+
+
 def cmd_track(rest: list[str]) -> int:
     # ONE writer, ONE ledger (#25): docs/perf/history.jsonl + docs/perf/index.html.
     return _run(["python3", "scripts/ledger.py", *rest])
@@ -901,6 +915,8 @@ HANDLERS = {
     "qemu-m4": cmd_qemu_m4,
     "anim": cmd_anim,
     "ladder": cmd_ladder,
+    "probe": cmd_probe,
+    "insn-mix": cmd_insn_mix,
     "track": cmd_track,
     "gate": cmd_gate,
 }

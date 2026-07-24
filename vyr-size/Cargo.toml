@@ -65,6 +65,17 @@ rig-full = ["rig"]
 # delta is now one frame), so it is consumed by scripts/rig-insns.py, which
 # reads all the deltas. Mean insns/frame from either is the same number.
 rig-perframe = ["rig"]
+# #37: replace the fixture workload with the PAINTER GEOMETRY PROBE — a sweep
+# of synthetic scenes (width, draw count, alpha, curvature) chosen so that
+# draws / 16-px pipeline chunks / painted pixels vary INDEPENDENTLY, each case
+# bracketed by a semihosting bkpt so libinsn prices it exactly. Consumed by
+# scripts/painter-probe.py, which fits cost = a·draws + b·chunks + c·px and so
+# separates per-draw setup, per-chunk pipeline cost (where the u16x16 spill
+# lives) and irreducible per-pixel work. Diagnostic only: it renders no
+# published fixture, gates nothing, and no headline number is ever taken from
+# a build with it enabled. Mutually exclusive with `rig` (both replace the
+# workload; probe wins, and the cfg says so rather than silently mixing).
+probe = []
 # #33: measure the STACK high-water mark of a real run. Paints the unused
 # CCM stack region with a known word at boot (before .bss is zeroed, so no
 # static is touched) and scans it back up after the workload, printing
