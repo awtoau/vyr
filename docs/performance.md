@@ -65,9 +65,15 @@ embedded layout (see [`plan.md`](plan.md) §2):
 
 | Mode | How the caller uses it | Cost note |
 |---|---|---|
-| **Single full framebuffer** (LTDC scanning SDRAM) | `buf` = the framebuffer, `area` = the dirty rects | scan-out is hardware DMA and free to the CPU; only dirty pixels are *written* |
+| **Single full framebuffer** (LTDC scanning SDRAM) | `buf` = the framebuffer, `area` = the dirty rects | scan-out is hardware DMA and free to the CPU; only dirty pixels are *written*. **Measured against the row below in §4.4** |
 | **Double buffered** (two FBs, pointer swap on vsync) | `buf` = the BACK buffer | **the trap** — see below |
 | **Partial + flush** (small working buffer, per-band flush) | bands through a working buffer | the small-SRAM mode; what the DISC1 does today |
+
+Both resident-framebuffer rows have now been measured on silicon against each
+other, same scene, same tier, same clock — **§4.4**. Direct rendering needed
+**no vyr-core change**: `buf` was always the caller's memory and its origin was
+never assumed to be the screen's, so pointing it at the FMC aperture is purely
+a caller decision.
 
 **The double-buffer trap (the TouchGFX SMOC lesson).** The back buffer is *two
 frames stale*, so dirty-rect mode must repaint the union of **this** frame's and
@@ -326,6 +332,131 @@ runs this panel at 5.625 MHz but the ILI9341's rated **write** maximum is
 10 MHz (~1.8x), and the flush currently **busy-waits on TXE** — SPI DMA would
 take that entirely off the core and let flush overlap the next render.
 
+### 4.4 Presentation modes: direct-to-SDRAM vs banded-plus-flush (#45)
+
+Measured 2026-07-24 at `5482dad`, `python3 scripts/board-present.py`
+(`--features board,ltdc,present`), one flash, DWT_CYCCNT at 180 MHz. All three
+tiers in one image — `Quality` is a runtime argument.
+
+- **banded** = render a 240x16 band into **CCM**, then blit it into the RGB565
+  SDRAM framebuffer converting RGB888→RGB565 on the way (what the `ltdc` leg
+  does today).
+- **direct** = `render(area = the band, buf = &mut fb[row_offset..],
+  stride = 720)` straight into an **RGB888** SDRAM framebuffer
+  (`L1PFCR = 1`, 230,400 B). No second pass at all.
+
+Render and blit are separate DWT windows; hashing and read-back are outside
+both. `dirtyN` is `dirty_rects(prev, next)` = 2 rects, 9,240 px (12 % of screen).
+
+| tier | rect | area px | banded render | banded blit | banded total | direct render | direct total | winner |
+|---|---|--:|--:|--:|--:|--:|--:|---|
+| Exact | full 240x320 | 76,800 | 102,618,291 | 2,265,766 | 104,884,057 | 102,836,478 | 102,836,478 | direct, **1.9 %** |
+| Exact | 96x32 readout | 3,072 | 3,568,156 | 91,280 | 3,659,436 | 3,577,034 | 3,577,034 | direct, **2.3 %** |
+| Exact | dirtyN | 9,240 | 18,457,055 | 273,679 | 18,730,734 | 18,482,754 | 18,482,754 | direct, **1.3 %** |
+| Fast | full | 76,800 | 79,923,718 | 2,269,073 | 82,192,791 | 79,965,963 | 79,965,963 | direct, **2.7 %** |
+| Fast | 96x32 | 3,072 | 2,824,375 | 91,306 | 2,915,681 | 2,826,107 | 2,826,107 | direct, **3.1 %** |
+| Fast | dirtyN | 9,240 | 16,354,029 | 273,533 | 16,627,562 | 16,412,674 | 16,412,674 | direct, **1.3 %** |
+| Draft | full | 76,800 | 9,989,845 | 2,265,554 | 12,255,399 | 10,033,810 | 10,033,810 | direct, **18.1 %** |
+| Draft | 96x32 | 3,072 | 882,393 | 91,205 | 973,598 | 883,928 | 883,928 | direct, **9.2 %** |
+| Draft | dirtyN | 9,240 | 2,146,532 | 273,810 | 2,420,342 | 2,205,292 | 2,205,292 | direct, **8.9 %** |
+
+**Every cell produced byte-identical pixels** — the RGB888 read back out of
+SDRAM folds to the same FNV-1a as the CCM band buffer, and both equal the
+SPI-to-GRAM path's `0xc8a77478f7f9055a` (Exact) / `0x8af0208ab4cbd221` (Draft).
+
+#### Reproducibility, and what its pattern shows
+
+Two freshly-flashed runs (`scripts/present-compare-runs.py`), worst deviation
+**2,186 ppm = 0.22 %**, an order of magnitude under the smallest margin above.
+The *pattern* is the interesting part:
+
+| window | run-to-run spread |
+|---|--:|
+| banded **render** (writes CCM only) | **0 ppm — bit-identical, every cell** |
+| direct **render** (writes SDRAM) | ≤ 192 ppm |
+| banded **blit** (writes SDRAM) | ≤ 2,186 ppm |
+
+**Only the windows that touch SDRAM move at all**, because only they share the
+bus with an LTDC scan-out whose phase is not synchronised to the render. That
+is bus contention observed directly, in the noise floor.
+
+#### Why direct wins, and why the margin is a tier story
+
+Direct removes the blit **entirely** and costs almost nothing to do so:
+
+| | full-frame |
+|---|--:|
+| blit removed | 2,265,554 c = **12.59 ms**, 29.5 cycles/px |
+| extra cost of writing 230,400 B to SDRAM instead of CCM (Draft) | **43,965 c**, 0.19 cycles/byte |
+
+So the blit was never paying for SDRAM — **it was paying for the RGB888→RGB565
+conversion**. The blit is a FIXED per-pixel cost, so its share of the frame is
+what varies: it is 18.5 % of a Draft frame and 2.2 % of an Exact one. **The
+margin tracks the tier, not the dirty fraction.**
+
+Neither path is close to memory-bound. Achieved SDRAM write bandwidth:
+12.2 MB/s in the banded blit, 0.3–4.1 MB/s across a direct render — against
+108 MB/s the memory delivers to a plain store loop.
+
+#### The memory system (same 8 KiB store/load loop, only LTDC differs)
+
+| target | write | read |
+|---|--:|--:|
+| CCM | 119 MB/s | 119 MB/s |
+| SDRAM, LTDC scanning RGB565 | 108 MB/s | 32 MB/s |
+| SDRAM, LTDC scanning RGB888 | 104 MB/s | 30 MB/s |
+| SDRAM, layer OFF (contention-free control) | 119 MB/s | 35 MB/s |
+| SDRAM, 8 MiB bulk walk (`sdram_test`) | 55 MB/s | 23 MB/s |
+
+- **CCM and SDRAM writes are indistinguishable for a resident working set** —
+  posted writes are absorbed, and the store loop is CPU-bound, not memory-bound.
+  The 8 MiB bulk figure is 2x lower because it crosses every SDRAM row and pays
+  a row activation each time; quoting it as "SDRAM write speed" understates a
+  framebuffer by half.
+- **Reads are the slow direction, ~3.5x.** Any presentation scheme that reads
+  the framebuffer back pays dearly (see the R/B swap below).
+- **Scan-out contention is real and small**: 10 % on CPU writes with the RGB565
+  layer, **14 % with RGB888** (1.5x the scan-out read traffic: 15.05 vs
+  10.03 MB/s at the measured 65.330 Hz).
+- **Writes during active scan-out are 9 % slower than during blanking**
+  (13,544 vs 12,319 cycles for the same 8 KiB, 8 reps; the blanking figure is
+  bit-identical to the layer-off control, i.e. blanking contention is *zero*).
+- **No LTDC FIFO underrun or transfer error in any run**, including RGB888.
+
+#### The catch: RGB888 out is not RGB888 in memory
+
+LTDC's RGB888 layer reads **B at the lowest address** (RM0090 pixel-data
+mapping, same little-endian order as its ARGB8888). vyr-core writes R, G, B. So
+a framebuffer written directly by the renderer displays **red and blue
+swapped** — the bytes are right, the channel order is not.
+
+Correcting it in place costs **10,746,227 c = 59.7 ms** (read-modify-write over
+230,400 B at 3.9 MB/s effective — read-bound). That is **4.7x the 12.59 ms blit
+it was supposed to replace.** With today's RGB888-only output:
+
+> **direct wins on cycles in all nine cells, but only if swapped red/blue is
+> acceptable. Add the correcting pass and banded wins everywhere, by a lot.**
+
+#### What #22 `OutFmt` would be worth here (not implemented)
+
+1. **A byte-order variant alone (BGR888 out)** removes the 59.7 ms swap and
+   makes the table above the whole story: direct wins outright, by 1.3–18.1 %.
+   This is a much smaller change than #22 proper.
+2. **RGB565 native out** additionally makes direct genuinely *single-touch*:
+   2 B/px instead of 3 into a 153,600 B framebuffer, no conversion anywhere, no
+   1.5x SDRAM, and scan-out read traffic back to 10.03 MB/s — worth the measured
+   4 percentage points of write contention (14 % → 10 %) and 76,800 B of SDRAM.
+   The conversion cost it removes is the 29.5 cycles/px the blit spends today.
+
+#### Tearing
+
+Single buffered, so tearing is **structural, not incidental**: a full-frame
+update spans 3.6 refresh periods at Draft (55.7 ms vs the measured 15.31 ms
+frame) and 37 at Exact; even the 96x32 readout at Draft (4.9 ms) is unsynchronised
+with scan-out. Firmware cannot observe tearing — only a human looking at the
+panel can — and no attempt is made here to hide it. Double buffering is not a
+free upgrade; see §1.2's trap.
+
 ---
 
 ## 5. The rules this document exists to enforce
@@ -372,6 +503,8 @@ provenance — tool version, source commit, ELF SHA-256, every run's raw values.
 | — LVGL comparison ELF | `python3 scripts/lvgl-m4-bench/run.py` | `tmp/lvgl-m4-result.json` |
 | §4.1 silicon cycles | `python3 scripts/board-run.py` | `tmp/board-result.json` |
 | §4.2 dirty-rect animation | `python3 scripts/board-anim.py` | `tmp/board-anim.json` |
+| §4.4 presentation modes (direct vs banded, all tiers, memory probes) | `python3 scripts/board-present.py` | `tmp/board-present.json` |
+| §4.4 reproducibility of two such runs | `python3 scripts/present-compare-runs.py A.json B.json` | `tmp/present-compare-runs.log` |
 | Host ladder / ns-px | `./dev.py ladder`, `./dev.py bench` | `tmp/rig-ladder.json` |
 | Register-level board debugging | `python3 scripts/board-diag.py` | `tmp/board-diag.json` |
 | **Record all of the above as one dated row** | `./dev.py track` | `docs/perf/history.jsonl` + `docs/perf/index.html` |
@@ -390,7 +523,10 @@ Notes that will cost time if forgotten:
 - Two boards are attached. The DISC1 is probe
   `0483:3752:0671FF484971754867174427`; scripts must select it explicitly.
 - Concurrent board work must take the `tmp/.board.lock` (atomic `mkdir`) around
-  flash+run.
+  flash+run. **In a linked `git worktree` a relative `tmp/` is the worktree's
+  own**, so the lock must resolve to the PRIMARY checkout's `tmp/` or it
+  mutexes nothing while looking exactly like it does — `scripts/board_lock.py`
+  resolves this itself (`_primary_checkout`).
 
 ## 7. Open threads
 

@@ -26,7 +26,35 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TMP = REPO / "tmp"
+
+
+def _primary_checkout(repo: Path) -> Path:
+    """The MAIN working tree's root, even when called from a linked worktree.
+
+    Load-bearing, not tidiness: agents run in `git worktree` checkouts under
+    .claude/worktrees/, and a lock at `<worktree>/tmp/.board.lock` is a
+    different directory per agent -- i.e. a mutex that mutexes nothing while
+    looking exactly like one that does. In a linked worktree `<root>/.git` is a
+    FILE reading `gitdir: <main>/.git/worktrees/<name>`, so the main root is
+    that path's third parent. Falls back to `repo` if anything is unexpected,
+    which is the non-worktree case.
+    """
+    dotgit = repo / ".git"
+    try:
+        if dotgit.is_file():
+            line = dotgit.read_text().strip()
+            if line.startswith("gitdir:"):
+                gitdir = Path(line.split(":", 1)[1].strip()).resolve()
+                # <main>/.git/worktrees/<name> -> <main>
+                if gitdir.parent.name == "worktrees":
+                    return gitdir.parent.parent.parent
+    except OSError:
+        pass
+    return repo
+
+
+PRIMARY = _primary_checkout(REPO)
+TMP = PRIMARY / "tmp"
 LOCK = TMP / ".board.lock"
 
 # How long a runner will queue behind another agent before giving up. A flash

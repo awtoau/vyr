@@ -130,21 +130,27 @@ const LTDC_BPCR: u32 = LTDC + 0x0C;
 const LTDC_AWCR: u32 = LTDC + 0x10;
 const LTDC_TWCR: u32 = LTDC + 0x14;
 const LTDC_GCR: u32 = LTDC + 0x18;
-const LTDC_SRCR: u32 = LTDC + 0x24;
+pub(crate) const LTDC_SRCR: u32 = LTDC + 0x24;
+/// LTDC_ISR (0x38) / LTDC_ICR (0x3C) — the controller's own error flags:
+/// FIFO underrun and transfer error. Hardware's account of bus starvation.
+#[cfg(feature = "present")]
+pub(crate) const LTDC_ISR: u32 = LTDC + 0x38;
+#[cfg(feature = "present")]
+pub(crate) const LTDC_ICR: u32 = LTDC + 0x3C;
 const LTDC_BCCR: u32 = LTDC + 0x2C;
-const LTDC_CPSR: u32 = LTDC + 0x44;
+pub(crate) const LTDC_CPSR: u32 = LTDC + 0x44;
 const LTDC_CDSR: u32 = LTDC + 0x48;
 /// `LTDC_Layer1_BASE = LTDC_BASE + 0x84`.
 const L1: u32 = LTDC + 0x84;
-const L1_CR: u32 = L1; // +0x00
+pub(crate) const L1_CR: u32 = L1; // +0x00
 const L1_WHPCR: u32 = L1 + 0x04;
 const L1_WVPCR: u32 = L1 + 0x08;
-const L1_PFCR: u32 = L1 + 0x10;
+pub(crate) const L1_PFCR: u32 = L1 + 0x10;
 const L1_CACR: u32 = L1 + 0x14;
 const L1_DCCR: u32 = L1 + 0x18;
 const L1_BFCR: u32 = L1 + 0x1C;
-const L1_CFBAR: u32 = L1 + 0x28;
-const L1_CFBLR: u32 = L1 + 0x2C;
+pub(crate) const L1_CFBAR: u32 = L1 + 0x28;
+pub(crate) const L1_CFBLR: u32 = L1 + 0x2C;
 const L1_CFBLNR: u32 = L1 + 0x30;
 
 const LTDC_GCR_LTDCEN: u32 = 1 << 0;
@@ -152,8 +158,8 @@ const LTDC_GCR_LTDCEN: u32 = 1 << 0;
 /// HS/VS/DE and "input pixel clock" for PC — i.e. all four bits ZERO — so
 /// this mask is cleared and nothing is set in its place.
 const LTDC_GCR_POL_MASK: u32 = 0xF << 28;
-const LTDC_SRCR_IMR: u32 = 1 << 0;
-const LTDC_LX_CR_LEN: u32 = 1 << 0;
+pub(crate) const LTDC_SRCR_IMR: u32 = 1 << 0;
+pub(crate) const LTDC_LX_CR_LEN: u32 = 1 << 0;
 
 // --- panel/SDRAM geometry ---------------------------------------------------
 
@@ -175,7 +181,7 @@ const FB_END: u32 = FB_BASE + FB_BYTES;
 
 /// Read DWT_CYCCNT as an unsigned tick.
 #[inline]
-fn cyc() -> u32 {
+pub(crate) fn cyc() -> u32 {
     crate::m4::clock_cycles() as u32
 }
 
@@ -185,7 +191,7 @@ fn cyc() -> u32 {
 /// unbounded wait on a flag that never asserts is a silent hang with no
 /// output, and a bring-up path is exactly where flags fail to assert. Every
 /// caller states what it is waiting for and why its budget is what it is.
-fn wait_ms(ms: u32, mut f: impl FnMut() -> bool) -> bool {
+pub(crate) fn wait_ms(ms: u32, mut f: impl FnMut() -> bool) -> bool {
     let budget = (crate::m4::sysclk_hz() / 1000).saturating_mul(ms);
     let t0 = cyc();
     loop {
@@ -940,8 +946,37 @@ fn render_rect(
     cost: &mut Cost,
     pixels: &mut u64,
 ) -> Result<u64, RenderError> {
+    render_rect_from(
+        req,
+        fonts,
+        assets,
+        quality,
+        band_buf,
+        rect,
+        cost,
+        pixels,
+        lcd::FNV_OFFSET,
+    )
+}
+
+/// [`render_rect`] continuing an existing fold, so a MULTI-RECT update folds to
+/// one hash. `#45` (the presentation-mode comparison) needs this to hash a
+/// `dirty_rects` set the same way the direct path hashes it back out of SDRAM;
+/// `render_rect` is this function with a fresh fold, and nothing else.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_rect_from(
+    req: &vyr_core::ir::Request,
+    fonts: &mut Fonts,
+    assets: &Assets,
+    quality: Quality,
+    band_buf: &mut [u8],
+    rect: Rect,
+    cost: &mut Cost,
+    pixels: &mut u64,
+    hash_in: u64,
+) -> Result<u64, RenderError> {
     let stride = (rect.w * 3) as usize;
-    let mut hash = lcd::FNV_OFFSET;
+    let mut hash = hash_in;
     let mut y = 0u32;
     while y < rect.h {
         let h = PANEL_BAND_H.min(rect.h - y);
@@ -1281,5 +1316,16 @@ pub fn show_scene(
 
     // --- 6. what the controller says ---------------------------------------
     lcd::panel_probe(emit);
+
+    // --- 7. `--features present` (#45): the OTHER presentation mode ---------
+    // Everything above priced ONE topology (partial + flush). This prices
+    // rendering straight into the scan-out framebuffer against it, same scene,
+    // same fonts, same assets, same clock — reusing the registries built here
+    // rather than building a second set, because a second glyph cache would not
+    // fit the 122,880 B arena. It runs LAST, so nothing it does to the LTDC
+    // layer configuration can affect any number above.
+    #[cfg(feature = "present")]
+    crate::present::compare(emit, band_buf, &req, &mut fonts, &assets, hz)?;
+
     Ok(hash)
 }
