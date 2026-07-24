@@ -1,35 +1,58 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="Host (x86-64) frame cost — the same scene, the other platform" font-size="11">
-<style>
+<style>  text  { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick { font-variant-numeric: tabular-nums; }
+
   .surface { fill: #fcfcfb; }
   .grid    { stroke: #e1e0d9; stroke-width: 1; }
   .axis    { stroke: #c3c2b7; stroke-width: 1; }
   .t-pri   { fill: #0b0b0b; }
   .t-sec   { fill: #52514e; }
   .t-mut   { fill: #898781; }
-  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .tick    { font-variant-numeric: tabular-nums; }
+  .s1 { stroke: #2a78d6; }  .f1 { fill: #2a78d6; }
+  .s2 { stroke: #eb6834; }  .f2 { fill: #eb6834; }
+  .s3 { stroke: #1baf7a; }  .f3 { fill: #1baf7a; }
+  .s4 { stroke: #eda100; }  .f4 { fill: #eda100; }
+  .s5 { stroke: #e87ba4; }  .f5 { fill: #e87ba4; }
+  .s6 { stroke: #008300; }  .f6 { fill: #008300; }
   @media (prefers-color-scheme: dark) {
-    .surface { fill: #1a1a19; }
-    .grid    { stroke: #2c2c2a; }
-    .axis    { stroke: #383835; }
-    .t-pri   { fill: #ffffff; }
-    .t-sec   { fill: #c3c2b7; }
-    .t-mut   { fill: #898781; }
-    .s1 { fill: #3987e5; stroke: #3987e5; }
-    .s2 { fill: #d95926; stroke: #d95926; }
-    .s3 { fill: #199e70; stroke: #199e70; }
-    .s4 { fill: #c98500; stroke: #c98500; }
-    .s5 { fill: #d55181; stroke: #d55181; }
-    .s6 { fill: #008300; stroke: #008300; }
+  :root:not([data-theme="light"]) .surface { fill: #1a1a19; }
+  :root:not([data-theme="light"]) .grid    { stroke: #2c2c2a; stroke-width: 1; }
+  :root:not([data-theme="light"]) .axis    { stroke: #383835; stroke-width: 1; }
+  :root:not([data-theme="light"]) .t-pri   { fill: #ffffff; }
+  :root:not([data-theme="light"]) .t-sec   { fill: #c3c2b7; }
+  :root:not([data-theme="light"]) .t-mut   { fill: #898781; }
+  :root:not([data-theme="light"]) .s1 { stroke: #3987e5; }  :root:not([data-theme="light"]) .f1 { fill: #3987e5; }
+  :root:not([data-theme="light"]) .s2 { stroke: #d95926; }  :root:not([data-theme="light"]) .f2 { fill: #d95926; }
+  :root:not([data-theme="light"]) .s3 { stroke: #199e70; }  :root:not([data-theme="light"]) .f3 { fill: #199e70; }
+  :root:not([data-theme="light"]) .s4 { stroke: #c98500; }  :root:not([data-theme="light"]) .f4 { fill: #c98500; }
+  :root:not([data-theme="light"]) .s5 { stroke: #d55181; }  :root:not([data-theme="light"]) .f5 { fill: #d55181; }
+  :root:not([data-theme="light"]) .s6 { stroke: #008300; }  :root:not([data-theme="light"]) .f6 { fill: #008300; }
   }
-
-  .s1 { fill: #2a78d6; stroke: #2a78d6; }
-  .s2 { fill: #eb6834; stroke: #eb6834; }
-  .s3 { fill: #1baf7a; stroke: #1baf7a; }
-  .s4 { fill: #eda100; stroke: #eda100; }
-  .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }
-  .ln { fill: none; }</style>
+  :root[data-theme="dark"] .surface { fill: #1a1a19; }
+  :root[data-theme="dark"] .grid    { stroke: #2c2c2a; stroke-width: 1; }
+  :root[data-theme="dark"] .axis    { stroke: #383835; stroke-width: 1; }
+  :root[data-theme="dark"] .t-pri   { fill: #ffffff; }
+  :root[data-theme="dark"] .t-sec   { fill: #c3c2b7; }
+  :root[data-theme="dark"] .t-mut   { fill: #898781; }
+  :root[data-theme="dark"] .s1 { stroke: #3987e5; }  :root[data-theme="dark"] .f1 { fill: #3987e5; }
+  :root[data-theme="dark"] .s2 { stroke: #d95926; }  :root[data-theme="dark"] .f2 { fill: #d95926; }
+  :root[data-theme="dark"] .s3 { stroke: #199e70; }  :root[data-theme="dark"] .f3 { fill: #199e70; }
+  :root[data-theme="dark"] .s4 { stroke: #c98500; }  :root[data-theme="dark"] .f4 { fill: #c98500; }
+  :root[data-theme="dark"] .s5 { stroke: #d55181; }  :root[data-theme="dark"] .f5 { fill: #d55181; }
+  :root[data-theme="dark"] .s6 { stroke: #008300; }  :root[data-theme="dark"] .f6 { fill: #008300; }
+  :root[data-theme="light"] .surface { fill: #fcfcfb; }
+  :root[data-theme="light"] .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  :root[data-theme="light"] .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  :root[data-theme="light"] .t-pri   { fill: #0b0b0b; }
+  :root[data-theme="light"] .t-sec   { fill: #52514e; }
+  :root[data-theme="light"] .t-mut   { fill: #898781; }
+  :root[data-theme="light"] .s1 { stroke: #2a78d6; }  :root[data-theme="light"] .f1 { fill: #2a78d6; }
+  :root[data-theme="light"] .s2 { stroke: #eb6834; }  :root[data-theme="light"] .f2 { fill: #eb6834; }
+  :root[data-theme="light"] .s3 { stroke: #1baf7a; }  :root[data-theme="light"] .f3 { fill: #1baf7a; }
+  :root[data-theme="light"] .s4 { stroke: #eda100; }  :root[data-theme="light"] .f4 { fill: #eda100; }
+  :root[data-theme="light"] .s5 { stroke: #e87ba4; }  :root[data-theme="light"] .f5 { fill: #e87ba4; }
+  :root[data-theme="light"] .s6 { stroke: #008300; }  :root[data-theme="light"] .f6 { fill: #008300; }
+</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">Host (x86-64) frame cost — the same scene, the other platform</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -55,37 +78,37 @@
 <text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
 <text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">ns / frame</text>
-<polyline class="s1 ln" points="485.2,77.8 499.9,75.8 514.6,73.1 529.3,75.1 543.9,76.2 558.6,72.9 573.3,73.5 588.0,70.3" stroke-width="2"/>
-<circle class="s1" cx="485.2" cy="77.8" r="4" stroke="none"><title>host Exact @ 31970f3: 2.48e+05 ns / frame</title></circle>
-<circle class="s1" cx="499.9" cy="75.8" r="4" stroke="none"><title>host Exact @ f0a101a: 2.5e+05 ns / frame</title></circle>
-<circle class="s1" cx="514.6" cy="73.1" r="4" stroke="none"><title>host Exact @ d0d8a0f: 2.54e+05 ns / frame</title></circle>
-<circle class="s1" cx="529.3" cy="75.1" r="4" stroke="none"><title>host Exact @ 4da4133: 2.51e+05 ns / frame</title></circle>
-<circle class="s1" cx="543.9" cy="76.2" r="4" stroke="none"><title>host Exact @ a9c8a4f: 2.5e+05 ns / frame</title></circle>
-<circle class="s1" cx="558.6" cy="72.9" r="4" stroke="none"><title>host Exact @ 07d38cc: 2.54e+05 ns / frame</title></circle>
-<circle class="s1" cx="573.3" cy="73.5" r="4" stroke="none"><title>host Exact @ b93eec1: 2.53e+05 ns / frame</title></circle>
-<circle class="s1" cx="588.0" cy="70.3" r="4" stroke="none"><title>host Exact @ 5482dad: 2.57e+05 ns / frame</title></circle>
-<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<polyline class="s1" points="485.2,77.8 499.9,75.8 514.6,73.1 529.3,75.1 543.9,76.2 558.6,72.9 573.3,73.5 588.0,70.3" fill="none" stroke-width="2"/>
+<circle class="f1" cx="485.2" cy="77.8" r="4" stroke="none"><title>host Exact @ 31970f3: 2.48e+05 ns / frame</title></circle>
+<circle class="f1" cx="499.9" cy="75.8" r="4" stroke="none"><title>host Exact @ f0a101a: 2.5e+05 ns / frame</title></circle>
+<circle class="f1" cx="514.6" cy="73.1" r="4" stroke="none"><title>host Exact @ d0d8a0f: 2.54e+05 ns / frame</title></circle>
+<circle class="f1" cx="529.3" cy="75.1" r="4" stroke="none"><title>host Exact @ 4da4133: 2.51e+05 ns / frame</title></circle>
+<circle class="f1" cx="543.9" cy="76.2" r="4" stroke="none"><title>host Exact @ a9c8a4f: 2.5e+05 ns / frame</title></circle>
+<circle class="f1" cx="558.6" cy="72.9" r="4" stroke="none"><title>host Exact @ 07d38cc: 2.54e+05 ns / frame</title></circle>
+<circle class="f1" cx="573.3" cy="73.5" r="4" stroke="none"><title>host Exact @ b93eec1: 2.53e+05 ns / frame</title></circle>
+<circle class="f1" cx="588.0" cy="70.3" r="4" stroke="none"><title>host Exact @ 5482dad: 2.57e+05 ns / frame</title></circle>
+<rect class="f1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">host Exact</text>
-<polyline class="s2 ln" points="485.2,85.7 499.9,83.1 514.6,85.6 529.3,86.2 543.9,85.4 558.6,85.7 573.3,86.8 588.0,82.0" stroke-width="2"/>
-<circle class="s2" cx="485.2" cy="85.7" r="4" stroke="none"><title>host Fast @ 31970f3: 2.39e+05 ns / frame</title></circle>
-<circle class="s2" cx="499.9" cy="83.1" r="4" stroke="none"><title>host Fast @ f0a101a: 2.42e+05 ns / frame</title></circle>
-<circle class="s2" cx="514.6" cy="85.6" r="4" stroke="none"><title>host Fast @ d0d8a0f: 2.39e+05 ns / frame</title></circle>
-<circle class="s2" cx="529.3" cy="86.2" r="4" stroke="none"><title>host Fast @ 4da4133: 2.38e+05 ns / frame</title></circle>
-<circle class="s2" cx="543.9" cy="85.4" r="4" stroke="none"><title>host Fast @ a9c8a4f: 2.39e+05 ns / frame</title></circle>
-<circle class="s2" cx="558.6" cy="85.7" r="4" stroke="none"><title>host Fast @ 07d38cc: 2.39e+05 ns / frame</title></circle>
-<circle class="s2" cx="573.3" cy="86.8" r="4" stroke="none"><title>host Fast @ b93eec1: 2.37e+05 ns / frame</title></circle>
-<circle class="s2" cx="588.0" cy="82.0" r="4" stroke="none"><title>host Fast @ 5482dad: 2.43e+05 ns / frame</title></circle>
-<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<polyline class="s2" points="485.2,85.7 499.9,83.1 514.6,85.6 529.3,86.2 543.9,85.4 558.6,85.7 573.3,86.8 588.0,82.0" fill="none" stroke-width="2"/>
+<circle class="f2" cx="485.2" cy="85.7" r="4" stroke="none"><title>host Fast @ 31970f3: 2.39e+05 ns / frame</title></circle>
+<circle class="f2" cx="499.9" cy="83.1" r="4" stroke="none"><title>host Fast @ f0a101a: 2.42e+05 ns / frame</title></circle>
+<circle class="f2" cx="514.6" cy="85.6" r="4" stroke="none"><title>host Fast @ d0d8a0f: 2.39e+05 ns / frame</title></circle>
+<circle class="f2" cx="529.3" cy="86.2" r="4" stroke="none"><title>host Fast @ 4da4133: 2.38e+05 ns / frame</title></circle>
+<circle class="f2" cx="543.9" cy="85.4" r="4" stroke="none"><title>host Fast @ a9c8a4f: 2.39e+05 ns / frame</title></circle>
+<circle class="f2" cx="558.6" cy="85.7" r="4" stroke="none"><title>host Fast @ 07d38cc: 2.39e+05 ns / frame</title></circle>
+<circle class="f2" cx="573.3" cy="86.8" r="4" stroke="none"><title>host Fast @ b93eec1: 2.37e+05 ns / frame</title></circle>
+<circle class="f2" cx="588.0" cy="82.0" r="4" stroke="none"><title>host Fast @ 5482dad: 2.43e+05 ns / frame</title></circle>
+<rect class="f2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">host Fast</text>
-<polyline class="s3 ln" points="485.2,236.3 499.9,236.2 514.6,236.6 529.3,236.4 543.9,237.1 558.6,236.8 573.3,236.8 588.0,236.1" stroke-width="2"/>
-<circle class="s3" cx="485.2" cy="236.3" r="4" stroke="none"><title>host Draft @ 31970f3: 5.92e+04 ns / frame</title></circle>
-<circle class="s3" cx="499.9" cy="236.2" r="4" stroke="none"><title>host Draft @ f0a101a: 5.94e+04 ns / frame</title></circle>
-<circle class="s3" cx="514.6" cy="236.6" r="4" stroke="none"><title>host Draft @ d0d8a0f: 5.88e+04 ns / frame</title></circle>
-<circle class="s3" cx="529.3" cy="236.4" r="4" stroke="none"><title>host Draft @ 4da4133: 5.91e+04 ns / frame</title></circle>
-<circle class="s3" cx="543.9" cy="237.1" r="4" stroke="none"><title>host Draft @ a9c8a4f: 5.82e+04 ns / frame</title></circle>
-<circle class="s3" cx="558.6" cy="236.8" r="4" stroke="none"><title>host Draft @ 07d38cc: 5.86e+04 ns / frame</title></circle>
-<circle class="s3" cx="573.3" cy="236.8" r="4" stroke="none"><title>host Draft @ b93eec1: 5.86e+04 ns / frame</title></circle>
-<circle class="s3" cx="588.0" cy="236.1" r="4" stroke="none"><title>host Draft @ 5482dad: 5.94e+04 ns / frame</title></circle>
-<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<polyline class="s3" points="485.2,236.3 499.9,236.2 514.6,236.6 529.3,236.4 543.9,237.1 558.6,236.8 573.3,236.8 588.0,236.1" fill="none" stroke-width="2"/>
+<circle class="f3" cx="485.2" cy="236.3" r="4" stroke="none"><title>host Draft @ 31970f3: 5.92e+04 ns / frame</title></circle>
+<circle class="f3" cx="499.9" cy="236.2" r="4" stroke="none"><title>host Draft @ f0a101a: 5.94e+04 ns / frame</title></circle>
+<circle class="f3" cx="514.6" cy="236.6" r="4" stroke="none"><title>host Draft @ d0d8a0f: 5.88e+04 ns / frame</title></circle>
+<circle class="f3" cx="529.3" cy="236.4" r="4" stroke="none"><title>host Draft @ 4da4133: 5.91e+04 ns / frame</title></circle>
+<circle class="f3" cx="543.9" cy="237.1" r="4" stroke="none"><title>host Draft @ a9c8a4f: 5.82e+04 ns / frame</title></circle>
+<circle class="f3" cx="558.6" cy="236.8" r="4" stroke="none"><title>host Draft @ 07d38cc: 5.86e+04 ns / frame</title></circle>
+<circle class="f3" cx="573.3" cy="236.8" r="4" stroke="none"><title>host Draft @ b93eec1: 5.86e+04 ns / frame</title></circle>
+<circle class="f3" cx="588.0" cy="236.1" r="4" stroke="none"><title>host Draft @ 5482dad: 5.94e+04 ns / frame</title></circle>
+<rect class="f3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">host Draft</text>
 </svg>

@@ -1,35 +1,58 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" width="760" height="330" role="img" aria-label="M4 flash — text+data of the measured ELF" font-size="11">
-<style>
+<style>  text  { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tick { font-variant-numeric: tabular-nums; }
+
   .surface { fill: #fcfcfb; }
   .grid    { stroke: #e1e0d9; stroke-width: 1; }
   .axis    { stroke: #c3c2b7; stroke-width: 1; }
   .t-pri   { fill: #0b0b0b; }
   .t-sec   { fill: #52514e; }
   .t-mut   { fill: #898781; }
-  text     { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .tick    { font-variant-numeric: tabular-nums; }
+  .s1 { stroke: #2a78d6; }  .f1 { fill: #2a78d6; }
+  .s2 { stroke: #eb6834; }  .f2 { fill: #eb6834; }
+  .s3 { stroke: #1baf7a; }  .f3 { fill: #1baf7a; }
+  .s4 { stroke: #eda100; }  .f4 { fill: #eda100; }
+  .s5 { stroke: #e87ba4; }  .f5 { fill: #e87ba4; }
+  .s6 { stroke: #008300; }  .f6 { fill: #008300; }
   @media (prefers-color-scheme: dark) {
-    .surface { fill: #1a1a19; }
-    .grid    { stroke: #2c2c2a; }
-    .axis    { stroke: #383835; }
-    .t-pri   { fill: #ffffff; }
-    .t-sec   { fill: #c3c2b7; }
-    .t-mut   { fill: #898781; }
-    .s1 { fill: #3987e5; stroke: #3987e5; }
-    .s2 { fill: #d95926; stroke: #d95926; }
-    .s3 { fill: #199e70; stroke: #199e70; }
-    .s4 { fill: #c98500; stroke: #c98500; }
-    .s5 { fill: #d55181; stroke: #d55181; }
-    .s6 { fill: #008300; stroke: #008300; }
+  :root:not([data-theme="light"]) .surface { fill: #1a1a19; }
+  :root:not([data-theme="light"]) .grid    { stroke: #2c2c2a; stroke-width: 1; }
+  :root:not([data-theme="light"]) .axis    { stroke: #383835; stroke-width: 1; }
+  :root:not([data-theme="light"]) .t-pri   { fill: #ffffff; }
+  :root:not([data-theme="light"]) .t-sec   { fill: #c3c2b7; }
+  :root:not([data-theme="light"]) .t-mut   { fill: #898781; }
+  :root:not([data-theme="light"]) .s1 { stroke: #3987e5; }  :root:not([data-theme="light"]) .f1 { fill: #3987e5; }
+  :root:not([data-theme="light"]) .s2 { stroke: #d95926; }  :root:not([data-theme="light"]) .f2 { fill: #d95926; }
+  :root:not([data-theme="light"]) .s3 { stroke: #199e70; }  :root:not([data-theme="light"]) .f3 { fill: #199e70; }
+  :root:not([data-theme="light"]) .s4 { stroke: #c98500; }  :root:not([data-theme="light"]) .f4 { fill: #c98500; }
+  :root:not([data-theme="light"]) .s5 { stroke: #d55181; }  :root:not([data-theme="light"]) .f5 { fill: #d55181; }
+  :root:not([data-theme="light"]) .s6 { stroke: #008300; }  :root:not([data-theme="light"]) .f6 { fill: #008300; }
   }
-
-  .s1 { fill: #2a78d6; stroke: #2a78d6; }
-  .s2 { fill: #eb6834; stroke: #eb6834; }
-  .s3 { fill: #1baf7a; stroke: #1baf7a; }
-  .s4 { fill: #eda100; stroke: #eda100; }
-  .s5 { fill: #e87ba4; stroke: #e87ba4; }
-  .s6 { fill: #008300; stroke: #008300; }
-  .ln { fill: none; }</style>
+  :root[data-theme="dark"] .surface { fill: #1a1a19; }
+  :root[data-theme="dark"] .grid    { stroke: #2c2c2a; stroke-width: 1; }
+  :root[data-theme="dark"] .axis    { stroke: #383835; stroke-width: 1; }
+  :root[data-theme="dark"] .t-pri   { fill: #ffffff; }
+  :root[data-theme="dark"] .t-sec   { fill: #c3c2b7; }
+  :root[data-theme="dark"] .t-mut   { fill: #898781; }
+  :root[data-theme="dark"] .s1 { stroke: #3987e5; }  :root[data-theme="dark"] .f1 { fill: #3987e5; }
+  :root[data-theme="dark"] .s2 { stroke: #d95926; }  :root[data-theme="dark"] .f2 { fill: #d95926; }
+  :root[data-theme="dark"] .s3 { stroke: #199e70; }  :root[data-theme="dark"] .f3 { fill: #199e70; }
+  :root[data-theme="dark"] .s4 { stroke: #c98500; }  :root[data-theme="dark"] .f4 { fill: #c98500; }
+  :root[data-theme="dark"] .s5 { stroke: #d55181; }  :root[data-theme="dark"] .f5 { fill: #d55181; }
+  :root[data-theme="dark"] .s6 { stroke: #008300; }  :root[data-theme="dark"] .f6 { fill: #008300; }
+  :root[data-theme="light"] .surface { fill: #fcfcfb; }
+  :root[data-theme="light"] .grid    { stroke: #e1e0d9; stroke-width: 1; }
+  :root[data-theme="light"] .axis    { stroke: #c3c2b7; stroke-width: 1; }
+  :root[data-theme="light"] .t-pri   { fill: #0b0b0b; }
+  :root[data-theme="light"] .t-sec   { fill: #52514e; }
+  :root[data-theme="light"] .t-mut   { fill: #898781; }
+  :root[data-theme="light"] .s1 { stroke: #2a78d6; }  :root[data-theme="light"] .f1 { fill: #2a78d6; }
+  :root[data-theme="light"] .s2 { stroke: #eb6834; }  :root[data-theme="light"] .f2 { fill: #eb6834; }
+  :root[data-theme="light"] .s3 { stroke: #1baf7a; }  :root[data-theme="light"] .f3 { fill: #1baf7a; }
+  :root[data-theme="light"] .s4 { stroke: #eda100; }  :root[data-theme="light"] .f4 { fill: #eda100; }
+  :root[data-theme="light"] .s5 { stroke: #e87ba4; }  :root[data-theme="light"] .f5 { fill: #e87ba4; }
+  :root[data-theme="light"] .s6 { stroke: #008300; }  :root[data-theme="light"] .f6 { fill: #008300; }
+</style>
 <rect class="surface" width="760" height="330"/>
 <text class="t-pri" x="74" y="22" font-size="13" font-weight="600">M4 flash — text+data of the measured ELF</text>
 <line class="grid" x1="74" y1="286.0" x2="588" y2="286.0"/>
@@ -55,84 +78,84 @@
 <text class="t-mut tick" x="485.2" y="302" text-anchor="end" transform="rotate(-35 485.2 302)">31970f3</text>
 <text class="t-mut tick" x="543.9" y="302" text-anchor="end" transform="rotate(-35 543.9 302)">a9c8a4f</text>
 <text class="t-sec" x="16" y="162.0" text-anchor="middle" transform="rotate(-90 16 162.0)">KiB</text>
-<polyline class="s1 ln" points="103.4,84.9 118.1,78.7 132.7,78.3 147.4,78.3 162.1,78.3 176.8,77.4 191.5,77.4 206.2,77.0 220.9,76.4 235.5,76.4 250.2,74.2 279.6,74.2 294.3,73.2 323.7,73.2 338.3,72.2 353.0,72.2 367.7,72.2 382.4,72.2 397.1,72.2 426.5,72.2 441.1,72.2 455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.4" stroke-width="2"/>
-<circle class="s1" cx="103.4" cy="84.9" r="4" stroke="none"><title>vyr Exact @ e08aa63: 438 KiB</title></circle>
-<circle class="s1" cx="118.1" cy="78.7" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 451 KiB</title></circle>
-<circle class="s1" cx="132.7" cy="78.3" r="4" stroke="none"><title>vyr Exact @ cab0038: 452 KiB</title></circle>
-<circle class="s1" cx="147.4" cy="78.3" r="4" stroke="none"><title>vyr Exact @ 1306369: 452 KiB</title></circle>
-<circle class="s1" cx="162.1" cy="78.3" r="4" stroke="none"><title>vyr Exact @ e93fa79: 452 KiB</title></circle>
-<circle class="s1" cx="176.8" cy="77.4" r="4" stroke="none"><title>vyr Exact @ 39cb441: 454 KiB</title></circle>
-<circle class="s1" cx="191.5" cy="77.4" r="4" stroke="none"><title>vyr Exact @ d6fd574: 454 KiB</title></circle>
-<circle class="s1" cx="206.2" cy="77.0" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 455 KiB</title></circle>
-<circle class="s1" cx="220.9" cy="76.4" r="4" stroke="none"><title>vyr Exact @ 64ec376: 456 KiB</title></circle>
-<circle class="s1" cx="235.5" cy="76.4" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 456 KiB</title></circle>
-<circle class="s1" cx="250.2" cy="74.2" r="4" stroke="none"><title>vyr Exact @ dd84be1: 461 KiB</title></circle>
-<circle class="s1" cx="279.6" cy="74.2" r="4" stroke="none"><title>vyr Exact @ f2f0724: 461 KiB</title></circle>
-<circle class="s1" cx="294.3" cy="73.2" r="4" stroke="none"><title>vyr Exact @ a2f0340: 463 KiB</title></circle>
-<circle class="s1" cx="323.7" cy="73.2" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 463 KiB</title></circle>
-<circle class="s1" cx="338.3" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 465 KiB</title></circle>
-<circle class="s1" cx="353.0" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 465 KiB</title></circle>
-<circle class="s1" cx="367.7" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 2469624: 465 KiB</title></circle>
-<circle class="s1" cx="382.4" cy="72.2" r="4" stroke="none"><title>vyr Exact @ d52d23a: 465 KiB</title></circle>
-<circle class="s1" cx="397.1" cy="72.2" r="4" stroke="none"><title>vyr Exact @ b609831: 465 KiB</title></circle>
-<circle class="s1" cx="426.5" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 153ae63: 465 KiB</title></circle>
-<circle class="s1" cx="441.1" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 018b366: 465 KiB</title></circle>
-<circle class="s1" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Exact @ cb29f52: 468 KiB</title></circle>
-<circle class="s1" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 468 KiB</title></circle>
-<circle class="s1" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 31970f3: 468 KiB</title></circle>
-<circle class="s1" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Exact @ f0a101a: 469 KiB</title></circle>
-<circle class="s1" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 469 KiB</title></circle>
-<circle class="s1" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 4da4133: 469 KiB</title></circle>
-<circle class="s1" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 469 KiB</title></circle>
-<circle class="s1" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 469 KiB</title></circle>
-<circle class="s1" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Exact @ b93eec1: 469 KiB</title></circle>
-<circle class="s1" cx="588.0" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 5482dad: 469 KiB</title></circle>
-<rect class="s1" x="604" y="40" width="10" height="10" stroke="none"/>
+<polyline class="s1" points="103.4,84.9 118.1,78.7 132.7,78.3 147.4,78.3 162.1,78.3 176.8,77.4 191.5,77.4 206.2,77.0 220.9,76.4 235.5,76.4 250.2,74.2 279.6,74.2 294.3,73.2 323.7,73.2 338.3,72.2 353.0,72.2 367.7,72.2 382.4,72.2 397.1,72.2 426.5,72.2 441.1,72.2 455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.4" fill="none" stroke-width="2"/>
+<circle class="f1" cx="103.4" cy="84.9" r="4" stroke="none"><title>vyr Exact @ e08aa63: 438 KiB</title></circle>
+<circle class="f1" cx="118.1" cy="78.7" r="4" stroke="none"><title>vyr Exact @ 5da42a2: 451 KiB</title></circle>
+<circle class="f1" cx="132.7" cy="78.3" r="4" stroke="none"><title>vyr Exact @ cab0038: 452 KiB</title></circle>
+<circle class="f1" cx="147.4" cy="78.3" r="4" stroke="none"><title>vyr Exact @ 1306369: 452 KiB</title></circle>
+<circle class="f1" cx="162.1" cy="78.3" r="4" stroke="none"><title>vyr Exact @ e93fa79: 452 KiB</title></circle>
+<circle class="f1" cx="176.8" cy="77.4" r="4" stroke="none"><title>vyr Exact @ 39cb441: 454 KiB</title></circle>
+<circle class="f1" cx="191.5" cy="77.4" r="4" stroke="none"><title>vyr Exact @ d6fd574: 454 KiB</title></circle>
+<circle class="f1" cx="206.2" cy="77.0" r="4" stroke="none"><title>vyr Exact @ 4e06c48: 455 KiB</title></circle>
+<circle class="f1" cx="220.9" cy="76.4" r="4" stroke="none"><title>vyr Exact @ 64ec376: 456 KiB</title></circle>
+<circle class="f1" cx="235.5" cy="76.4" r="4" stroke="none"><title>vyr Exact @ faaf4e6: 456 KiB</title></circle>
+<circle class="f1" cx="250.2" cy="74.2" r="4" stroke="none"><title>vyr Exact @ dd84be1: 461 KiB</title></circle>
+<circle class="f1" cx="279.6" cy="74.2" r="4" stroke="none"><title>vyr Exact @ f2f0724: 461 KiB</title></circle>
+<circle class="f1" cx="294.3" cy="73.2" r="4" stroke="none"><title>vyr Exact @ a2f0340: 463 KiB</title></circle>
+<circle class="f1" cx="323.7" cy="73.2" r="4" stroke="none"><title>vyr Exact @ 8da26b3: 463 KiB</title></circle>
+<circle class="f1" cx="338.3" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 7ce2eb9: 465 KiB</title></circle>
+<circle class="f1" cx="353.0" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 5e42dac: 465 KiB</title></circle>
+<circle class="f1" cx="367.7" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 2469624: 465 KiB</title></circle>
+<circle class="f1" cx="382.4" cy="72.2" r="4" stroke="none"><title>vyr Exact @ d52d23a: 465 KiB</title></circle>
+<circle class="f1" cx="397.1" cy="72.2" r="4" stroke="none"><title>vyr Exact @ b609831: 465 KiB</title></circle>
+<circle class="f1" cx="426.5" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 153ae63: 465 KiB</title></circle>
+<circle class="f1" cx="441.1" cy="72.2" r="4" stroke="none"><title>vyr Exact @ 018b366: 465 KiB</title></circle>
+<circle class="f1" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Exact @ cb29f52: 468 KiB</title></circle>
+<circle class="f1" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Exact @ d4b7c66: 468 KiB</title></circle>
+<circle class="f1" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Exact @ 31970f3: 468 KiB</title></circle>
+<circle class="f1" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Exact @ f0a101a: 469 KiB</title></circle>
+<circle class="f1" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Exact @ d0d8a0f: 469 KiB</title></circle>
+<circle class="f1" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 4da4133: 469 KiB</title></circle>
+<circle class="f1" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Exact @ a9c8a4f: 469 KiB</title></circle>
+<circle class="f1" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 07d38cc: 469 KiB</title></circle>
+<circle class="f1" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Exact @ b93eec1: 469 KiB</title></circle>
+<circle class="f1" cx="588.0" cy="70.4" r="4" stroke="none"><title>vyr Exact @ 5482dad: 469 KiB</title></circle>
+<rect class="f1" x="604" y="40" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="49">vyr Exact</text>
-<polyline class="s2 ln" points="455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.3" stroke-width="2"/>
-<circle class="s2" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Fast @ cb29f52: 468 KiB</title></circle>
-<circle class="s2" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 468 KiB</title></circle>
-<circle class="s2" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Fast @ 31970f3: 468 KiB</title></circle>
-<circle class="s2" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Fast @ f0a101a: 469 KiB</title></circle>
-<circle class="s2" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 469 KiB</title></circle>
-<circle class="s2" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Fast @ 4da4133: 469 KiB</title></circle>
-<circle class="s2" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 469 KiB</title></circle>
-<circle class="s2" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 469 KiB</title></circle>
-<circle class="s2" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Fast @ b93eec1: 469 KiB</title></circle>
-<circle class="s2" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Fast @ 5482dad: 469 KiB</title></circle>
-<rect class="s2" x="604" y="57" width="10" height="10" stroke="none"/>
+<polyline class="s2" points="455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.3" fill="none" stroke-width="2"/>
+<circle class="f2" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Fast @ cb29f52: 468 KiB</title></circle>
+<circle class="f2" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Fast @ d4b7c66: 468 KiB</title></circle>
+<circle class="f2" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Fast @ 31970f3: 468 KiB</title></circle>
+<circle class="f2" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Fast @ f0a101a: 469 KiB</title></circle>
+<circle class="f2" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Fast @ d0d8a0f: 469 KiB</title></circle>
+<circle class="f2" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Fast @ 4da4133: 469 KiB</title></circle>
+<circle class="f2" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Fast @ a9c8a4f: 469 KiB</title></circle>
+<circle class="f2" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Fast @ 07d38cc: 469 KiB</title></circle>
+<circle class="f2" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Fast @ b93eec1: 469 KiB</title></circle>
+<circle class="f2" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Fast @ 5482dad: 469 KiB</title></circle>
+<rect class="f2" x="604" y="57" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="66">vyr Fast</text>
-<polyline class="s3 ln" points="118.1,78.7 132.7,78.3 147.4,78.3 162.1,78.3 176.8,77.4 191.5,77.4 206.2,77.0 220.9,76.4 235.5,76.4 250.2,74.2 279.6,74.2 294.3,73.2 323.7,73.2 338.3,72.2 353.0,72.2 367.7,72.2 382.4,72.2 397.1,72.2 426.5,72.2 441.1,72.2 455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.3" stroke-width="2"/>
-<circle class="s3" cx="118.1" cy="78.7" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 451 KiB</title></circle>
-<circle class="s3" cx="132.7" cy="78.3" r="4" stroke="none"><title>vyr Draft @ cab0038: 452 KiB</title></circle>
-<circle class="s3" cx="147.4" cy="78.3" r="4" stroke="none"><title>vyr Draft @ 1306369: 452 KiB</title></circle>
-<circle class="s3" cx="162.1" cy="78.3" r="4" stroke="none"><title>vyr Draft @ e93fa79: 452 KiB</title></circle>
-<circle class="s3" cx="176.8" cy="77.4" r="4" stroke="none"><title>vyr Draft @ 39cb441: 454 KiB</title></circle>
-<circle class="s3" cx="191.5" cy="77.4" r="4" stroke="none"><title>vyr Draft @ d6fd574: 454 KiB</title></circle>
-<circle class="s3" cx="206.2" cy="77.0" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 455 KiB</title></circle>
-<circle class="s3" cx="220.9" cy="76.4" r="4" stroke="none"><title>vyr Draft @ 64ec376: 456 KiB</title></circle>
-<circle class="s3" cx="235.5" cy="76.4" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 456 KiB</title></circle>
-<circle class="s3" cx="250.2" cy="74.2" r="4" stroke="none"><title>vyr Draft @ dd84be1: 461 KiB</title></circle>
-<circle class="s3" cx="279.6" cy="74.2" r="4" stroke="none"><title>vyr Draft @ f2f0724: 461 KiB</title></circle>
-<circle class="s3" cx="294.3" cy="73.2" r="4" stroke="none"><title>vyr Draft @ a2f0340: 463 KiB</title></circle>
-<circle class="s3" cx="323.7" cy="73.2" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 463 KiB</title></circle>
-<circle class="s3" cx="338.3" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 465 KiB</title></circle>
-<circle class="s3" cx="353.0" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 465 KiB</title></circle>
-<circle class="s3" cx="367.7" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 2469624: 465 KiB</title></circle>
-<circle class="s3" cx="382.4" cy="72.2" r="4" stroke="none"><title>vyr Draft @ d52d23a: 465 KiB</title></circle>
-<circle class="s3" cx="397.1" cy="72.2" r="4" stroke="none"><title>vyr Draft @ b609831: 465 KiB</title></circle>
-<circle class="s3" cx="426.5" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 153ae63: 465 KiB</title></circle>
-<circle class="s3" cx="441.1" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 018b366: 465 KiB</title></circle>
-<circle class="s3" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Draft @ cb29f52: 468 KiB</title></circle>
-<circle class="s3" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 468 KiB</title></circle>
-<circle class="s3" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Draft @ 31970f3: 468 KiB</title></circle>
-<circle class="s3" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Draft @ f0a101a: 469 KiB</title></circle>
-<circle class="s3" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 469 KiB</title></circle>
-<circle class="s3" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 4da4133: 469 KiB</title></circle>
-<circle class="s3" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 469 KiB</title></circle>
-<circle class="s3" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 469 KiB</title></circle>
-<circle class="s3" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ b93eec1: 469 KiB</title></circle>
-<circle class="s3" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Draft @ 5482dad: 469 KiB</title></circle>
-<rect class="s3" x="604" y="74" width="10" height="10" stroke="none"/>
+<polyline class="s3" points="118.1,78.7 132.7,78.3 147.4,78.3 162.1,78.3 176.8,77.4 191.5,77.4 206.2,77.0 220.9,76.4 235.5,76.4 250.2,74.2 279.6,74.2 294.3,73.2 323.7,73.2 338.3,72.2 353.0,72.2 367.7,72.2 382.4,72.2 397.1,72.2 426.5,72.2 441.1,72.2 455.8,71.2 470.5,71.2 485.2,71.2 499.9,70.4 514.6,70.4 529.3,70.4 543.9,70.4 558.6,70.4 573.3,70.4 588.0,70.3" fill="none" stroke-width="2"/>
+<circle class="f3" cx="118.1" cy="78.7" r="4" stroke="none"><title>vyr Draft @ 5da42a2: 451 KiB</title></circle>
+<circle class="f3" cx="132.7" cy="78.3" r="4" stroke="none"><title>vyr Draft @ cab0038: 452 KiB</title></circle>
+<circle class="f3" cx="147.4" cy="78.3" r="4" stroke="none"><title>vyr Draft @ 1306369: 452 KiB</title></circle>
+<circle class="f3" cx="162.1" cy="78.3" r="4" stroke="none"><title>vyr Draft @ e93fa79: 452 KiB</title></circle>
+<circle class="f3" cx="176.8" cy="77.4" r="4" stroke="none"><title>vyr Draft @ 39cb441: 454 KiB</title></circle>
+<circle class="f3" cx="191.5" cy="77.4" r="4" stroke="none"><title>vyr Draft @ d6fd574: 454 KiB</title></circle>
+<circle class="f3" cx="206.2" cy="77.0" r="4" stroke="none"><title>vyr Draft @ 4e06c48: 455 KiB</title></circle>
+<circle class="f3" cx="220.9" cy="76.4" r="4" stroke="none"><title>vyr Draft @ 64ec376: 456 KiB</title></circle>
+<circle class="f3" cx="235.5" cy="76.4" r="4" stroke="none"><title>vyr Draft @ faaf4e6: 456 KiB</title></circle>
+<circle class="f3" cx="250.2" cy="74.2" r="4" stroke="none"><title>vyr Draft @ dd84be1: 461 KiB</title></circle>
+<circle class="f3" cx="279.6" cy="74.2" r="4" stroke="none"><title>vyr Draft @ f2f0724: 461 KiB</title></circle>
+<circle class="f3" cx="294.3" cy="73.2" r="4" stroke="none"><title>vyr Draft @ a2f0340: 463 KiB</title></circle>
+<circle class="f3" cx="323.7" cy="73.2" r="4" stroke="none"><title>vyr Draft @ 8da26b3: 463 KiB</title></circle>
+<circle class="f3" cx="338.3" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 7ce2eb9: 465 KiB</title></circle>
+<circle class="f3" cx="353.0" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 5e42dac: 465 KiB</title></circle>
+<circle class="f3" cx="367.7" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 2469624: 465 KiB</title></circle>
+<circle class="f3" cx="382.4" cy="72.2" r="4" stroke="none"><title>vyr Draft @ d52d23a: 465 KiB</title></circle>
+<circle class="f3" cx="397.1" cy="72.2" r="4" stroke="none"><title>vyr Draft @ b609831: 465 KiB</title></circle>
+<circle class="f3" cx="426.5" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 153ae63: 465 KiB</title></circle>
+<circle class="f3" cx="441.1" cy="72.2" r="4" stroke="none"><title>vyr Draft @ 018b366: 465 KiB</title></circle>
+<circle class="f3" cx="455.8" cy="71.2" r="4" stroke="none"><title>vyr Draft @ cb29f52: 468 KiB</title></circle>
+<circle class="f3" cx="470.5" cy="71.2" r="4" stroke="none"><title>vyr Draft @ d4b7c66: 468 KiB</title></circle>
+<circle class="f3" cx="485.2" cy="71.2" r="4" stroke="none"><title>vyr Draft @ 31970f3: 468 KiB</title></circle>
+<circle class="f3" cx="499.9" cy="70.4" r="4" stroke="none"><title>vyr Draft @ f0a101a: 469 KiB</title></circle>
+<circle class="f3" cx="514.6" cy="70.4" r="4" stroke="none"><title>vyr Draft @ d0d8a0f: 469 KiB</title></circle>
+<circle class="f3" cx="529.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 4da4133: 469 KiB</title></circle>
+<circle class="f3" cx="543.9" cy="70.4" r="4" stroke="none"><title>vyr Draft @ a9c8a4f: 469 KiB</title></circle>
+<circle class="f3" cx="558.6" cy="70.4" r="4" stroke="none"><title>vyr Draft @ 07d38cc: 469 KiB</title></circle>
+<circle class="f3" cx="573.3" cy="70.4" r="4" stroke="none"><title>vyr Draft @ b93eec1: 469 KiB</title></circle>
+<circle class="f3" cx="588.0" cy="70.3" r="4" stroke="none"><title>vyr Draft @ 5482dad: 469 KiB</title></circle>
+<rect class="f3" x="604" y="74" width="10" height="10" stroke="none"/>
 <text class="t-sec" x="620" y="83">vyr Draft</text>
 </svg>
