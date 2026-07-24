@@ -137,6 +137,7 @@ fn render_frame_banded(
     band_buf: &mut [u8],
     quality: Quality,
     report: Option<(&mut dyn FnMut(&str), &dyn Fn() -> (usize, usize))>,
+    fold: bool,
 ) -> Result<(u64, u64, RenderStats), RenderError> {
     let stride = (FIXTURE_W * 3) as usize;
     let mut report = report;
@@ -170,8 +171,13 @@ fn render_frame_banded(
         )?;
         pixels += stats.pixels_written;
         fastpath += stats.fastpath_pixels;
-        // black_box: the band bytes must be materialized before hashing.
-        hash = fnv1a_fold(hash, core::hint::black_box(&band_buf[..len]));
+        // black_box is UNCONDITIONAL and load-bearing: it forces the band
+        // bytes to be materialized, so the renderer cannot be optimized away
+        // when `fold` is false. Only the FNV fold itself is skipped — see #44.
+        let band = core::hint::black_box(&band_buf[..len]);
+        if fold {
+            hash = fnv1a_fold(hash, band);
+        }
         if y == 0
             && let Some((emit, heap)) = report.take()
         {
@@ -248,6 +254,7 @@ pub fn run(
         band_buf,
         quality,
         Some((&mut *emit, heap)),
+        true,
     )?;
     phase(emit, heap, "frame");
     let bands = FIXTURE_H.div_ceil(BAND_H);
@@ -290,9 +297,39 @@ pub fn run(
         // fine enough to resolve Draft's ~12 M/frame against the LVGL 10 M
         // anchor (4 frames quantized to ±2.5 M/frame — too coarse near LVGL).
         const TIMED_FRAMES: u32 = 20;
+
+        // #44: the hash fold is NOT inside the timed window. It was 36.2% of
+        // Draft's frame and 54.7% of LVGL's, so leaving it in meant every
+        // published per-frame figure was part renderer, part benchmark — and
+        // because it is a roughly fixed cost it flattered the SMALLER frame,
+        // which is exactly the comparison that matters. Subtracting it
+        // afterwards proved unreliable: the fold's own cost varies with tier,
+        // opt-level and compiler, and a stale fold figure once inverted the
+        // sign of a published result.
+        //
+        // Determinism is still proven, just not on the stopwatch: this
+        // verification pass renders and folds OUTSIDE the window and must
+        // reproduce the reference hash before the timed pass runs.
+        let (h_verify, _, _) = render_frame_banded(
+            &req,
+            &mut fonts,
+            &assets,
+            &mut shapes,
+            band_buf,
+            quality,
+            None,
+            true,
+        )?;
+        if h_verify != hash {
+            emit(&format!(
+                "ERROR [vyr-size] warmed frame hash {h_verify:#018x} != first {hash:#018x}"
+            ));
+            return Err(RenderError::Unimplemented("non-deterministic re-render"));
+        }
+
         let t0 = clock();
         for _ in 0..TIMED_FRAMES {
-            let (h2, _, _) = render_frame_banded(
+            render_frame_banded(
                 &req,
                 &mut fonts,
                 &assets,
@@ -300,13 +337,8 @@ pub fn run(
                 band_buf,
                 quality,
                 None,
+                false,
             )?;
-            if h2 != hash {
-                emit(&format!(
-                    "ERROR [vyr-size] warmed frame hash {h2:#018x} != first {hash:#018x}"
-                ));
-                return Err(RenderError::Unimplemented("non-deterministic re-render"));
-            }
         }
         let t1 = clock();
         // Wrapping u32: on the board leg the clock is DWT_CYCCNT, a
