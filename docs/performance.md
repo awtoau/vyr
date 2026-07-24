@@ -6,6 +6,11 @@ them. Treat the *model* as durable and the *figures* as expiring — §6 gives t
 exact command to regenerate each one. A number quoted from this file without
 re-running its command is a claim about the past.
 
+**Chronology:** [`measurements/perf-history.md`](measurements/perf-history.md) records how
+every number here was arrived at — including the **four measurement errors**
+found so far, each of which flattered vyr. Read it before trusting any figure
+in this file.
+
 This document exists because the project spent a long time quoting a
 performance figure that was not measuring what it claimed (§5). The
 countermeasure is not better numbers, it is written-down provenance.
