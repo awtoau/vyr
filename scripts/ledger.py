@@ -78,19 +78,25 @@ command MEASURES NOTHING itself, so it never double-runs a build or the board):
 
 THE PAGE IS THE DATA (2026-07-24)
 
-    ``docs/perf/index.html`` is three flat, sortable tables and nothing else:
+    ``docs/perf/index.html`` is ONE chart and three flat, sortable tables:
     every measurement cell one row per cell, every other recorded value one row
     per value, and one row per line of the file. The KPI tiles, the computed
     callouts, the platform/tier narrative bands, the status-coloured chips, the
-    per-tile opt-level bars and the SVG trend charts are GONE — they were the
-    page interpreting its own data, and interpretation belongs in an issue or a
-    commit message. Numbers are stored as numbers and formatted on display, so
-    they sort numerically; a ``null`` renders as an em dash carrying the written
-    reason the harness recorded for it.
+    per-tile opt-level bars and the 13 hand-rolled SVG trend charts are GONE —
+    they were the page interpreting its own data, and interpretation belongs in
+    an issue or a commit message. Numbers are stored as numbers and formatted on
+    display, so they sort numerically; a ``null`` renders as an em dash carrying
+    the written reason the harness recorded for it.
 
-    Sorting comes from Tabulator, vendored (MIT) under ``docs/perf/vendor/``
-    because the page is served from GitHub Pages AND opened as a local file and
-    must fetch nothing at render time. Never a CDN.
+    The chart plots recorded values, it does not compute verdicts. Tables carry
+    LEVELS and cannot show CHANGE, so one line chart puts every numeric series
+    the ledger holds on a single axis — which is only possible because each
+    series is divided by ITS OWN first observation (see ``chart_data``). Two
+    y-axes would be the alternative and two y-axes are never acceptable.
+
+    Sorting comes from Tabulator and the chart from uPlot, both vendored (MIT)
+    under ``docs/perf/vendor/`` because the page is served from GitHub Pages AND
+    opened as a local file and must fetch nothing at render time. Never a CDN.
 
     After changing anything about the page, run ``scripts/ledger-verify.py``:
     it re-checks that no measured value moved, that every value and every
@@ -628,11 +634,12 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
 
 # --- the page: the data, flat and sortable ------------------------------------
 #
-# The page is THREE flat tables and nothing else. No KPI tiles, no computed
-# callouts, no narrative bands, no status colour, no charts: those interpreted
-# the data, and interpretation belongs in a commit message or an issue, not in
-# the ledger's own view of itself. What is here is every field of every row of
-# history.jsonl, sortable by any column.
+# The page is ONE chart and THREE flat tables. No KPI tiles, no computed
+# callouts, no narrative bands, no status colour, no wall of charts: those
+# interpreted the data, and interpretation belongs in a commit message or an
+# issue, not in the ledger's own view of itself. What is here is every field of
+# every row of history.jsonl, sortable by any column — plus one plot of how the
+# numeric ones moved, which reports shape and computes no verdict.
 #
 # Sorting is Tabulator's (vendored, MIT — see docs/perf/vendor/README.md).
 # Numbers are stored as numbers and formatted on display, so `9,220,422` sorts
@@ -643,6 +650,9 @@ VENDOR_DIR = LEDGER_DIR / "vendor"
 TAB_VERSION = "6.5.2"
 TAB_JS = "tabulator.min.js"
 TAB_CSS = "tabulator.min.css"
+UPLOT_VERSION = "1.6.32"
+UPLOT_JS = "uplot.min.js"
+UPLOT_CSS = "uplot.min.css"
 
 SECTIONS = ["matrix", "ladder", "anim", "arm", "bench", "size", "m4_qemu",
             "silicon", "board_anim", "derived"]
@@ -974,6 +984,154 @@ RUN_COLS = [
 ]
 
 
+# --- the chart: every numeric series, indexed to its own first observation ----
+#
+# The three tables above carry LEVELS. Nothing in 200 rows of levels shows
+# CHANGE, and change over time is the one question the ledger exists to answer.
+# So there is exactly one chart, and it can only be one chart because the series
+# share no unit: insns/frame is tens of millions, heap is hundreds of thousands
+# of bytes, ns/frame is hundreds, flash is hundreds of thousands, fold share is a
+# fraction. Raw values on one linear axis would be meaningless — and TWO Y-AXES
+# ARE NEVER ACCEPTABLE, because the alignment between them is arbitrary and
+# invents a correlation that is not in the data.
+#
+# The only honest way to put them on one axis is to divide every series by ITS
+# OWN first observation and multiply by 100. The axis is then dimensionless
+# ("100 = that series' own first recorded value") and the SHAPES are directly
+# comparable, which is exactly the question "what changed, numerically?". This is
+# the same technique the earlier merged-ledger chart used.
+#
+# Deliberately NOT here: verdicts. The chart plots recorded values. It does not
+# decide whether a rise is bad.
+
+CHART_METRICS = tuple(k for k in METRIC_FIELDS if k != "frame_hash")
+CHART_PROV = ("fold_share_of_total", "fastpath_coverage_pct")
+
+# The figures this project is actually steered by, at the shipped opt-level.
+# These three get the first three categorical slots of the palette; EVERY OTHER
+# series is neutral. Hues are never cycled past the palette, and there is no
+# such thing as a 129-entry legend — identity comes from hover/focus instead.
+# Slots 1-3 are the three that clear the all-pairs CVD and normal-vision floors
+# in both light and dark, which is why the emphasis set is three and not four.
+CHART_EMPHASIS = [
+    ("qemu-m4 · exact · z · insns_per_frame_render_only", "Exact"),
+    ("qemu-m4 · fast · z · insns_per_frame_render_only", "Fast"),
+    ("qemu-m4 · draft · z · insns_per_frame_render_only", "Draft"),
+]
+
+
+def _numeric(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def chart_data(allrows: list[dict]) -> dict:
+    """Every numeric quantity in the ledger, as (series key -> run -> value).
+
+    THE SERIES KEY is deliberately the key the tables already use, so any line
+    can be looked up in them: a matrix cell is
+    ``platform · tier · opt-level · metric`` and everything else is the
+    ``section.dotted.path`` of the long-form table. One key is therefore one
+    single comparable quantity, measured the same way at every run.
+    """
+    obs: dict[str, dict[int, float]] = {}
+
+    def put(key: str, run: int, value: float) -> None:
+        obs.setdefault(key, {})[run] = value
+
+    for i, r in enumerate(allrows):
+        # The x axis is RUNS. The schema note and the recorded skips are lines of
+        # the file, not measurements, and the counts inside the schema note are
+        # bookkeeping about the rebuild rather than anything vyr does.
+        if r.get("kind", "measurement") != "measurement":
+            continue
+        for c in (r.get("matrix") or {}).get("cells", []):
+            # A cell that was not measured contributes no point — a hole in a
+            # line is the truth about it, and interpolating over one would be a
+            # value this ledger never recorded.
+            if c.get("status") != "measured":
+                continue
+            axes = f"{c.get('platform')} · {c.get('tier')} · {c.get('opt_level')}"
+            for k in CHART_METRICS:
+                v = (c.get("metrics") or {}).get(k)
+                if _numeric(v):
+                    put(f"{axes} · {k}", i, v)
+            for k in CHART_PROV:
+                v = (c.get("provenance") or {}).get(k)
+                if _numeric(v):
+                    put(f"{axes} · {k}", i, v)
+        for key, val in r.items():
+            if key in IDENT_KEYS or key == "matrix":
+                continue
+            for path, v in _flatten(val, key):
+                if _numeric(v):
+                    put(path, i, v)
+
+    keep, single, zero_first = [], [], []
+    for key in sorted(obs):
+        v = obs[key]
+        if len(v) < 2:
+            # One point is not a trend. The tables already carry it.
+            single.append(key)
+            continue
+        if v[min(v)] == 0:
+            # A ratio to zero has no value. Recording the series as unplottable
+            # is honest; drawing it against an invented base would not be.
+            zero_first.append(key)
+            continue
+        keep.append(key)
+
+    # The x domain is the runs that a PLOTTED series actually observed, so the
+    # axis never opens with a column nothing was measured in.
+    runs = sorted({i for k in keep for i in obs[k]})
+    pos = {run: n for n, run in enumerate(runs)}
+    emph = {k: n + 1 for n, (k, _) in enumerate(CHART_EMPHASIS)}
+    short = dict(CHART_EMPHASIS)
+
+    series = []
+    for key in keep:
+        v = obs[key]
+        first = v[min(v)]
+        vals: list[float | None] = [None] * len(runs)
+        for run, x in v.items():
+            vals[pos[run]] = x
+        # An observation with no neighbour would be an invisible zero-length
+        # line, so it is drawn as a point instead. Several tiers simply did not
+        # exist at the early commits, which is why this case is common.
+        isolated = [n for n, x in enumerate(vals)
+                    if x is not None
+                    and (n == 0 or vals[n - 1] is None)
+                    and (n == len(vals) - 1 or vals[n + 1] is None)]
+        series.append({
+            "k": key,
+            "v": vals,
+            "e": emph.get(key, 0),
+            "s": short.get(key),
+            # A series that never moved is still evidence — it is what stability
+            # looks like — so it stays on the chart, drawn faintly so that it
+            # does not drown the ones that did move.
+            "f": len(set(v.values())) == 1,
+            "p": isolated or None,
+        })
+
+    # Draw order is depth order: flat underneath, then the neutral movers, then
+    # the emphasised three on top. Within a band, by key, so the page is
+    # byte-identical from the same input.
+    series.sort(key=lambda s: (2 if s["e"] else (0 if s["f"] else 1), s["e"], s["k"]))
+
+    return {
+        "runs": [{
+            "r": i,
+            "c": allrows[i].get("commit") or "?",
+            "d": (allrows[i].get("commit_date") or "")[:10],
+            "s": allrows[i].get("subject") or "",
+        } for i in runs],
+        "series": series,
+        "emph": [k for k, _ in CHART_EMPHASIS],
+        "single": len(single),
+        "zero_first": zero_first,
+    }
+
+
 # --- page ---------------------------------------------------------------------
 
 PAGE_CSS_VARS_LIGHT = """
@@ -983,6 +1141,11 @@ PAGE_CSS_VARS_LIGHT = """
   --line:#e1e0d9; --line-strong:#c3c2b7;
   --accent:#2a78d6;
   --shadow:0 1px 2px rgba(11,11,11,.05),0 8px 24px rgba(11,11,11,.045);
+  /* chart: categorical slots 1-3 for the emphasised series, neutral for the
+     rest. The canvas cannot read a CSS variable, so the chart script resolves
+     these on the chart element at draw time and repaints on a theme change. */
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a;
+  --s-other:rgba(119,117,111,.60); --s-flat:rgba(119,117,111,.22);
 """
 
 PAGE_CSS_VARS_DARK = """
@@ -992,6 +1155,9 @@ PAGE_CSS_VARS_DARK = """
   --line:#2c2c2a; --line-strong:#383835;
   --accent:#3987e5;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+  /* the same three hues, re-stepped for the dark surface — not an auto-flip */
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --s-other:rgba(160,158,150,.60); --s-flat:rgba(160,158,150,.26);
 """
 
 PAGE_CSS_BODY = """
@@ -1034,6 +1200,44 @@ PAGE_CSS_BODY = """
   .tbar .count{font-size:12.5px;color:var(--ink-mut);font-variant-numeric:tabular-nums}
   .tablecard{overflow-x:auto;max-width:100%}
   .hint{font-size:12.5px;color:var(--ink-mut);margin:8px 0 0}
+
+  /* chart (uPlot, vendored, unmodified — see docs/perf/vendor/README.md) */
+  .chartcard{position:relative;background:var(--surface);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px 6px;max-width:100%;overflow-x:auto}
+  .chartcard .uplot{width:100%}
+  .chartcard .u-wrap{margin:0 auto}
+  .chartcard .u-title,.chartcard .u-legend{display:none}
+  /* solid hairline crosshair in this page's own tokens: the vendored default is
+     a dashed #607D8B that reads as a threshold and ignores the theme. */
+  .chartcard .u-cursor-x{border-right:1px solid var(--line-strong)}
+  .chartcard .u-cursor-y{border-bottom:none}
+  .chartcard .u-select{background:color-mix(in srgb,var(--ink) 8%,transparent)}
+  /* the series key: a short STROKE, because the marks it stands for are lines.
+     Defined once, unscoped, so the legend and the hover readout cannot drift
+     apart — and so it cannot silently paint nothing in one of the two. */
+  .lk{display:inline-block;width:18px;height:2px;flex:none;border-radius:2px;
+    background:var(--k,var(--ink-mut))}
+  .legendrow{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin:10px 0 6px;
+    font-size:12.5px;color:var(--ink-soft)}
+  .legendrow .li{display:inline-flex;gap:7px;align-items:center}
+  .legendrow .li-flat .lk{height:1px}
+  .charttip{position:absolute;pointer-events:none;z-index:5;max-width:min(360px,72vw);
+    background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);
+    border-radius:8px;box-shadow:var(--shadow);padding:7px 10px;font-size:12.5px;
+    line-height:1.45;opacity:0;transition:opacity .08s linear}
+  .charttip[data-on="1"]{opacity:1}
+  .charttip .tv{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;
+    letter-spacing:-.01em}
+  .charttip .tk{display:flex;gap:7px;align-items:flex-start;color:var(--ink-soft);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11.5px;
+    word-break:break-word;margin-top:3px}
+  .charttip .tk .lk{margin-top:7px}
+  .charttip .tm{color:var(--ink-mut);font-size:11.5px;margin-top:3px;
+    font-variant-numeric:tabular-nums}
+  .chartdot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;top:0;left:0;
+    border-radius:50%;pointer-events:none;background:var(--ink-mut);
+    box-shadow:0 0 0 2px var(--surface);opacity:0;will-change:transform}
+  .chartdot[data-on="1"]{opacity:1}
   .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
   .nul{color:var(--ink-mut)}
   .why{border-bottom:1px dotted var(--line-strong);cursor:help}
@@ -1255,6 +1459,300 @@ TABLE_JS = r"""
 """
 
 
+CHART_JS = r"""
+(function(){
+  var host = document.getElementById('t-chart');
+  if (!host) { return; }
+  var D = JSON.parse(document.getElementById('ledger-data').textContent);
+  var C = D.chart;
+  /* honest failure: an empty box is a bug, so say what is missing rather than
+     render nothing. scripts/ledger-verify.py asserts the chart really drew. */
+  function dead(msg){ host.textContent = msg; host.setAttribute('data-dead', '1'); }
+  if (!C || !C.series.length || C.runs.length < 2) {
+    dead('No series has two observations yet, so there is no change to plot. '
+       + 'Every recorded value is in the tables below.');
+    return;
+  }
+  if (typeof uPlot === 'undefined') {
+    dead('vendor/uplot.min.js did not load, so the chart was not drawn. Every '
+       + 'value it plots is in the tables below and in docs/perf/history.jsonl.');
+    return;
+  }
+
+  var RUNS = C.runs, N = RUNS.length;
+
+  /* The canvas cannot read a CSS variable, so the page's tokens are resolved off
+     the chart element and re-resolved whenever the theme changes. */
+  var TOKENS = ['--s1', '--s2', '--s3', '--s-other', '--s-flat', '--line',
+                '--line-strong', '--ink', '--ink-soft', '--ink-mut', '--surface'];
+  var PAL = {};
+  function readPalette(){
+    var cs = getComputedStyle(host);
+    TOKENS.forEach(function(n){ PAL[n] = cs.getPropertyValue(n).trim(); });
+  }
+  readPalette();
+  var SLOT = ['--s-other', '--s1', '--s2', '--s3'];
+
+  /* THE INDEX. Every series is divided by its OWN first observation and
+     multiplied by 100, so series whose units and magnitudes have nothing in
+     common share one dimensionless axis. A null stays null: a hole in a series
+     is drawn as a hole, never interpolated across. */
+  var META = [null], xs = [], data = [xs];
+  for (var i = 0; i < N; i++) { xs.push(i); }
+  C.series.forEach(function(s){
+    var first = null, firstAt = -1;
+    for (var j = 0; j < N; j++) {
+      if (s.v[j] !== null && s.v[j] !== undefined) { first = s.v[j]; firstAt = j; break; }
+    }
+    data.push(s.v.map(function(x){
+      return (x === null || x === undefined) ? null : 100 * x / first;
+    }));
+    META.push({key: s.k, raw: s.v, first: first, firstAt: firstAt,
+               flat: !!s.f, slot: s.e || 0, short: s.s || null});
+  });
+
+  function colorOf(si){
+    var m = META[si];
+    return PAL[m.slot ? SLOT[m.slot] : (m.flat ? '--s-flat' : '--s-other')];
+  }
+  function num(v, d){
+    return v.toLocaleString('en-AU', {maximumFractionDigits: d === undefined ? 4 : d});
+  }
+  function font(px){
+    return px + 'px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  }
+  function axisColor(){ return PAL['--ink-mut']; }
+  function gridColor(){ return PAL['--line']; }
+
+  /* --- the readouts: one hovered line, named ------------------------------ */
+  var tip = document.createElement('div');
+  tip.className = 'charttip';
+  var tipV = document.createElement('div'); tipV.className = 'tv';
+  var tipK = document.createElement('div'); tipK.className = 'tk';
+  var tipKey = document.createElement('span');
+  var tipKeyMark = document.createElement('span'); tipKeyMark.className = 'lk';
+  tipK.appendChild(tipKeyMark); tipK.appendChild(tipKey);
+  var tipM = document.createElement('div'); tipM.className = 'tm';
+  tip.appendChild(tipV); tip.appendChild(tipK); tip.appendChild(tipM);
+  var dot = document.createElement('div');
+  dot.className = 'chartdot';
+
+  var focused = null;
+
+  function hideTip(){
+    tip.setAttribute('data-on', '0');
+    dot.setAttribute('data-on', '0');
+  }
+
+  function showTip(u){
+    var si = focused, idx = u.cursor.idx;
+    if (si == null || si < 1 || idx == null) { hideTip(); return; }
+    var m = META[si], raw = m.raw[idx], ix = u.data[si][idx];
+    if (raw === null || raw === undefined) { hideTip(); return; }
+    var run = RUNS[idx];
+    /* Series keys come out of the ledger, so they go in as text, never markup. */
+    tipV.textContent = num(raw);
+    tipKey.textContent = m.key;
+    /* in the readout the key must be legible, so a neutral series takes a solid
+       ink stroke here rather than the deliberately-recessive one it draws with */
+    tipKeyMark.style.setProperty('--k', m.slot ? colorOf(si) : PAL['--ink-mut']);
+    tipM.textContent = 'index ' + num(ix, 1) + '  ·  first ' + num(m.first)
+      + ' at ' + RUNS[m.firstAt].c + '  ·  run ' + run.r + '  ' + run.c
+      + (run.d ? '  ' + run.d : '');
+    tip.setAttribute('data-on', '1');
+
+    var x = u.valToPos(idx, 'x'), y = u.valToPos(ix, 'y');
+    dot.style.background = colorOf(si);
+    dot.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+    dot.setAttribute('data-on', '1');
+
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var lft = x + 16, top = y - h - 14;
+    if (lft + w > u.bbox.width / uPlot.pxRatio) { lft = x - w - 16; }
+    if (lft < 0) { lft = 0; }
+    if (top < 0) { top = y + 18; }
+    tip.style.transform = 'translate(' + lft + 'px,' + top + 'px)';
+  }
+
+  /* --- custom canvas layers ----------------------------------------------- */
+  function pr(){ return uPlot.pxRatio; }
+
+  /* The 100 line is the whole point of the axis, so it is a rule of its own
+     under the data rather than one gridline among many. */
+  function rule100(u){
+    if (!u.bbox || u.scales.y.min == null) { return; }
+    var ctx = u.ctx, y = Math.round(u.valToPos(100, 'y', true)) + 0.5;
+    ctx.save();
+    /* uPlot leaves textAlign/baseline wherever the last axis draw put them, and
+       drawClear runs before the axes — so state is set, never assumed. */
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.strokeStyle = PAL['--ink-mut'];
+    ctx.lineWidth = Math.max(1, Math.round(pr()));
+    ctx.beginPath();
+    ctx.moveTo(u.bbox.left, y);
+    ctx.lineTo(u.bbox.left + u.bbox.width, y);
+    ctx.stroke();
+    ctx.fillStyle = PAL['--ink-mut'];
+    ctx.font = font(11 * pr());
+    ctx.fillText('100 = each series’ own first observation',
+                 u.bbox.left + 7 * pr(), y - 5 * pr());
+    ctx.restore();
+  }
+
+  /* Three direct labels, so the emphasised series are identified without the
+     legend and without hovering — the colours alone never have to carry it. */
+  function directLabels(u){
+    var ctx = u.ctx, ends = [];
+    for (var si = 1; si < META.length; si++) {
+      var m = META[si];
+      if (!m.slot) { continue; }
+      var ys = u.data[si], last = -1;
+      for (var j = N - 1; j >= 0; j--) { if (ys[j] != null) { last = j; break; } }
+      if (last < 0) { continue; }
+      ends.push({si: si, text: m.short,
+                 x: u.valToPos(last, 'x', true),
+                 y: u.valToPos(ys[last], 'y', true)});
+    }
+    if (!ends.length) { return; }
+    // place top-down so two endpoints a pixel apart get two readable labels
+    ends.sort(function(a, b){ return a.y - b.y; });
+    var gap = 16 * pr(), prev = -1e9;
+    ends.forEach(function(e){
+      e.ty = Math.max(e.y, prev + gap);
+      prev = e.ty;
+    });
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = '600 ' + font(12 * pr());
+    ctx.lineJoin = 'round';
+    ends.forEach(function(e){
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 4 * pr(), 0, 6.2831853);
+      ctx.fillStyle = colorOf(e.si);
+      ctx.fill();
+      ctx.lineWidth = 2 * pr();
+      ctx.strokeStyle = PAL['--surface'];
+      ctx.stroke();
+      /* a halo of the surface, so a label is never read through the lines it
+         sits over — and the text wears an ink token, never the series colour */
+      ctx.lineWidth = 4 * pr();
+      ctx.strokeText(e.text, e.x + 10 * pr(), e.ty);
+      ctx.fillStyle = PAL['--ink-soft'];
+      ctx.fillText(e.text, e.x + 10 * pr(), e.ty);
+    });
+    ctx.restore();
+  }
+
+  var series = [{}].concat(C.series.map(function(s, n){
+    var si = n + 1;
+    return {
+      label: s.k,
+      stroke: function(){ return colorOf(si); },
+      width: s.e ? 2 : 1,
+      /* a lone observation has no neighbour to draw a line to, so it is drawn
+         as a point — otherwise several tiers that only exist at the newest
+         commits would be invisible */
+      points: {show: false, filter: s.p || null, size: s.e ? 7 : 6,
+               width: 2, fill: function(){ return colorOf(si); },
+               stroke: function(){ return PAL['--surface']; }}
+    };
+  }));
+
+  var opts = {
+    width: Math.max(320, host.clientWidth || 900),
+    height: 520,
+    padding: [16, 74, 0, 6],
+    legend: {show: false},
+    focus: {alpha: 0.13},
+    cursor: {
+      x: true, y: false,
+      points: {show: false},
+      /* The ledger records some quantities twice — `derived.render_only_insn_px`
+         is `insns_per_frame_render_only` rescaled — and indexing makes such a
+         pair EXACTLY coincident. Both lines are drawn, because both are
+         recorded, but a 2% handicap makes the emphasised one win the tie so
+         that hovering a coloured line names that coloured line. */
+      focus: {prox: 30, dist: function(u, si, i, pos, cur){
+        return (pos - cur) * (META[si] && META[si].slot ? 0.98 : 1);
+      }},
+      drag: {x: true, y: true, uni: 16}
+    },
+    scales: {x: {time: false}, y: {}},
+    axes: [{
+      stroke: axisColor,
+      font: font(11),
+      grid: {show: true, stroke: gridColor, width: 1},
+      ticks: {show: true, stroke: gridColor, width: 1, size: 4},
+      incrs: [1, 2, 5, 10, 20, 50],
+      space: 56,
+      rotate: -45,
+      size: 78,
+      values: function(u, splits){
+        return splits.map(function(v){
+          var r = RUNS[v];
+          return r ? r.c : '';
+        });
+      },
+      label: 'run — in commit order, labelled by short commit',
+      labelFont: font(11.5),
+      labelSize: 24,
+      labelGap: 2
+    }, {
+      stroke: axisColor,
+      font: font(11),
+      grid: {show: true, stroke: gridColor, width: 1},
+      ticks: {show: false},
+      size: 56,
+      values: function(u, splits){ return splits.map(function(v){ return num(v, 0); }); },
+      label: 'index — first observation = 100',
+      labelFont: font(11.5),
+      labelSize: 22
+    }],
+    series: series,
+    hooks: {
+      init: [function(u){ u.over.appendChild(dot); u.over.appendChild(tip); }],
+      drawClear: [rule100],
+      draw: [directLabels],
+      setSeries: [function(u, si){ focused = si; showTip(u); }],
+      setCursor: [function(u){ showTip(u); }],
+      setSelect: [function(u){ hideTip(); }]
+    }
+  };
+
+  var u = new uPlot(opts, data, host);
+  host.addEventListener('mouseleave', hideTip);
+  window.vyrLedgerChart = u;
+
+  /* the plot follows the container, and repaints (not reloads) on a theme flip */
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(function(){
+      var w = Math.max(320, host.clientWidth);
+      if (w !== u.width) { u.setSize({width: w, height: u.height}); }
+    });
+    ro.observe(host);
+  }
+  function repaint(){ readPalette(); u.redraw(false, true); }
+  new MutationObserver(repaint).observe(document.documentElement,
+    {attributes: true, attributeFilter: ['data-theme']});
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    (mq.addEventListener ? mq.addEventListener.bind(mq, 'change')
+                         : mq.addListener.bind(mq))(repaint);
+  }
+
+  var reset = document.getElementById('t-chart-reset');
+  if (reset) {
+    reset.addEventListener('click', function(){
+      u.setScale('x', {min: 0, max: N - 1});
+      u.setData(data, true);
+    });
+  }
+})();
+"""
+
+
 def page_css() -> str:
     return (":root{" + PAGE_CSS_VARS_LIGHT + "}\n"
             "@media (prefers-color-scheme:dark){:root:not([data-theme=\"light\"]){"
@@ -1279,6 +1777,67 @@ def _table_block(tid: str, heading: str, sub: str) -> str:
             f'the ledger recorded for it — hover to read it.</p></section>')
 
 
+def _chart_block(chart: dict) -> str:
+    ser = chart["series"]
+    n_emph = sum(1 for s in ser if s["e"])
+    n_flat = sum(1 for s in ser if s["f"])
+    n_other = len(ser) - n_emph - n_flat
+    have = {s["k"] for s in ser}
+
+    keys = []
+    for slot, (key, short) in enumerate(CHART_EMPHASIS, start=1):
+        if key not in have:
+            continue
+        keys.append(
+            f'<span class="li" title="{_esc(key)}">'
+            f'<span class="lk" style="--k:var(--s{slot})"></span>'
+            f'{_esc(short)} — instructions/frame, render only, qemu-M4 at '
+            f'opt-level <code>z</code></span>')
+    keys.append(f'<span class="li"><span class="lk" style="--k:var(--s-other)"></span>'
+                f'every other recorded series ({n_other})</span>')
+    keys.append(f'<span class="li li-flat">'
+                f'<span class="lk" style="--k:var(--s-flat)"></span>'
+                f'never changed across the runs it appears in ({n_flat})</span>')
+
+    zero = chart["zero_first"]
+    caveat = ""
+    if zero:
+        caveat = (f" A further <b>{len(zero)}</b> cannot be indexed at all, because "
+                  f"a first observation of <code>0</code> has no ratio to it "
+                  f"(<code>{_esc(', '.join(zero))}</code>) — also in the tables.")
+
+    return (
+        '<section class="chunk"><h2>Every numeric series, indexed to its own '
+        'first observation</h2>'
+        '<p class="lede">The tables carry levels; this carries change. The series '
+        'share no unit — instructions per frame are tens of millions, heap is '
+        'hundreds of thousands of bytes, ns per frame is hundreds, fold share is a '
+        'fraction — so raw values on one axis would be meaningless, and a second '
+        'y-axis would invent a correlation the data does not contain. Instead '
+        '<b>every series is divided by its own first recorded value and multiplied '
+        'by 100</b>. The axis is therefore dimensionless: <b>100 is that series’ '
+        'own first observation</b>, not a share of anything, and 50 means '
+        '“half what it first was” for every line alike.</p>'
+        f'<p class="meta"><b>{len(ser)}</b> series on '
+        f'<b>{len(chart["runs"])}</b> runs. A series needs two observations to be '
+        f'a trend, so the <b>{chart["single"]}</b> recorded only once are not drawn '
+        f'here — the tables have them.{caveat}</p>'
+        f'<div class="legendrow">{"".join(keys)}</div>'
+        '<div class="tbar">'
+        '<button id="t-chart-reset" type="button">Reset zoom</button>'
+        '<span class="count">drag on the plot to zoom · double-click to reset'
+        '</span></div>'
+        '<div class="chartcard"><div id="t-chart"></div></div>'
+        '<p class="hint">Hover a line to name it: the nearest series lifts, the '
+        'rest fade, and the readout gives its key, the value the ledger recorded '
+        'at that run, and its index. <b>A gap is a gap</b> — where a series has no '
+        'observation at a run the line breaks rather than interpolating, and an '
+        'observation with no neighbour is drawn as a single point. Series that '
+        'never moved sit exactly on the 100 rule; they are drawn faintly because '
+        'stability is evidence but it should not drown the lines that moved. Every '
+        'value plotted here is also a row in the tables below.</p></section>')
+
+
 def page_html(history: list[dict]) -> str:
     allrows = load_all()
     notes = Notes()
@@ -1288,8 +1847,10 @@ def page_html(history: list[dict]) -> str:
     mrows = matrix_rows(allrows, notes)
     orows = other_rows(allrows)
     rrows = run_rows(allrows)
+    chart = chart_data(allrows)
     payload = {
         "notes": notes.list,
+        "chart": chart,
         "tables": [
             {"id": "t-cells", "cols": MATRIX_COLS, "rows": mrows, "height": "640px"},
             {"id": "t-values", "cols": OTHER_COLS, "rows": orows, "height": "560px"},
@@ -1326,6 +1887,7 @@ def page_html(history: list[dict]) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vyr measurement ledger</title>
 <link rel="stylesheet" href="vendor/{TAB_CSS}">
+<link rel="stylesheet" href="vendor/{UPLOT_CSS}">
 <style>{page_css()}</style>
 </head>
 <body>
@@ -1352,6 +1914,8 @@ latest <code>{_esc(latest['commit'])}</code> {_esc(latest.get('subject', ''))} �
 how each number is produced:
 <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 
+{_chart_block(chart)}
+
 {_table_block("t-cells", "Matrix cells",
               "One row per measurement cell — platform × tier × opt-level "
               "× run — with every field the ledger carries for it, including "
@@ -1373,14 +1937,18 @@ how each number is produced:
 
 <p class="foot">Generated by <code>scripts/ledger.py</code> from
 <code>docs/perf/history.jsonl</code> — one writer, one file, one page. Table
-rendering by <a href="https://tabulator.info/">Tabulator</a> {TAB_VERSION}, MIT,
-vendored under <a href="vendor/README.md"><code>docs/perf/vendor/</code></a> so
-this page fetches nothing when it is opened.</p>
+rendering by <a href="https://tabulator.info/">Tabulator</a> {TAB_VERSION} and
+the chart by <a href="https://github.com/leeoniya/uPlot">uPlot</a>
+{UPLOT_VERSION}, both MIT and both vendored under
+<a href="vendor/README.md"><code>docs/perf/vendor/</code></a> so this page
+fetches nothing when it is opened.</p>
 
 </div>
 <script src="vendor/{TAB_JS}"></script>
+<script src="vendor/{UPLOT_JS}"></script>
 <script id="ledger-data" type="application/json">{blob}</script>
 <script>{TABLE_JS}</script>
+<script>{CHART_JS}</script>
 <script>{THEME_JS}</script>
 </body>
 </html>
@@ -1389,14 +1957,17 @@ this page fetches nothing when it is opened.</p>
 
 def regen(history: list[dict]) -> None:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    missing = [f for f in (TAB_JS, TAB_CSS) if not (VENDOR_DIR / f).exists()]
+    missing = [f for f in (TAB_JS, TAB_CSS, UPLOT_JS, UPLOT_CSS)
+               if not (VENDOR_DIR / f).exists()]
     if missing:
         raise SystemExit(
             f"ledger: vendored {', '.join(missing)} missing from "
-            f"{VENDOR_DIR.relative_to(REPO)} — the page builds its tables from them and "
-            "must never fall back to a CDN. See docs/perf/vendor/README.md.")
-    # Derived artifacts have no legacy: the SVG charts this page used to draw are
-    # not regenerated, so the files go rather than linger unreferenced.
+            f"{VENDOR_DIR.relative_to(REPO)} — the page builds its tables and its chart "
+            "from them and must never fall back to a CDN. See "
+            "docs/perf/vendor/README.md.")
+    # Derived artifacts have no legacy: the 13 hand-rolled SVG charts this page
+    # used to draw are not regenerated, so the files go rather than linger
+    # unreferenced. The one chart that replaced them is a canvas, not a file.
     for stale in LEDGER_DIR.glob("*.svg"):
         stale.unlink()
         log(f"pruned stale chart {stale.relative_to(REPO)}")
