@@ -20,7 +20,7 @@ COMMANDS = {
     "describe": "list commands as JSON (for agents)",
     "test": "cargo test --workspace (--bless prints new golden hashes; --dump writes PNGs to ./tmp/)",
     "check": "cargo check --workspace",
-    "check-mcu": "cargo check -p vyr-core --target thumbv7em-none-eabihf (the no_std gate, invariant I7)",
+    "check-mcu": "cargo check -p vyr-core -p vyr-scene --target thumbv7em-none-eabihf (the no_std gate, invariant I7)",
     "clippy": "cargo clippy --workspace --all-targets",
     "fmt-check": "cargo fmt --check",
     "selftest": "render the demo scene to ./tmp/selftest.png via vyr-cli (logs ns/px + counters)",
@@ -85,9 +85,17 @@ def cmd_check(rest: list[str]) -> int:
 
 
 def cmd_check_mcu(rest: list[str]) -> int:
-    return _run(
-        ["cargo", "check", "-p", "vyr-core", "--target", "thumbv7em-none-eabihf", *rest]
-    )
+    # vyr-scene is gated here too: it is `no_std + alloc` for exactly one
+    # reason — the emulated-M4 vehicle animates the SAME scene the host rig
+    # does — so a std leak into it silently costs the cross-ISA comparison,
+    # and that is the kind of breakage a gate should catch on the host.
+    for pkg in ("vyr-core", "vyr-scene"):
+        rc = _run(
+            ["cargo", "check", "-p", pkg, "--target", "thumbv7em-none-eabihf", *rest]
+        )
+        if rc != 0:
+            return rc
+    return 0
 
 
 def cmd_clippy(rest: list[str]) -> int:

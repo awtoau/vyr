@@ -345,7 +345,33 @@ fn main() {
             std::process::exit(1);
         }
     };
-    // Band-equivalence self-check, host-only (full frame needs 567 KB):
+    // Band-equivalence self-check, host-only (full frame needs 567 KB).
+    // Under `rig` the workload's return value is a CHAIN over many frames,
+    // so the single-frame comparison is made against frame 0 explicitly —
+    // never against the chain, which would be comparing a run to a frame.
+    #[cfg(feature = "rig")]
+    {
+        match workload::rig_frame0_hashes(quality) {
+            Ok((banded0, full0)) if banded0 == full0 => {
+                println!(
+                    "INFO  [vyr-size] rig frame 0 full-frame fnv1a={full0:#018x} == banded \
+                     (band equivalence); run chain={banded:#018x}"
+                );
+            }
+            Ok((banded0, full0)) => {
+                eprintln!(
+                    "ERROR [vyr-size] rig frame 0 full-frame fnv1a={full0:#018x} != banded \
+                     {banded0:#018x} — band equivalence BROKE"
+                );
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("ERROR [vyr-size] rig frame 0 cross-check FAILED: {e:?}");
+                std::process::exit(1);
+            }
+        }
+    }
+    #[cfg(not(feature = "rig"))]
     match workload::full_frame_hash(quality) {
         Ok(full) if full == banded => {
             println!("INFO  [vyr-size] full-frame fnv1a={full:#018x} == banded (band equivalence)");
