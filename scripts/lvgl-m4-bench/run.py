@@ -113,10 +113,19 @@ MACHINE = "netduinoplus2"
 # emulated M4 is bounded; if it has not exited by 180s it is hung.
 DEADLINE_S = 180
 
+# The optimisation level the ANCHOR is compiled at. `-Os` is the published
+# default and the one every committed LVGL figure was taken on; #33 added
+# --opt so the anchor can be rebuilt at `-Oz` to match vyr's `release-mcu`
+# (opt-level="z" IS -Oz) when a like-for-like flag comparison is wanted.
+# Changing it renames every artefact, so a non-default run can never
+# overwrite the published ELF/result.
+OPT_DEFAULT = "-Os"
+OPT = OPT_DEFAULT  # --opt overrides
+
 CFLAGS = [
     "-mcpu=cortex-m4", "-mthumb",
     "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16",
-    "-Os", "-ffunction-sections", "-fdata-sections",
+    OPT_DEFAULT, "-ffunction-sections", "-fdata-sections",
     "-ffreestanding", "-fno-common",
     "-std=gnu11",
     "-Wall",
@@ -221,10 +230,14 @@ def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf"):
     they are newer than their source. The measurement ELF is therefore never
     the ELF that carries the file-I/O path."""
     gen_checker_header(logf)
-    obj_dir = os.path.join(TMP, "lvgl-m4-obj")
+    # Objects are opt-level-specific: a -Oz .o must never be reused for a -Os
+    # link (or the anchor would silently be a mixture of both).
+    obj_dir = os.path.join(TMP, "lvgl-m4-obj" + ("" if OPT == OPT_DEFAULT else OPT))
     os.makedirs(obj_dir, exist_ok=True)
     objs = []
-    cflags = list(CFLAGS) + [f"-DLV_MEM_SIZE_KB={mem_kb}"]
+    # OPT replaces the default -Os in place, so it also reaches the link line.
+    cflags = [OPT if a == OPT_DEFAULT else a for a in CFLAGS]
+    cflags += [f"-DLV_MEM_SIZE_KB={mem_kb}"]
     if frames:
         cflags += [f"-DTIMED_FRAMES={frames}"]
     harness = [os.path.join(HERE, "startup.c"), os.path.join(HERE, "main.c")]
@@ -370,6 +383,13 @@ def main():
     ap.add_argument("--frames", type=int, default=None,
                     help="timed frames (default 40). SYS_CLOCK has 1 cs granularity, "
                          "so quantisation error is ~1/total_cs — raise this for precision.")
+    ap.add_argument("--opt", default=OPT_DEFAULT,
+                    help="optimisation level for the WHOLE anchor build "
+                         f"(default {OPT_DEFAULT}, the published one). #33: "
+                         "-Oz is the flag-for-flag match to vyr's release-mcu "
+                         "opt-level=\"z\". A non-default level writes its own "
+                         "ELF/log/result (suffixed) and never touches the "
+                         "published artefacts.")
     ap.add_argument("--lvgl-root", default=None,
                     help=f"LVGL source tree (default: the upstream mirror {LVGL_MIRROR_DEFAULT})")
     ap.add_argument("--dump-frame", metavar="PATH", default=None,
@@ -380,7 +400,8 @@ def main():
                          "published ELF has no file-I/O path.")
     args = ap.parse_args()
 
-    global LVGL_ROOT, LVGL_SRC, LVGL_INC
+    global LVGL_ROOT, LVGL_SRC, LVGL_INC, OPT
+    OPT = args.opt
     if args.lvgl_root:
         LVGL_ROOT = os.path.abspath(args.lvgl_root)
         LVGL_SRC = os.path.join(LVGL_ROOT, "src")
@@ -388,8 +409,11 @@ def main():
 
     os.makedirs(TMP, exist_ok=True)
     benchlog = os.path.join(TMP, "lvgl-m4-bench.log")
-    semilog = os.path.join(TMP, "lvgl-m4.log")
-    resultjson = os.path.join(TMP, "lvgl-m4-result.json")
+    # A non-default -O level is a side experiment, never the published anchor.
+    sfx = "" if OPT == OPT_DEFAULT else OPT
+    elf_name = f"lvgl-m4{sfx}.elf"
+    semilog = os.path.join(TMP, f"lvgl-m4{sfx}.log")
+    resultjson = os.path.join(TMP, f"lvgl-m4{sfx}-result.json")
     dump_path = os.path.abspath(args.dump_frame) if args.dump_frame else None
     if dump_path:
         # Separate artefact names so a dump run can never overwrite the
@@ -421,8 +445,11 @@ def main():
                 f"this result is NOT a clean upstream anchor ***", logf)
         else:
             log("  stock upstream (clean tree, not ahead of origin)", logf)
+        log(f"optimisation level {OPT}"
+            + ("" if OPT == OPT_DEFAULT else "  *** NOT the published anchor level ***"),
+            logf)
         elf = build(args.mem_kb, logf, args.frames, dump_path,
-                    "lvgl-m4-dump.elf" if dump_path else "lvgl-m4.elf")
+                    "lvgl-m4-dump.elf" if dump_path else elf_name)
         if not elf:
             log("BUILD FAILED — see log", logf)
             return 2
@@ -463,6 +490,7 @@ def main():
         # anchor can be recorded in a ledger rather than re-derived from prose.
         out = {
             "lvgl": lv,
+            "opt": OPT,
             "mem_kb": args.mem_kb,
             "machine": MACHINE,
             "scene": {"w": 480, "h": 270, "band_h": 16},

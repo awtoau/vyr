@@ -196,7 +196,7 @@ Where vyr's instructions went:
 |---|--:|---|
 | soft-`f64` trig | ~11.4 M | libm's f32 kernels evaluate in f64; M4F is single-precision |
 | SIMD-shaped pipeline | ~21 M | `u16x16` shims + memcpy on a SIMD-less core |
-| `opt-level="z"` vs `-Os` | ~19–27 M | we compare `-Oz` against `-Os` |
+| `opt-level="z"` vs `-Os` | ~19–27 M (re-measured 07-24 at HEAD: **18.5 M** to `s`, **26.0 M** to `2`) | we compare `-Oz` against `-Os` — and the anchor cannot be moved to `-Oz`, because arm-none-eabi-gcc 15.2 compiles this LVGL tree byte-identically at both (`lvgl-gap.md` §0.3.1) |
 | IR string re-parse | ~1.27 M | 23 % of Draft's render cost |
 
 Ruled out **with numbers**, so they are not re-litigated: premultiply round-trip
@@ -294,7 +294,7 @@ LVGL anchor: `9,220,422` → **`7,112,541`** at `56da347` (error 3).
 
 | issue | worth | risk |
 |---|--:|---|
-| [#33](https://github.com/awtoau/vyr/issues/33) `opt-level` z→s | ~19–27 M | +198 KB flash — a product decision |
+| ~~[#33](https://github.com/awtoau/vyr/issues/33)~~ `opt-level` z→2 | **26.0 M Exact / 19.9 M Fast / 2.1 M Draft** | **decided 07-24: keep `z`.** +183 KiB flash, and the plan's smaller candidate part (H735-DK) has 1 MiB. Pixels, heap peak and stack depth are opt-level-invariant, so this is flash-for-instructions and nothing else. `s` is dominated by `2` on BOTH axes. `lvgl-gap.md` §0.3 |
 | [#40](https://github.com/awtoau/vyr/issues/40) polygon pre-clip | 9.2 M + 22.5 KB RAM | fixes the #42 p0 as well |
 | [#37](https://github.com/awtoau/vyr/issues/37) narrow scalar pipeline | ~21 M | needs tiny-skia work; may be byte-identical |
 | [#34](https://github.com/awtoau/vyr/issues/34) IR resolve-once | 1.27 M (23 % of Draft) | none |

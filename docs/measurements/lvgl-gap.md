@@ -36,6 +36,13 @@ sides, and it is not rendering.
 Subtracting it changes the story completely, because the fold is **54.7 % of
 LVGL's frame and only 36.2 % of Draft's**:
 
+> **The vyr rows below are the pre-#32 firmware** (Exact 64.4 M, before the
+> contour memo). The *model* — that the fold is not rendering, and that it is a
+> far bigger share of LVGL's frame than of vyr's — is what this section is for;
+> for current per-tier counts see §0.3, and note the fold's own cost moves with
+> `opt-level` too (3.11 M at `z`, 1.91 M at `3`), so render-only figures must be
+> re-derived per level, not carried across.
+
 | firmware | published insns/frame | harness fold | **render only** | **insn/px** | vs LVGL |
 |---|--:|--:|--:|--:|--:|
 | vyr **Exact** (`opt-level="z"`) | 64,422,179 | 3,110,434 | **61,311,745** | **473.1** | **19.0x** |
@@ -63,27 +70,142 @@ total (Exact 212,272; Draft 182,216 — measured, printed by every run). Per
 delivered pixel vyr Exact is **497.1**, Draft **66.4**. The column as published
 flatters vyr by 1.4–1.6x and is not comparable to LVGL's row.
 
-### 0.3 `opt-level="z"` is not the analogue of `-Os`
+### 0.3 `opt-level="z"` is not the analogue of `-Os` — #33, re-measured
+
+**Re-measured 2026-07-24 at `a9c8a4f`** (`scripts/optlevel-matrix.py`). The
+figures first published here were taken before #32's contour memo and are
+superseded; every number below is from one session, one commit, one tool per
+axis.
 
 The LVGL harness compiles `-Os`. `release-mcu` sets `opt-level="z"`, which is
 `-Oz`: it additionally gives up inlining and turns on the machine outliner —
 both far more expensive for tiny-skia's generic, SIMD-shim-heavy Rust than for
-LVGL's flat C. Measured, same ELF pipeline, same scene:
+LVGL's flat C.
 
-| tier | `z` (published) | `s` (the real `-Os` analogue) | `3` | .text+.rodata `z` / `s` / `3` |
-|---|--:|--:|--:|---|
-| Exact | 64,422,179 | **45,561,610** (−29 %) | 36,971,836 (−43 %) | 478,773 / 676,865 / 706,427 B |
-| Fast | 49,585,035 | 35,014,927 (−29 %) | 29,273,858 (−41 %) | 478,805 / 676,905 / 706,523 B |
-| Draft | 8,604,184 | 7,283,781 (−15 %) | 6,694,736 (−22 %) | 478,789 / 676,905 / 706,731 B |
+**insns/frame** (plugin QEMU + `libinsn`, exact architectural counts), same
+ELF pipeline, same scene, Δ against the shipped `z`:
 
-The flash price is real (+198 KB at `s`), so `z` may still be the right default
-— but a `z` number must not be published against a `-Os` number as
-apples-to-apples.
+| tier | `z` (shipped) | `s` (the `-Os` analogue) | `2` | `3` |
+|---|--:|--:|--:|--:|
+| Exact | 51,349,644 | 32,887,551 (−36 %) | **25,336,538 (−51 %)** | 24,564,434 (−52 %) |
+| Fast | 36,618,969 | 22,413,829 (−39 %) | **16,764,151 (−54 %)** | 16,761,137 (−54 %) |
+| Draft | 8,621,557 | 7,290,627 (−15 %) | **6,513,113 (−24 %)** | 6,504,319 (−25 %) |
+| ratio vs LVGL, Exact | 7.22x | 4.62x | 3.56x | 3.45x |
+| ratio vs LVGL, Draft | 1.21x | 1.02x | **0.92x** | 0.91x |
+
+(LVGL anchor: 7,112,541 insns/frame, re-confirmed 2026-07-24 on the same
+plugin QEMU from a freshly built stock-mirror ELF — `62f343b54`,
+`tmp/qemu-insn-lvgl-33.json`. The ratios are whole-firmware, so they still
+include both harnesses' FNV fold: §0.1 applies on top, and the fold's own cost
+is itself opt-level-dependent, so a *render-only* ratio must be re-derived per
+level rather than carried across from §0.1.)
+
+**flash** (`arm-none-eabi-size`, Berkeley `text+data`, `release-mcu`, the size
+matrix's own three configs and its own method — comparable cell for cell with
+`docs/measurements/f9-static.md`):
+
+| config | `z` | `s` | `2` | `3` |
+|---|--:|--:|--:|--:|
+| code-only | 424,541 B | 626,433 (+197 KiB) | **611,963 (+183 KiB)** | 647,491 (+218 KiB) |
+| font | 588,965 B | 790,737 (+197 KiB) | **776,547 (+183 KiB)** | 811,947 (+218 KiB) |
+| font,image | 594,149 B | 796,241 (+197 KiB) | **784,987 (+186 KiB)** | 818,483 (+219 KiB) |
+| font,image, % of 2 MiB | 28.3 % | 38.0 % | 37.4 % | 39.0 % |
+| font,image, % of 1 MiB | 56.7 % | 75.9 % | 74.9 % | 78.1 % |
+
+**RAM — the binding constraint — does not move at all.** M4 heap peak is
+bit-identical at every level (Exact 112,473 B, Fast 114,873 B, Draft 82,881 B
+against the 122,880 B arena), and the stack high-water mark
+(`--features stack-probe`, #33: the dead CCM stack is painted at boot and
+scanned after the workload) moves by **320 B across the whole sweep**:
+
+| tier | `z` | `s` | `2` | `3` |
+|---|--:|--:|--:|--:|
+| stack watermark, all tiers | 19,044 B | 19,036 / 19,068 B | 18,748 B | 18,820 B |
+
+So `opt-level` is a **pure flash-for-instructions trade**. It buys nothing and
+costs nothing on the resource that is actually tight.
+
+**The frame hash is unchanged at every level, for every tier** — Exact
+`0x24dcaff531c6eb01`, Fast `0x930d03610b07ea6f`, Draft `0xf98cbbdddd6da1ba`,
+12 of 12 cells, and again in the 12 instrumented stack-probe builds. Optimisation
+level does not change a pixel, as required; `./dev.py qemu-m4`'s hard gates
+(cross-ISA hash + heap peak) are therefore **opt-level-invariant**, and only its
+warn-only insns/frame line and the size matrix move with this setting.
+
+Three things the old table got wrong or could not see:
+
+1. **`s` is not on the Pareto frontier.** `opt-level=2` is both *faster*
+   (−51 % vs `z`, where `s` is −36 %) and *smaller* than `s` (611,963 vs
+   626,433 B code-only). `s` is dominated on both axes; there is no reason to
+   pick it except as the flag-for-flag match to LVGL's `-Os` (§0.3.1).
+2. **`3` is not worth its extra 34 KB.** Over `2` it buys 3 % at Exact and
+   nothing measurable at Fast or Draft (16,761,137 vs 16,764,151 — 0.02 %).
+3. **The frontier is `{z, 2}`**, and the whole question is whether ~187 KiB of
+   flash is available: it halves Exact and Fast, and takes Draft below LVGL.
+
+### 0.3.1 The comparison cannot be fixed from LVGL's side
+
+The obvious symmetric fix — rebuild the LVGL anchor at `-Oz` so both sides use
+size-at-all-costs — **does not exist on this toolchain**. Measured
+(`scripts/lvgl-m4-bench/run.py --opt=-Oz`, arm-none-eabi-gcc 15.2.0):
+
+- all **382** LVGL+harness translation units compile **byte-identical** at
+  `-Os` and `-Oz`, and so does the linked ELF
+  (`d4cbbded…`, 196,348 B `.text` either way);
+- `gcc -Q --help=optimizers` and `--help=params` are **identical** between the
+  two levels for this target.
+
+GCC's `-Oz` is a near-no-op over `-Os` here; LLVM's `"z"` over `"s"` is 36 % of
+vyr's frame. The asymmetry is real, it is between the two *compilers*, and it
+can only be closed from vyr's side — by publishing the `s` row next to the `z`
+row, never by moving LVGL.
+
+### 0.3.2 The decision: keep `z`, publish the `s` and `2` columns
+
+`release-mcu` is not only the perf profile — it is also the profile the F9
+**size** verdict is quoted from ("19 % of 2 MiB"), the profile the board
+firmware is flashed at, and the profile the ledger records one row per commit
+for. The setting therefore has to be chosen for the smallest part the plan
+contemplates, not the most comfortable one, and `docs/plan.md` F9 leaves the
+board choice open between an **F429-DISC1 (2 MiB flash)** and an
+**H735-DK — 1 MiB**. The runnable vehicle's own linker script
+(`vyr-size/link-qemu.ld`) models 1 MiB as well.
+
+At 1 MiB the `font,image` renderer goes from **56.7 % to 74.9 %** of flash: it
+still links, but it takes what is left for the application from 454,427 B
+(443.8 KiB) to 263,589 B (257.4 KiB) — a **42 % cut to everything that is not
+vyr**. That is not a call this document can make on a product's behalf, and it
+is the only reason `z` survives:
+
+> **Recommendation — keep `release-mcu` at `opt-level="z"`; ship `2` on any
+> part with ≥ 256 KiB of flash to spare, for half the frame at Exact and Fast
+> and no RAM cost whatsoever.**
+
+Concretely: `2` costs +183 KiB of flash and buys −51 % Exact / −54 % Fast /
+−24 % Draft, with heap peak, stack depth and every pixel unchanged. On a 2 MiB
+F427/F429 that is 9 percentage points of flash for half the render cost and
+should simply be taken; on a 1 MiB part it is a real trade against the
+application. `s` should never be shipped — `2` beats it on both axes — and `3`
+is +34 KiB over `2` for ~3 % at Exact and 0 % elsewhere.
+
+**A second profile is the wrong shape for this.** `release-mcu-perf` at `2`
+alongside `release-mcu` at `z` would double the anchor surface: insns/frame,
+heap peak, frame hash, flash, silicon cycles and the ledger row would each
+acquire a profile qualifier, and the failure this repo keeps having
+(`../performance.md` §5) is *mixing* provenance, not lacking numbers. The
+opt-level is a sweep axis, not a build configuration: `--config
+profile.release-mcu.opt-level=…` reproduces any column in ~12 s
+(`scripts/optlevel-matrix.py`), and a downstream product overrides it in its own
+`Cargo.toml` in one line. One profile, one set of published numbers, and a
+committed table of what the other levels cost.
 
 ### 1.1 Regenerating everything here
 
 | numbers | command | output |
 |---|---|---|
+| **§0.3 opt-level × tier matrix — insns, flash, heap, stack, hash** | `python3 scripts/optlevel-matrix.py` | `tmp/optlevel-matrix.json`, `tmp/optlevel-matrix.md` |
+| one tier at one level | `python3 scripts/tier-insns.py --opt 2 --tiers exact` | `tmp/tier-insns-O2.json` |
+| the LVGL anchor at a different `-O` | `python3 scripts/lvgl-m4-bench/run.py --opt=-Oz` | `tmp/lvgl-m4-Oz-result.json` |
 | per-symbol M4 attribution, all tiers + LVGL; opt-level sweep | `python3 scripts/m4-attribute.py --tiers exact,fast,draft --sweep` | `tmp/m4-attribute.json`, `tmp/m4-attribute.log` |
 | harness fold cost (temporarily patches, then restores, `vyr-size/src/workload.rs`) | `python3 scripts/harness-overhead.py --tiers exact,draft [--opt 3]` | `tmp/harness-overhead.json` |
 | AA area-vs-perimeter scaling (host, callgrind Ir) | `python3 scripts/disc-scaling.py --shapes disc,gauge,rect` | `tmp/disc-scaling/disc-scaling.json` |
@@ -316,7 +438,7 @@ equivalence, polygon-only-to-tiny-skia and 1/64-px quantisation.
 | # | change | recovers (insns/frame) | invariant risk | cost |
 |---|---|--:|---|---|
 | 1 | **Memoise flattened contours** per `(shape, radius)` for the life of a `Request` — no trig after first use | **≈ 10.7 M Exact** (11.4 M less one band's worth), **≈ 10.6 M Fast**; 0 at Draft | **None if it is a pure memo**: same `f32` values, same polygons, same quantisation, same order. Verified by the existing goldens (hash must not move). | Medium: the cache must outlive the per-band canvas, so it needs threading through `render_with_quality` beside `Fonts`/`Assets`. `no_std`+alloc, `forbid(unsafe_code)` — no statics. |
-| 2 | **Publish/adopt `opt-level="s"` (or `3`) for MCU perf claims** | 18.9 M Exact / 14.6 M Fast / 1.3 M Draft at `s`; 27.4 M / 20.3 M / 1.9 M at `3` | None to pixels (hash unchanged, verified by the sweep runs); it is a **flash trade**: +198 KB (`s`) / +228 KB (`3`) | Trivial (a profile line), but it is a product decision, not a free win |
+| 2 | **Publish/adopt a higher `opt-level` for MCU perf claims** — re-measured at HEAD, §0.3: `2` dominates `s` | at `2`: **26.0 M Exact / 19.9 M Fast / 2.1 M Draft**; at `s`: 18.5 M / 14.2 M / 1.3 M | None to pixels (hash unchanged in 24 of 24 measured builds) and **none to RAM** (heap peak bit-identical, stack ±320 B); it is a pure **flash trade**: +183 KiB (`2`) / +197 KiB (`s`) | Trivial (a profile line), but it is a product decision, not a free win — verdict in §0.3.2: keep `z`, ship `2` where the flash exists |
 | 3 | **Resolve IR attributes once per `Request`** instead of re-parsing strings per band | ≈ 1.27 M (2 % of Exact; **23 % of Draft's render**) | None — same parsed values; validation semantics must stay per-band-independent (I6 honest failure) | Medium: a resolved-attribute representation in `ir.rs` |
 | 4 | **Allocate the tiny-skia scratch `Pixmap` lazily** (Draft only ever needs it for the rounded-clip fallback) | ≈ 0.4–0.7 M (**8–12 % of Draft's render**), and 30,720 B off every Draft band | None — it is scratch; nothing reads it before it is written | Small |
 | 5 | **Trim Fast's seed/demul carry for discs** to the inked rows rather than the bbox | grows with radius; 2.65x→~2x per doubling at r=64 on the host disc test | Low, but real: under-covering `carry` silently drops AA fringe. Must be derived from the shape's geometry with an outward margin, as `frame_strips` already is | Small |

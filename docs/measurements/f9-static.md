@@ -51,6 +51,20 @@ spec aborts regardless — `strip = true`).
 | font,image | release | 1,060,352 | 8 | 65,552 | 1,060,360 | 50.6% | 24 B |
 | font,image | **release-mcu** | 567,933 | 0 | 65,548 | **567,933** | **27.1%** | 12 B |
 
+> **Two things to know before quoting this table (2026-07-24).**
+> 1. **It has drifted.** The same three `release-mcu` configs measure
+>    **424,541 / 588,965 / 594,149 B** at `a9c8a4f` (`./dev.py size-mcu`,
+>    `tmp/size-mcu.json`, and the ledger's `size_flash` series) — the renderer
+>    has grown ~26 KiB since. The percentages below move with it; the *method*
+>    is unchanged.
+> 2. **Every figure here is `opt-level="z"`**, which is `-Oz`, and that costs
+>    36 % of the Exact frame against `opt-level=2`. What each level costs in
+>    flash and buys in instructions — and why `z` stays the default — is
+>    measured in [`lvgl-gap.md`](lvgl-gap.md) §0.3
+>    ([#33](https://github.com/awtoau/vyr/issues/33)). Short version: `2` is
+>    +183 KiB of flash for −51 % Exact / −54 % Fast / −24 % Draft, with the M4
+>    heap peak and stack watermark unchanged.
+
 ¹ static RAM net = data + bss − 65,536 B (the vehicle's bump arena is
 measurement scaffolding, not renderer). The renderer's own link-time RAM is
 **~12 bytes** — by design: vyr-core owns no static buffers; all working

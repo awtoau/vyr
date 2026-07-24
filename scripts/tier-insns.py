@@ -14,8 +14,14 @@ For each tier it:
      architectural instruction count, not SYS_CLOCK wall time),
   3. records insns/frame, insns/px, the frame hash and the ELF SHA-256.
 
-Output: tmp/tier-insns.json   Log: tmp/tier-insns.log
+`--opt` (#33) overrides `profile.release-mcu.opt-level` for the measured
+build only — via `--config`, so Cargo.toml is untouched and the DEFAULT stays
+whatever the profile ships (`"z"`). Outputs are then suffixed `-O<level>` so a
+sweep never overwrites the published, profile-default numbers.
+
+Output: tmp/tier-insns[-O<opt>].json   Log: tmp/tier-insns.log
 Usage:  python3 scripts/tier-insns.py [--repeat 2] [--tiers exact,fast,draft]
+                                      [--opt s|z|2|3] [--features-extra F]
 """
 from __future__ import annotations
 
@@ -61,7 +67,21 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repeat", type=int, default=2)
     ap.add_argument("--tiers", default="exact,fast,draft")
+    ap.add_argument("--opt", default=None,
+                    help='override profile.release-mcu.opt-level for THIS run '
+                         'only (z|s|0..3); default = whatever Cargo.toml ships')
+    ap.add_argument("--features-extra", default=None,
+                    help="extra vyr-size features, comma-separated (e.g. stack-probe)")
     opts = ap.parse_args()
+
+    # `"z"`/`"s"` are TOML strings, 0..3 are integers — --config takes raw TOML.
+    suffix = ""
+    cfg: list[str] = []
+    if opts.opt is not None:
+        lvl = opts.opt.strip().strip('"')
+        toml = f'"{lvl}"' if lvl in ("z", "s") else lvl
+        cfg = ["--config", f"profile.release-mcu.opt-level={toml}"]
+        suffix = f"-O{lvl}"
 
     out: dict[str, dict] = {}
     for tier in opts.tiers.split(","):
@@ -69,12 +89,15 @@ def main() -> int:
         if tier not in FEATURES:
             log(f"unknown tier {tier}")
             return 2
-        log(f"=== {tier}: build ===")
+        feats = FEATURES[tier]
+        if opts.features_extra:
+            feats += "," + opts.features_extra
+        log(f"=== {tier}: build (opt-level={opts.opt or 'profile default'}) ===")
         rc = subprocess.run(
             [
                 "cargo", "build", "--profile", "release-mcu", "-p", "vyr-size",
                 "--target", "thumbv7em-none-eabihf",
-                "--no-default-features", "--features", FEATURES[tier],
+                "--no-default-features", "--features", feats, *cfg,
             ],
             cwd=REPO,
             env={**__import__("os").environ, "CARGO_INCREMENTAL": "0"},
@@ -87,14 +110,14 @@ def main() -> int:
         log(f"=== {tier}: count ===")
         r = subprocess.run(
             [sys.executable, "scripts/qemu-insn.py", str(ELF),
-             "--name", f"tier-{tier}", "--repeat", str(opts.repeat)],
+             "--name", f"tier-{tier}{suffix}", "--repeat", str(opts.repeat)],
             cwd=REPO, capture_output=True, text=True,
         )
         sys.stdout.write(r.stdout[-2000:])
         if r.returncode != 0:
             log(r.stdout[-4000:] + r.stderr[-4000:])
             return 1
-        data = json.loads((TMP / f"qemu-insn-tier-{tier}.json").read_text())
+        data = json.loads((TMP / f"qemu-insn-tier-{tier}{suffix}.json").read_text())
         out[tier] = data
         per = data.get("insns_per_frame")
         log(f"{tier}: {per:,} insns/frame = {per / PIXELS:.1f} insn/px" if per else f"{tier}: ?")
@@ -106,8 +129,9 @@ def main() -> int:
         log(f"#27 VERDICT  Exact {e:,} / Fast {f:,} / Draft {d:,} insns/frame")
         log(f"#27          Fast = {f / d:.2f}x Draft, {e / f:.2f}x cheaper than Exact, "
             f"= {100.0 * (f - d) / (e - d):.0f}% of the Exact-over-Draft bill")
-    (TMP / "tier-insns.json").write_text(json.dumps(out, indent=2) + "\n")
-    log(f"wrote {TMP / 'tier-insns.json'}")
+    dest = TMP / f"tier-insns{suffix}.json"
+    dest.write_text(json.dumps(out, indent=2) + "\n")
+    log(f"wrote {dest}")
     return 0
 
 

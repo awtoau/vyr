@@ -120,16 +120,44 @@ things moved under them, and both matter:
   The old "vyr Draft beats LVGL by 8.05 %" was measured against an LVGL that
   was drawing more work than vyr.
 
+**Re-measured again 2026-07-24 at `a9c8a4f`.** Two more things moved:
+
+- **#32's contour memo** (flattening no longer re-runs `libm` f32 trig, in
+  software `f64`, once per vertex per band per frame) took Exact
+  64,422,179 → 51,349,644 and Fast 49,585,035 → 36,618,969, **no pixel
+  changed**;
+- **#33**: the two sides were never compiled at comparable effort — see the
+  flag caveat below the table.
+
+`insn/px` below is now **instructions per DELIVERED
+pixel** (`insns / 129,600`) on every row — the same normaliser LVGL's row
+always used. The previous column divided vyr's rows by the overdraw-inclusive
+touched-pixel count and flattered them by 1.4-1.6x (`measurements/lvgl-gap.md`
+§0.2).
+
 | Firmware | insns/frame | insn/px | vs LVGL |
 |---|--:|--:|--:|
-| vyr **Exact** | 64,422,179 | 291.9 | 5.32x |
-| vyr **Fast** (#27) | 49,585,035 | 230.9 | 4.21x |
-| vyr **Draft** | **8,604,184** | 52.4 | **0.954x** |
-| LVGL 9.6.0-dev (`62f343b54`), content-corrected | 7,112,541 | 54.9 | 1.00x |
+| vyr **Exact** (`opt-level="z"`, shipped) | 51,349,644 | 396.2 | 7.22x |
+| vyr **Fast** (#27) (`z`) | 36,618,969 | 282.6 | 5.15x |
+| vyr **Draft** (`z`) | **8,621,557** | 66.5 | **1.21x** |
+| same three at `opt-level="s"` — the flag-for-flag match to LVGL's `-Os` | 32,887,551 / 22,413,829 / 7,290,627 | 253.8 / 172.9 / 56.3 | 4.62x / 3.15x / **1.02x** |
+| same three at `opt-level=2` — faster *and* smaller than `s` | 25,336,538 / 16,764,151 / 6,513,113 | 195.5 / 129.4 / 50.3 | 3.56x / 2.36x / **0.92x** |
+| LVGL 9.6.0-dev (`62f343b54`), content-corrected (`-Os`) | 7,112,541 | 54.9 | 1.00x |
 
-vyr Draft costs **4.6 % fewer** instructions than LVGL on this scene (it was
-8.05 % against the uncorrected harness). Draft is 5.57x cheaper than Exact;
-Fast recovers only **25 %** of the Exact→Draft gap — see §3.1.
+Draft is 5.96x cheaper than Exact; Fast recovers only **25 %** of the
+Exact→Draft gap — see §3.1.
+
+> **Compiler-flag caveat — the two sides are not compiled alike.** LVGL builds
+> `-Os`; `release-mcu` builds `opt-level="z"`, which is `-Oz` (no inlining,
+> machine outliner on) and costs vyr **36 % of its frame at Exact**. The `-Os`
+> analogue is `opt-level="s"` (Exact 32,887,551 = 4.62x LVGL); `opt-level=2` is
+> both faster and smaller than `s` and is the level to ship where the flash
+> exists. The anchor cannot be moved the other way — arm-none-eabi-gcc 15.2
+> compiles this LVGL tree **byte-identically** at `-Os` and `-Oz`. Both the `z`
+> row (what vyr ships) and the `2` row (like-for-like effort) are given above
+> for that reason; the full matrix, its flash price and the profile decision are
+> in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) §0.3
+> ([#33](https://github.com/awtoau/vyr/issues/33)).
 
 > **Fidelity caveat — do not quote the above without it.** Draft has **no
 > anti-aliasing** and draws `radius > 0` **square**. Fast and Exact both
@@ -150,7 +178,7 @@ uses. It buys the quality outright and almost none of the speed:
 
 | | Exact | Fast | Draft |
 |---|--:|--:|--:|
-| M4 insns/frame | 64,422,179 | 49,585,035 | 8,604,184 |
+| M4 insns/frame (2026-07-24, `a9c8a4f`, `opt-level="z"`) | 51,349,644 | 36,618,969 | 8,621,557 |
 | host ns, 480x270 panel | 243,596 | 237,973 | 58,059 |
 | blend px in the gauge region (12,100 px) | 567 | **567** | 0 |
 | differing px vs Exact, 480x270 | — | **0** | 3,408 |
@@ -284,6 +312,8 @@ provenance — tool version, source commit, ELF SHA-256, every run's raw values.
 |---|---|---|
 | §3 instruction counts, ALL vyr tiers in one run | `python3 scripts/tier-insns.py --repeat 2` | `tmp/tier-insns.json` |
 | §3 instruction counts, one ELF | `python3 scripts/qemu-insn.py --name <n> <elf> --repeat 3` | `tmp/qemu-insn-<n>.json` |
+| §3 flag caveat — the whole `opt-level` × tier matrix (insns, flash, heap peak, stack watermark, frame hash) | `python3 scripts/optlevel-matrix.py` | `tmp/optlevel-matrix.json`, `tmp/optlevel-matrix.md` |
+| §3 one tier at one `opt-level` | `python3 scripts/tier-insns.py --opt 2 --tiers exact` | `tmp/tier-insns-O2.json` |
 | §3.1 / #27 fidelity plates + edge-quality numbers | `python3 scripts/fidelity-compare.py --lvgl-raw tmp/fidelity/lvgl-frame.rgb888` | `docs/quality-tiers/`, `tmp/fidelity/fidelity.json` |
 | — build the plugin QEMU first | `python3 scripts/qemu-plugins-build.py` | `/mnt/2tb/git_debris/qemu-plugins-build/` |
 | — LVGL comparison ELF | `python3 scripts/lvgl-m4-bench/run.py` | `tmp/lvgl-m4-result.json` |
@@ -317,4 +347,5 @@ Notes that will cost time if forgotten:
 | [#27](https://github.com/awtoau/vyr/issues/27) | partly addressed: the `Fast` tier exists and matches Exact's edge quality, but at 4.4x Draft's cost; the LVGL harness's checker and gauge are content-matched, its theme colours and font are not |
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |
-| [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **the §3 table above is measured wrong in two ways** — it counts the benchmark's own FNV fold (3.1 M insns/frame on our side, 3.9 M on LVGL's) as render cost, and its `insn/px` column divides vyr by *touched* pixels and LVGL by *delivered* ones. Render-only, LVGL is 24.9 insn/px, Draft 42.4, Exact 473.1. Full attribution, and the ranked fixes, in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
+| [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **the §3 table still counts the benchmark's own FNV fold** (3.1 M insns/frame on our side, 3.9 M on LVGL's) as render cost. The `insn/px` normaliser mismatch is fixed above (every row is now per *delivered* pixel). Render-only, at the pre-#32 firmware, LVGL was 24.9 insn/px, Draft 42.4, Exact 473.1 — and the fold's own cost moves with `opt-level`, so those must be re-derived per level. Full attribution, and the ranked fixes, in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
+| ~~[#33](https://github.com/awtoau/vyr/issues/33)~~ | **resolved as a documented decision, not a code change.** `release-mcu` stays `opt-level="z"` because the plan's smaller candidate part has 1 MiB of flash; the measured cost of every other level, and the recommendation to ship `2` where ≥ 256 KiB is spare, are in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) §0.3. Pixels, heap peak and stack depth are opt-level-invariant (24 builds), so the M4 gate is unaffected either way. |

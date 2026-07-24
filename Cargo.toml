@@ -15,6 +15,22 @@ authors = ["awto <dan@awto.au>"]
 # everywhere), symbols stripped (section sizes are unaffected; use the plain
 # `release` ELF for symbol-level analysis). `release` stays the desktop
 # oracle profile; `./dev.py size-mcu` measures BOTH.
+#
+# `opt-level = "z"` is a DECIDED trade, not a default (#33, measured
+# 2026-07-24, docs/measurements/lvgl-gap.md §0.3). `z` is `-Oz`: no inlining,
+# machine outliner on, and it costs 36 % of the Exact frame against `s` and
+# 51 % against `2`. `2` is both faster AND smaller than `s` — `s` is not on
+# the frontier at all — and the entire price of `2` is **+183 KiB of flash**:
+# the M4 heap peak (the BINDING constraint: 112,473 B of a 122,880 B arena),
+# the stack watermark (±320 B across the whole sweep) and every tier's frame
+# hash are opt-level-INVARIANT, so `./dev.py qemu-m4`'s hard gates do not move
+# with this line. `z` stays the default because F9 leaves the board choice
+# open down to a 1 MiB part (H735-DK; vyr-size/link-qemu.ld models 1 MiB too),
+# where +183 KiB is 42 % of the application's remaining budget. On >= 2 MiB,
+# override it downstream — or here, as its own reviewed commit that re-blesses
+# the size matrix and the published insns/frame together:
+#   cargo build --profile release-mcu --config profile.release-mcu.opt-level=2
+# Sweep any level without touching this file: scripts/optlevel-matrix.py.
 [profile.release-mcu]
 inherits = "release"
 opt-level = "z"
