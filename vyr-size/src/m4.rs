@@ -668,6 +668,37 @@ fn main() -> ! {
     // pass through main on a single-threaded target).
     let band_buf = unsafe { &mut *BAND_BUF.0.get() };
 
+    // `--features testcard` with NO display leg (i.e. the emulated-M4 vehicle,
+    // or a board build without lcd/ltdc): render the colour test card purely
+    // for its HASH. That is the cross-ISA half of the claim — the same
+    // committed IR and the same ASCII subset font must fold to the same 64 bits
+    // here as on x86-64 and as on every path that puts it on glass. When a
+    // display leg IS compiled it draws the card itself, so this block stands
+    // down rather than rendering it twice.
+    #[cfg(all(feature = "testcard", not(feature = "lcd"), not(feature = "ltdc")))]
+    {
+        let mut fonts = vyr_core::Fonts::new();
+        match fonts
+            .register("roboto", crate::workload::SUBSET_FONT.to_vec())
+            .and_then(|()| {
+                crate::testcard::render_card(
+                    &mut fonts,
+                    &vyr_core::Assets::new(),
+                    band_buf,
+                    crate::workload::WORKLOAD_QUALITY,
+                    |_, _, _| {},
+                )
+            }) {
+            Ok(h) => crate::testcard::report(
+                &mut emit,
+                "m4-no-display (hash only)",
+                h,
+                crate::workload::WORKLOAD_QUALITY,
+            ),
+            Err(e) => write_line(&alloc::format!("ERROR [vyr-size] testcard failed: {e:?}")),
+        }
+    }
+
     // #28, `--features lcd` only: draw the panel-native scene on the board's
     // own ILI9341 FIRST, so pixels appear seconds after flash rather than
     // after the ~13 s timed loop. It borrows a 240x16 prefix of the same CCM
@@ -699,6 +730,25 @@ fn main() -> ! {
     {
         if let Err(e) = crate::anim::run(&mut emit, band_buf) {
             write_line(&alloc::format!("ERROR [vyr-size] anim failed: {e:?}"));
+        }
+    }
+
+    // `--features spicheck`: the SPI LINK-RATE VERDICT. Runs on the panel the
+    // `lcd` block above already brought up, LAST of the display legs, and
+    // entirely outside the DWT window `workload::run` opens below — it deals in
+    // its own windows and the 480x270 hash and cycles/frame are untouched by
+    // it. It repaints GRAM with a test pattern, so it deliberately runs AFTER
+    // whatever the earlier legs left on the glass and restores the card (or the
+    // scene) itself before it finishes.
+    #[cfg(all(feature = "lcd", feature = "spicheck", not(feature = "ltdc")))]
+    {
+        let n = crate::lcd::PANEL_BAND_BYTES;
+        if let Err(e) = crate::spirate::run(
+            &mut emit,
+            &mut band_buf[..n],
+            crate::workload::WORKLOAD_QUALITY,
+        ) {
+            write_line(&alloc::format!("ERROR [vyr-size] spirate failed: {e:?}"));
         }
     }
 

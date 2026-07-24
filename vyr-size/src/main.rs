@@ -70,6 +70,27 @@ mod ltdc;
 /// [`ltdc`], which owns the SDRAM/LTDC bring-up it measures against.
 #[cfg(all(target_os = "none", feature = "present"))]
 mod present;
+/// SPI5 TX over DMA2 Stream 4 Channel 2 — the DEFAULT flush engine whenever a
+/// SPI-flushed display leg ([`lcd`]) is compiled. `--features spipio` opts out
+/// and takes the busy-wait path instead; `--features board` (measurement, no
+/// display) links none of it.
+#[cfg(all(target_os = "none", feature = "lcd", not(feature = "spipio")))]
+mod spidma;
+/// The SPI link-rate verdict leg: write a pattern at each divisor, read the
+/// controller's GRAM back, compare. Board-only, additive to [`lcd`].
+#[cfg(all(
+    target_os = "none",
+    feature = "spicheck",
+    feature = "lcd",
+    not(feature = "ltdc")
+))]
+mod spirate;
+/// The labelled colour test card — a display bring-up fixture, not a scene.
+/// Compiled on EVERY target (host, emulated M4, board) because the whole point
+/// is that the same IR renders to the same bytes everywhere and the host PNG is
+/// the reference for what the glass should show.
+#[cfg(feature = "testcard")]
+mod testcard;
 
 #[cfg(not(feature = "run-qemu"))]
 use alloc::vec;
@@ -338,6 +359,27 @@ fn main() {
     // CCM instead — see workload::BAND_BYTES for why both are honest.
     let mut band_buf = alloc::vec![0u8; workload::BAND_BYTES];
     let quality = workload::WORKLOAD_QUALITY;
+    // The x86-64 REFERENCE hash for the colour test card (#45 bring-up
+    // fixture). Printed before the workload so it lands in the log even if the
+    // long measurement leg is cut short, and computed from the same committed
+    // IR + the same ASCII subset font the M4 uses — that is what makes
+    // "identical across ISAs" a comparison rather than a coincidence.
+    #[cfg(feature = "testcard")]
+    {
+        let mut fonts = vyr_core::Fonts::new();
+        if let Err(e) = fonts.register("roboto", workload::SUBSET_FONT.to_vec()) {
+            eprintln!("ERROR [vyr-size] testcard font register failed: {e:?}");
+            std::process::exit(1);
+        }
+        let assets = vyr_core::Assets::new();
+        match testcard::render_card(&mut fonts, &assets, &mut band_buf, quality, |_, _, _| {}) {
+            Ok(h) => testcard::report(&mut emit, "host-x86_64 (no display)", h, quality),
+            Err(e) => {
+                eprintln!("ERROR [vyr-size] testcard render FAILED: {e:?}");
+                std::process::exit(1);
+            }
+        }
+    }
     let banded = match workload::run(&mut emit, &heap, None, &mut band_buf, quality) {
         Ok(h) => h,
         Err(e) => {

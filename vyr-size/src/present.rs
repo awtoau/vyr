@@ -304,10 +304,44 @@ pub fn fb888_rect_hash(rect: Rect) -> u64 {
     fb888_rect_hash_from(lcd::FNV_OFFSET, rect)
 }
 
+/// Whether the direct path applies [`swap_rb_in_place`], the software R/B
+/// correction, before the frame reaches the glass.
+///
+/// **Default is OFF, on every path.** The shipped correction is `MADCTL=0x00`,
+/// which was read off the glass to fix both the 180° rotation and the R/B swap
+/// on the `present`/direct path at once (badge 1 top-left, X+ wedge yellow, text
+/// forwards); with that the software swap is redundant and a second swap would
+/// only put red and blue back the wrong way round. The mechanism is KEPT, not
+/// deleted: `VYR_RB_SWAP=1` turns the software pass back on — the fallback if the
+/// still-pending lcd-path reading at `0x00` refutes the direct-path finding and
+/// the panel turns out to be physically BGR-wired.
+///
+/// `VYR_RB_SWAP=0` turns it off and `VYR_RB_SWAP=1` turns it on. The MADCTL
+/// sweep needs it off on EVERY card anyway: MADCTL's `BGR` bit and this pass
+/// both swap red and blue, so with both active they cancel and a
+/// correct-looking panel would be mistaken for a correct configuration. Every
+/// leg logs which corrections were live and the on-glass identity strip prints
+/// them, so a photograph can never be read the wrong way round.
+pub(crate) const RB_SWAP: bool = rb_swap_from_env();
+
+const fn rb_swap_from_env() -> bool {
+    match option_env!("VYR_RB_SWAP") {
+        // Default OFF everywhere: MADCTL=0x00 is the shipped R/B correction, so
+        // the software pass is redundant unless a build explicitly asks for it.
+        None => false,
+        Some(s) => {
+            let b = s.as_bytes();
+            !(b.len() == 1 && b[0] == b'0')
+        }
+    }
+}
+
 /// The same fold with every RGB triple REVERSED — i.e. what the framebuffer
 /// should hash to after [`swap_rb_in_place`]. Computing the expectation from
 /// the pre-swap contents is what turns "the swap ran" into "the swap is
-/// correct".
+/// correct". Live in every `present` build: when [`RB_SWAP`] is off it is what
+/// the log reports the frame WOULD have become, which is the evidence that the
+/// pass was skipped rather than silently broken.
 fn fb888_rect_hash_swapped(rect: Rect) -> u64 {
     let mut h = lcd::FNV_OFFSET;
     let mut row_buf = [0u8; (PANEL_W * 3) as usize];
@@ -334,6 +368,9 @@ fn fb888_rect_hash_swapped(rect: Rect) -> u64 {
 /// transactions for the same work. This is a full read-modify-write pass over
 /// the framebuffer and is priced as its own line — it is NOT free, and whether
 /// it is worth paying is exactly the kind of thing the verdict has to weigh.
+///
+/// Whether it runs is [`RB_SWAP`]'s decision, not this function's — the call
+/// is a runtime `if` on a `const`, so it still folds away when it is off.
 pub fn swap_rb_in_place() -> u32 {
     let t0 = cyc();
     let mut p = FB888_BASE as *mut u32;
@@ -726,34 +763,283 @@ pub fn compare(
         "INFO  [vyr-size] present: pixels_identical_across_modes={all_equal}"
     ));
 
-    // --- leave the panel showing the DIRECT frame, in true colours -----------
+    // --- leave the panel showing the DIRECT frame ----------------------------
+    // `--features testcard` swaps the final picture for the LABELLED COLOUR
+    // TEST CARD and, deliberately, applies NO R/B correction — see
+    // [`testcard_direct`]. It is the whole experiment, so it replaces this tail
+    // rather than running after it: two full-frame direct renders would leave
+    // the panel showing whichever happened to be last. The call itself is made
+    // by [`crate::ltdc::show_scene`], which OWNS the scene's `Request` and both
+    // registries and can therefore free them first — this function only borrows
+    // them, and on a 120 KiB arena that difference is the difference between a
+    // rendered card and an allocation panic.
+    #[cfg(feature = "testcard")]
+    return Ok(());
+
     // Re-render the base scene at the workload tier so what is on the glass is
     // the scene every other leg reports, not the dirty-rect variant left over
     // from the loop above.
+    #[cfg(not(feature = "testcard"))]
+    {
+        let mut c = Cost {
+            render_cycles: 0,
+            blit_cycles: 0,
+        };
+        let mut px = 0u64;
+        render_direct(
+            req,
+            fonts,
+            assets,
+            crate::workload::WORKLOAD_QUALITY,
+            full,
+            &mut c,
+            &mut px,
+        )?;
+        let pre = fb888_rect_hash(full);
+        let want = fb888_rect_hash_swapped(full);
+        if RB_SWAP {
+            let swap_cycles = swap_rb_in_place();
+            let post = fb888_rect_hash(full);
+            emit(&alloc::format!(
+                "INFO  [vyr-size] present: rb_swap cycles={swap_cycles} bytes={FB888_BYTES} \
+             kbps={} pre={pre:#018x} post={post:#018x} want={want:#018x} correct={}",
+                kbps(FB888_BYTES as u64, swap_cycles, hz),
+                post == want
+            ));
+        } else {
+            // `VYR_RB_SWAP=0`: the priced pass is NOT run, so what LTDC scans
+            // is exactly the bytes vyr-core wrote, R first. Reported as its own
+            // line rather than by omission — a missing line reads as a broken
+            // build, and this is a deliberate configuration.
+            emit(&alloc::format!(
+                "INFO  [vyr-size] present: rb_swap SKIPPED (VYR_RB_SWAP=0) cycles=0 \
+             bytes={FB888_BYTES} pre={pre:#018x} post={pre:#018x} \
+             would_have_become={want:#018x} correct=n/a — no software channel \
+             correction is active on this frame"
+            ));
+        }
+        isr_clear();
+        fb_select(Fmt::Rgb888);
+        // Let the controller scan a few whole frames in the new format before its
+        // error flags are believed. 100 ms is ~6.5 frames at the measured 65.33 Hz
+        // and is a busy-wait, never a shell sleep.
+        lcd::delay_ms(100);
+        let isr = isr_read();
+        let (cdsr, cpsr) = ltdc::ltdc_status();
+        emit(&alloc::format!(
+            "INFO  [vyr-size] present: now scanning RGB888 fb={FB888_BASE:#010x} \
+         L1PFCR={:#x} L1CFBAR={:#010x} L1CFBLR={:#010x} L1CR={:#010x} \
+         CDSR={cdsr:#010x} CPSR={cpsr:#010x} isr={isr:#010x} fifo_underrun={} \
+         scanout_read_bytes_per_s={}",
+            rd(L1_PFCR),
+            rd(L1_CFBAR),
+            rd(L1_CFBLR),
+            rd(L1_CR),
+            (isr & ISR_FUIF) != 0,
+            FB888_BYTES as u64 * 6533 / 100
+        ));
+        emit(&alloc::format!(
+            "ALERT [vyr-size] present: the panel is now showing the DIRECT-rendered \
+         frame — vyr-core wrote RGB888 straight into SDRAM with no blit. \
+         CORRECTIONS ACTIVE: MADCTL={:#04x} ({}), software R/B swap={}. It should \
+         look IDENTICAL to the banded RGB565 frame the ltdc leg leaves. Swapped \
+         red/blue means the channel order is still wrong; a sheared or noisy \
+         image means the RGB888 layer geometry is wrong; a correct image is the \
+         only confirmation a machine cannot give.",
+            lcd::MADCTL,
+            lcd::madctl_flags(),
+            if RB_SWAP { "APPLIED" } else { "NOT applied" }
+        ));
+        Ok(())
+    }
+}
+
+/// `--features testcard`: leave the panel showing the card, rendered DIRECT
+/// into the RGB888 framebuffer, with the software R/B swap applied only if
+/// [`RB_SWAP`] says so (colour card: off by default; orientation card: on by
+/// default; `VYR_RB_SWAP` overrides both, and the MADCTL sweep turns it off).
+///
+/// This is the experiment the swap pass was never subjected to. Everything
+/// upstream of the glass is machine-checked already — both modes produce
+/// byte-identical RGB888, the framebuffer reads back what was written, LTDC
+/// reports no underrun — and NONE of it can say which byte the RGB888 layer
+/// treats as red. Only light coming out of the panel can, and only if the
+/// picture says what it is supposed to be.
+///
+/// So the swap is deliberately NOT applied: what LTDC scans is exactly the
+/// bytes `vyr-core` wrote, R first. Then
+///
+/// * the block labelled `RED` appearing **blue** ⇒ the layer reads B at the
+///   lowest address, RM0090 is right, and the correcting pass is REQUIRED;
+/// * the block labelled `RED` appearing **red** ⇒ the layer reads R first, the
+///   swap is unnecessary, and direct rendering wins outright.
+///
+/// The `lcd` and `ltdc` builds of the same card are the controls: both convert
+/// to RGB565 in vyr's own software and exercise no RGB888 layer format, so if
+/// the labels are wrong THERE the fault is upstream of this question entirely.
+///
+/// The raw framebuffer bytes under three swatch centres are logged as well —
+/// machine proof of what the renderer wrote, against which the photograph of
+/// what the panel displayed can be compared.
+#[cfg(feature = "testcard")]
+pub(crate) fn testcard_direct(
+    emit: &mut dyn FnMut(&str),
+    fonts: &mut Fonts,
+    assets: &Assets,
+) -> Result<(), RenderError> {
+    use crate::testcard;
+
+    let quality = crate::workload::WORKLOAD_QUALITY;
+    let card = Request::parse(crate::opaque(testcard::CARD_IR))?;
     let mut c = Cost {
         render_cycles: 0,
         blit_cycles: 0,
     };
     let mut px = 0u64;
     render_direct(
-        req,
+        &card,
         fonts,
         assets,
-        crate::workload::WORKLOAD_QUALITY,
-        full,
+        quality,
+        testcard::CARD_RECT,
         &mut c,
         &mut px,
     )?;
-    let pre = fb888_rect_hash(full);
-    let want = fb888_rect_hash_swapped(full);
-    let swap_cycles = swap_rb_in_place();
-    let post = fb888_rect_hash(full);
+    // Hash READ BACK OUT of SDRAM, not folded on the way in: this is the
+    // number compared against the SPI leg, the banded leg, the host and the
+    // emulated M4, and reading it back also proves the memory holds it.
+    let hash = fb888_rect_hash(testcard::CARD_RECT);
+    // Taken BEFORE any correcting pass, which is what makes it comparable with
+    // the SPI leg, the banded leg, the host and the emulated M4: every one of
+    // those folds the bytes `vyr-core` emitted, R first. A hash taken after the
+    // swap would be a hash of different bytes and would prove nothing about
+    // whether the same IR produced the same pixels.
+    testcard::report(
+        emit,
+        if RB_SWAP {
+            "present-direct-rgb888-RBSWAP"
+        } else {
+            "present-direct-rgb888-NOSWAP"
+        },
+        hash,
+        quality,
+    );
+
+    // The card's own parsed tree is ~45 KiB of the 120 KiB arena and is finished
+    // with the moment its pixels are in SDRAM. Dropping it before the identity
+    // strip is parsed is not tidiness: MEASURED on this board, holding it cost
+    // the strip's 32,768 B band pixmap its allocation
+    // (`memory allocation of 32768 bytes failed`) even though live+wanted was
+    // under the arena, because the free space was no longer contiguous. The legs
+    // that go through `testcard::render_card` get this for free — the request is
+    // that function's local — and only the direct path, which owns its request
+    // across two renders, has to say it out loud.
+    drop(card);
+
+    // Line 3 is the whole configuration, printed on the glass, so the
+    // photograph is self-describing: the MADCTL actually written and whether
+    // the software R/B pass ran. Both swap red and blue; both active cancel,
+    // and a card that did not say so could be read as "correct" when it is
+    // merely doubly wrong.
+    let ident = Request::parse(&testcard::identity_ir(
+        "PATH present: DIRECT render, no blit",
+        "FMT RGB888 fb 0xD0040000 L1PFCR=1",
+        &alloc::format!(
+            "MADCTL {:#04x} {} / RB sw {}",
+            lcd::MADCTL,
+            lcd::madctl_flags(),
+            if RB_SWAP { "SWAPPED" } else { "none" }
+        ),
+    ))?;
+    render_direct(
+        &ident,
+        fonts,
+        assets,
+        quality,
+        testcard::IDENT_RECT,
+        &mut c,
+        &mut px,
+    )?;
+
+    // What is actually in memory under three known-colour points, in ADDRESS
+    // order — machine proof of what the renderer wrote, against which a
+    // photograph of what the panel displayed can be compared.
+    let probe = |x: u32, y: u32| -> (u8, u8, u8) {
+        let off = ((y * testcard::PANEL_W + x) * 3) as usize;
+        // SAFETY: inside the RGB888 framebuffer; read-only.
+        let s = unsafe { core::slice::from_raw_parts((FB888_BASE as usize + off) as *const u8, 3) };
+        (s[0], s[1], s[2])
+    };
+    // Colour card: the RED/GREEN/BLUE swatch centres. Geometry from
+    // scripts/make-testcard.py — swatches start at y = 24 with a 23 px pitch,
+    // 21 px tall, spanning x = 70..236.
+    #[cfg(not(feature = "orientcard"))]
+    let (names, pts) = (
+        ["RED(153,34)", "GREEN(153,57)", "BLUE(153,80)"],
+        [(153u32, 34u32), (153, 57), (153, 80)],
+    );
+    // Orientation card: the origin block, the +X wedge and the +Y wedge.
+    // Geometry from scripts/make-orientcard.py — cyan block at (0,0)..(24,12),
+    // yellow wedge along the top edge, magenta wedge down the left.
+    #[cfg(feature = "orientcard")]
+    let (names, pts) = (
+        ["ORIGIN(2,8)", "XWEDGE(200,4)", "YWEDGE(2,240)"],
+        [(2u32, 8u32), (200, 4), (2, 240)],
+    );
+    let mut probes = alloc::string::String::new();
+    for (n, (x, y)) in names.iter().zip(pts.iter()) {
+        let (r, g, b) = probe(*x, *y);
+        probes.push_str(&alloc::format!("{n}=[{r:02x} {g:02x} {b:02x}] "));
+    }
     emit(&alloc::format!(
-        "INFO  [vyr-size] present: rb_swap cycles={swap_cycles} bytes={FB888_BYTES} \
-         kbps={} pre={pre:#018x} post={post:#018x} want={want:#018x} correct={}",
-        kbps(FB888_BYTES as u64, swap_cycles, hz),
-        post == want
+        "INFO  [vyr-size] testcard: framebuffer bytes BEFORE any correction, in \
+         ADDRESS order — {probes}. vyr-core writes R,G,B, so these ARE the \
+         renderer's bytes."
     ));
+
+    // --- the software R/B correction, if this build is paying for it ---------
+    // The colour card exists to ASK whether LTDC's RGB888 layer is B-first, so
+    // by default it is displayed raw; the orientation card, which asks
+    // something else entirely, by default pays the correcting pass so its
+    // colours cannot muddle the reading. `VYR_RB_SWAP` overrides either, and
+    // the MADCTL sweep turns it OFF on both — MADCTL's BGR bit swaps the same
+    // two channels, and two swaps that cancel look exactly like none.
+    //
+    // Reusing [`swap_rb_in_place`] rather than inventing a second mechanism is
+    // the point: one priced, tested pass, and the post-swap hash is CHECKED
+    // against the expectation computed from the pre-swap contents, so "the swap
+    // ran" becomes "the swap is correct".
+    {
+        let full = Rect {
+            x: 0,
+            y: 0,
+            w: PANEL_W,
+            h: PANEL_H,
+        };
+        let pre = fb888_rect_hash(full);
+        let want = fb888_rect_hash_swapped(full);
+        if RB_SWAP {
+            let cycles = swap_rb_in_place();
+            let post = fb888_rect_hash(full);
+            emit(&alloc::format!(
+                "INFO  [vyr-size] testcard: rb_swap APPLIED cycles={cycles} \
+                 bytes={FB888_BYTES} pre={pre:#018x} post={post:#018x} \
+                 want={want:#018x} correct={} (the card body hash reported above is \
+                 the PRE-swap fold, which is what the other paths and both ISAs \
+                 fold too)",
+                post == want
+            ));
+        } else {
+            emit(&alloc::format!(
+                "INFO  [vyr-size] testcard: rb_swap NOT applied cycles=0 \
+                 bytes={FB888_BYTES} pre={pre:#018x} post={pre:#018x} \
+                 would_have_become={want:#018x} — LTDC is scanning exactly the \
+                 bytes vyr-core wrote, R first, so any channel order visible on \
+                 the glass is MADCTL's and the layer format's alone"
+            ));
+        }
+    }
+
     isr_clear();
     fb_select(Fmt::Rgb888);
     // Let the controller scan a few whole frames in the new format before its
@@ -774,15 +1060,20 @@ pub fn compare(
         (isr & ISR_FUIF) != 0,
         FB888_BYTES as u64 * 6533 / 100
     ));
-    emit(
-        "ALERT [vyr-size] present: the panel is now showing the DIRECT-rendered \
-         frame — vyr-core wrote RGB888 straight into SDRAM with no blit, and an \
-         R/B swap pass corrected for LTDC's B-G-R byte order. It should look \
-         IDENTICAL to the banded RGB565 frame the ltdc leg leaves. Swapped \
-         red/blue means the swap pass is wrong; a sheared or noisy image means \
-         the RGB888 layer geometry is wrong; a correct image is the only \
-         confirmation a machine cannot give.",
-    );
+    // ONE alert, and it names every correction that was live. Two swaps that
+    // cancel produce a correct-looking panel from a wrong configuration, so the
+    // configuration is stated rather than implied — on the glass (the identity
+    // strip) and in the log (here).
+    emit(&alloc::format!(
+        "ALERT [vyr-size] testcard: the panel is showing the {}, rendered DIRECT \
+         into the RGB888 framebuffer. CORRECTIONS ACTIVE: MADCTL={:#04x} ({}), \
+         software R/B swap={}. {}",
+        testcard::CARD_NAME,
+        lcd::MADCTL,
+        lcd::madctl_flags(),
+        if RB_SWAP { "APPLIED" } else { "NOT applied" },
+        testcard::READ_ME
+    ));
     Ok(())
 }
 

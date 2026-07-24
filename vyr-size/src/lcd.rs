@@ -47,7 +47,25 @@
 //! (internal-clock display operation), i.e. "the SPI port owns the pixels".
 //! Everything else in the sequence — the power/VCOM/gamma block and MADCTL
 //! `0xC8` — is ST's, byte for byte, so the panel is driven at the operating
-//! point its vendor specified.
+//! point its vendor specified. MADCTL is the ONE exception, and only when it
+//! is asked to be: [`MADCTL`] defaults to ST's `0xC8` and is overridable at
+//! compile time by `VYR_MADCTL` so `scripts/board-madctl.py` can sweep the
+//! panel's scan order on the glass. An unparameterised build writes `0xC8`.
+//!
+//! # The BAUD RATE is a parameter too, and its default is the safe one
+//!
+//! [`SPI_BR`] is the CR1 `BR[2:0]` field, `VYR_SPI_BR`, defaulting to `3` =
+//! PCLK2/16 = 5.625 MHz — the universally-safe rate, so an unparameterised build
+//! is byte-for-byte the configuration every earlier measurement was taken on.
+//! The ladder above it (`2` = /8 = 11.25 MHz, `1` = /4 = 22.5 MHz, `0` = /2 =
+//! 45 MHz) has NO authoritative datasheet to check against — these panels are
+//! clones — so no rung is labelled "in spec" or "overclock" here. A rate is only
+//! meaningful with a verdict attached: see [`crate::spirate`], which writes a
+//! pattern at each rung and reads the controller's GRAM back to say bit-exact or
+//! not. That read-back IS the qualifier, and it is PER-UNIT: this unit read back
+//! bit-exact at every rung to 45 MHz, which says nothing about the next unit.
+//! The panel's ~6.66 MHz READ ceiling does not constrain this field at all —
+//! every read in this file is bit-banged on GPIO, not clocked by SPI5.
 //!
 //! Consequences, stated plainly: over SPI a full-screen flush is 153,600
 //! bytes at 5.625 MHz ≈ 220 ms, so that path is for static frames. Neither
@@ -91,10 +109,16 @@ const GPIOC: u32 = 0x4002_0800;
 const GPIOD: u32 = 0x4002_0C00;
 const GPIOF: u32 = 0x4002_1400;
 
-const SPI5: u32 = 0x4001_5000;
+pub(crate) const SPI5: u32 = 0x4001_5000;
 const SPI_CR1: u32 = 0x00;
+/// SPI_CR2 — `TXDMAEN` (bit 1) is how the peripheral is told to raise a DMA
+/// request instead of expecting the CPU to feed it. Used by [`crate::spidma`],
+/// which is the default flush engine whenever `lcd` is compiled without
+/// `--features spipio`.
+#[cfg(all(feature = "lcd", not(feature = "spipio")))]
+pub(crate) const SPI_CR2: u32 = 0x04;
 const SPI_SR: u32 = 0x08;
-const SPI_DR: u32 = 0x0C;
+pub(crate) const SPI_DR: u32 = 0x0C;
 
 const SPI_SR_TXE: u32 = 1 << 1;
 const SPI_SR_BSY: u32 = 1 << 7;
@@ -183,7 +207,7 @@ pub(crate) fn delay_ms(ms: u32) {
 
 /// Push one byte, waiting for the transmit register to drain first.
 /// Returns false if the bounded wait expired (see [`SPIN_LIMIT`]).
-fn spi_byte(b: u8) -> bool {
+pub(crate) fn spi_byte(b: u8) -> bool {
     let mut n = 0u32;
     while rd(SPI5 + SPI_SR) & SPI_SR_TXE == 0 {
         n += 1;
@@ -198,7 +222,7 @@ fn spi_byte(b: u8) -> bool {
 
 /// Wait for the shift register to empty — MUST happen before /CS is raised or
 /// the last byte is cut off mid-frame.
-fn spi_drain() -> bool {
+pub(crate) fn spi_drain() -> bool {
     let mut n = 0u32;
     while rd(SPI5 + SPI_SR) & (SPI_SR_TXE | SPI_SR_BSY) != SPI_SR_TXE {
         n += 1;
@@ -244,13 +268,13 @@ fn data(d: u8) {
 /// Open a long data burst: /CS stays low for the whole run (the normal way to
 /// stream GRAM; per-byte framing would triple the wire time).
 #[cfg(all(feature = "lcd", not(feature = "ltdc")))]
-fn burst_begin() {
+pub(crate) fn burst_begin() {
     dc_data();
     cs(true);
 }
 
 #[cfg(all(feature = "lcd", not(feature = "ltdc")))]
-fn burst_end() {
+pub(crate) fn burst_end() {
     spi_drain();
     cs(false);
 }
@@ -280,14 +304,93 @@ pub(crate) fn spi_init() {
     // read in 2-line mode (ST's driver says so in as many words), so an input
     // that only the gyro drives is left out of the LCD's business.
 
-    // CR1: master, mode 0, 8-bit, MSB first, software NSS asserted, BR = /16
-    // (PCLK2 90 MHz -> 5.625 MHz), SPI enabled.
-    const MSTR: u32 = 1 << 2;
-    const BR_DIV16: u32 = 0b011 << 3;
-    const SPE: u32 = 1 << 6;
-    const SSI: u32 = 1 << 8;
-    const SSM: u32 = 1 << 9;
-    wr(SPI5 + SPI_CR1, MSTR | BR_DIV16 | SSI | SSM);
+    // CR1: master, mode 0, 8-bit, MSB first, software NSS asserted,
+    // BR = SPI_BR (default 0b011 = /16, PCLK2 90 MHz -> 5.625 MHz), SPI enabled.
+    wr(SPI5 + SPI_CR1, MSTR | ((SPI_BR as u32) << 3) | SSI | SSM);
+    wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) | SPE);
+}
+
+// --- the baud rate, as a compile-time parameter -----------------------------
+
+const MSTR: u32 = 1 << 2;
+const SPE: u32 = 1 << 6;
+const SSI: u32 = 1 << 8;
+const SSM: u32 = 1 << 9;
+
+/// APB2 after [`crate::m4::clock_init_180mhz`]: the 180 MHz core divided by 2,
+/// which is APB2's own 90 MHz ceiling. SPI5's kernel clock. Only the SPI-flush
+/// path (`lcd`) and the rate verdict (`spicheck`) consult the wire rate in Hz;
+/// the LTDC leg drives the panel over the parallel bus, so gate it there.
+#[cfg(feature = "lcd")]
+pub(crate) const PCLK2_HZ: u32 = 90_000_000;
+
+/// SPI5 CR1 `BR[2:0]`: the prescaler is `2^(BR+1)`, so `3` = /16 = 5.625 MHz.
+/// **`VYR_SPI_BR` overrides it at compile time; the default is `3`, the
+/// universally-safe rate.**
+///
+/// | `BR` | divisor | rate | qualification |
+/// |---|---|---|---|
+/// | 3 | /16 | 5.625 MHz | the shipped default — safe on any unit |
+/// | 2 | /8 | 11.25 MHz | read-back-qualified per unit only |
+/// | 1 | /4 | 22.5 MHz | read-back-qualified per unit only |
+/// | 0 | /2 | 45 MHz | read-back-qualified per unit only |
+///
+/// There is NO authoritative datasheet for these clone panels, so no rung is
+/// "in spec" or an "overclock" — the qualifier is [`crate::spirate`] reading the
+/// controller's GRAM back and comparing it to the /16 reference, and that
+/// verdict is per-unit. The default stays at /16 because it is the only rate
+/// safe to flash on a unit that has not been individually qualified; the faster
+/// rungs are reachable via `VYR_SPI_BR` for a build that has run the check.
+pub(crate) const SPI_BR: u8 = spi_br_from_env();
+
+/// `VYR_SPI_BR` as a `u8` in `0..=7`, or the default `3`. A malformed or out-of-range
+/// value is a **compile error**: a silently-clamped baud rate would make the
+/// ELF disagree with the log line that names it.
+const fn spi_br_from_env() -> u8 {
+    match option_env!("VYR_SPI_BR") {
+        None => 3,
+        Some(s) => {
+            let b = s.as_bytes();
+            if b.len() != 1 {
+                panic!("VYR_SPI_BR must be a single digit 0..7 (CR1 BR field)");
+            }
+            match b[0] {
+                c @ b'0'..=b'7' => c - b'0',
+                _ => panic!("VYR_SPI_BR must be a single digit 0..7 (CR1 BR field)"),
+            }
+        }
+    }
+}
+
+/// The wire rate a given `BR` produces, in Hz.
+#[cfg(feature = "lcd")]
+pub(crate) const fn spi_hz_for(br: u8) -> u32 {
+    PCLK2_HZ >> (br as u32 + 1)
+}
+
+/// The rate this build actually clocks the panel at.
+#[cfg(feature = "lcd")]
+pub(crate) const SPI_HZ: u32 = spi_hz_for(SPI_BR);
+
+/// Re-write CR1's `BR` field at run time, leaving every other bit as
+/// [`spi_init`] set it.
+///
+/// Only [`crate::spirate`] uses it, and only to walk the ladder inside ONE
+/// flashed image — sweeping by rebuilding would have cost a flash cycle per
+/// rung and made the rungs incomparable (different ELF, different everything).
+/// The peripheral MUST be disabled while BR changes (RM0090 §28.3.3: CR1 is
+/// only to be written with SPE = 0 for the configuration fields), and the shift
+/// register must be empty first or the byte in flight is clocked out at a rate
+/// nobody chose.
+#[cfg(feature = "spicheck")]
+pub(crate) fn spi_set_br(br: u8) {
+    spi_drain();
+    let cr1 = rd(SPI5 + SPI_CR1) & !SPE;
+    wr(SPI5 + SPI_CR1, cr1);
+    wr(
+        SPI5 + SPI_CR1,
+        (cr1 & !(0b111 << 3)) | ((br as u32 & 0b111) << 3),
+    );
     wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) | SPE);
 }
 
@@ -309,15 +412,37 @@ pub(crate) fn spi_init() {
 // frame is already on the glass, so it can never be the reason nothing is
 // visible.
 
-/// One bit-bang half period. ~600 core cycles at 180 MHz ≈ 3.3 µs, so ~150 kHz.
-/// The ILI9341's read cycle minimum is 400 ns (datasheet AC characteristics for
-/// the serial interface); this is an order of magnitude slower, because the
-/// probe's job is to be believable, not fast.
-fn bb_delay() {
-    for i in 0..600u32 {
+/// One bit-bang half period for the REGISTER probe. ~600 core cycles at 180 MHz
+/// ≈ 3.3 µs, so ~150 kHz. The ILI9341's read cycle minimum is 400 ns (datasheet
+/// AC characteristics for the serial interface); this is an order of magnitude
+/// slower, because the probe's job is to be believable, not fast, and it moves
+/// twenty bytes.
+const BB_SLOW: u32 = 600;
+
+/// The bit-bang half period, as an argument.
+///
+/// The register probe runs at [`BB_SLOW`]. The GRAM read-back ([`gram_read`])
+/// moves a hundred thousand bytes and cannot afford that; it passes [`BB_FAST`]
+/// instead. Same code, one number different, so the two cannot drift into two
+/// different bit-bangers.
+#[inline(never)]
+fn bb_delay_n(n: u32) {
+    for i in 0..n {
         core::hint::black_box(i);
     }
 }
+
+/// Half period for the BULK GRAM read-back: ~40 core cycles at 180 MHz plus the
+/// loop's own GPIO writes ≈ 0.35 µs, i.e. a serial clock near 1.4 MHz.
+///
+/// Sized against the ONE ceiling that governs reads and is not the same number
+/// as the write ceiling this whole exercise is pushing on: ST's driver states
+/// the ILI9341's SPI read maximum is **6.66 MHz**, so this is ~4.7x inside it.
+/// Deliberately unchanged across the rate sweep — the instrument must not move
+/// when the thing being measured does, or a failure at 45 MHz could be the
+/// reader's rather than the writer's.
+#[cfg(feature = "spicheck")]
+const BB_FAST: u32 = 40;
 
 fn gpio_input_pulldown(port: u32, pin: u32) {
     wr(port, rd(port) & !(0b11 << (pin * 2))); // MODER: input
@@ -337,23 +462,31 @@ const BB_SDA: u32 = 9;
 
 /// Clock out one byte, MSB first, sampled by the panel on the rising edge.
 fn bb_write_byte(b: u8) {
+    bb_write_byte_at(b, BB_SLOW);
+}
+
+fn bb_write_byte_at(b: u8, d: u32) {
     for i in (0..8).rev() {
         gpio_set(GPIOF, BB_SDA, (b >> i) & 1 != 0);
-        bb_delay();
+        bb_delay_n(d);
         gpio_set(GPIOF, BB_SCK, true);
-        bb_delay();
+        bb_delay_n(d);
         gpio_set(GPIOF, BB_SCK, false);
     }
 }
 
 /// Clock in one byte, MSB first, sampled on the rising edge.
 fn bb_read_byte() -> u8 {
+    bb_read_byte_at(BB_SLOW)
+}
+
+fn bb_read_byte_at(d: u32) -> u8 {
     let mut v = 0u8;
     for _ in 0..8 {
-        bb_delay();
+        bb_delay_n(d);
         gpio_set(GPIOF, BB_SCK, true);
         v = (v << 1) | u8::from(gpio_read(GPIOF, BB_SDA));
-        bb_delay();
+        bb_delay_n(d);
         gpio_set(GPIOF, BB_SCK, false);
     }
     v
@@ -396,7 +529,7 @@ fn bb_read_raw(reg: u8, n: usize) -> [u8; 5] {
 /// Reads, and what a live correctly-configured ILI9341 owes us:
 ///
 /// * `0xD3` RDDID4 — the device ID `0x93 0x41` (ST's `ILI9341_ID = 0x9341`).
-/// * `0x0B` RDDMADCTL — should echo the `0xC8` this driver wrote.
+/// * `0x0B` RDDMADCTL — should echo the [`MADCTL`] this driver wrote.
 /// * `0x0C` RDDCOLMOD — should echo `0x55` (16 bpp DBI), the delta from ST's
 ///   sequence that makes serial GRAM writes meaningful.
 /// * `0x0A` RDDPM — display power mode; bit 2 = display on, bit 4 = sleep out.
@@ -425,12 +558,86 @@ pub(crate) fn panel_probe(emit: &mut dyn FnMut(&str)) {
         .any(|b| b.iter().any(|&x| x != 0x00 && x != 0xFF));
     emit(&alloc::format!(
         "INFO  [vyr-size] lcd probe (bit-banged, raw, dummy bits NOT stripped): \
-         RDDID4(D3)=[{}] RDDMADCTL(0B)=[{}] RDDCOLMOD(0C)=[{}] RDDPM(0A)=[{}] answered={answered}",
+         RDDID4(D3)=[{}] RDDMADCTL(0B)=[{}] RDDCOLMOD(0C)=[{}] RDDPM(0A)=[{}] answered={answered} \
+         madctl_written={MADCTL:#04x} ({})",
         hex(&id),
         hex(&mad),
         hex(&col),
-        hex(&pm)
+        hex(&pm),
+        madctl_flags()
     ));
+}
+
+/// Read `nbytes` back out of the controller's GRAM starting at the window
+/// `[x, x+w) x [y, y+h)`, folding every returned byte into FNV-1a 64 and
+/// copying the first few into `head` so the raw stream can be inspected.
+///
+/// **This is the instrument the rate ladder is judged with.** SPI to a display
+/// is write-only in practice — the peripheral will clock bytes at 45 MHz into a
+/// panel that is latching garbage and report nothing wrong — so the only way to
+/// say "the bits that arrived are the bits that were sent" is to ask the
+/// controller what it stored. The read is bit-banged on GPIO at [`BB_FAST`],
+/// deliberately INDEPENDENT of SPI5's baud rate: the ILI9341's 6.66 MHz read
+/// ceiling constrains this function and nothing else, and holding the reader
+/// fixed while the writer is swept is what makes a differing hash attributable
+/// to the write.
+///
+/// Returns `(fnv1a, cycles)`. The hash is over the RAW returned stream with no
+/// attempt to strip RAMRD's dummy byte or to decode the 6-6-6 read format back
+/// to the 5-6-5 that was written: the verdict is a COMPARISON between rungs,
+/// and a comparison needs the stream to be deterministic, not decoded. Encoding
+/// a guess about the panel's read format would be a way to be wrong.
+#[cfg(all(feature = "lcd", feature = "spicheck", not(feature = "ltdc")))]
+pub(crate) fn gram_read(
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    nbytes: usize,
+    head: &mut [u8],
+) -> (u64, u32) {
+    // The address window goes out over SPI5 at whatever rate is configured —
+    // callers set the in-spec /16 first, so a corrupt window can never be
+    // mistaken for corrupt pixels.
+    let (x1, y1) = (x + w - 1, y + h - 1);
+    cmd(0x2A);
+    for b in [(x >> 8) as u8, x as u8, (x1 >> 8) as u8, x1 as u8] {
+        data(b);
+    }
+    cmd(0x2B);
+    for b in [(y >> 8) as u8, y as u8, (y1 >> 8) as u8, y1 as u8] {
+        data(b);
+    }
+
+    // Take PF7/PF9 away from SPI5 exactly as `bb_read_raw` does.
+    wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) & !SPE);
+    gpio_output(GPIOF, BB_SCK);
+    gpio_output(GPIOF, BB_SDA);
+    gpio_set(GPIOF, BB_SCK, false); // CPOL = 0: idle low
+
+    dc_command();
+    cs(true);
+    bb_write_byte_at(0x2E, BB_FAST); // RAMRD
+    dc_data();
+    gpio_input_pulldown(GPIOF, BB_SDA); // the panel drives the shared line now
+
+    let t0 = crate::m4::clock_cycles() as u32;
+    let mut hash = FNV_OFFSET;
+    for i in 0..nbytes {
+        let b = bb_read_byte_at(BB_FAST);
+        if i < head.len() {
+            head[i] = b;
+        }
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    let cycles = (crate::m4::clock_cycles() as u32).wrapping_sub(t0);
+    cs(false);
+
+    gpio_af(GPIOF, BB_SCK, 5);
+    gpio_af(GPIOF, BB_SDA, 5);
+    wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) | SPE);
+    (hash, cycles)
 }
 
 // --- ILI9341 ----------------------------------------------------------------
@@ -439,6 +646,100 @@ pub(crate) fn panel_probe(emit: &mut dyn FnMut(&str)) {
 pub const PANEL_W: u32 = 240;
 /// Panel geometry.
 pub const PANEL_H: u32 = 320;
+
+// --- MADCTL, the one register the panel's scan order lives in ---------------
+
+/// The value [`panel_init`] writes to MADCTL (`0x36`) — **`0x00` unless
+/// `VYR_MADCTL` overrides it at compile time**.
+///
+/// ILI9341 MADCTL bits (datasheet §8.2.29). ST's stock value for this board was
+/// `0xC8` = `MY|MX|BGR`; the table shows which bit each of those is:
+///
+/// | bit | name | `0xC8` | effect |
+/// |---|---|---|---|
+/// | 7 `0x80` | `MY` row address order | **set** | flips the frame-memory row order |
+/// | 6 `0x40` | `MX` column address order | **set** | flips the column order |
+/// | 5 `0x20` | `MV` row/column exchange | clear | transposes (portrait ↔ landscape) |
+/// | 4 `0x10` | `ML` vertical refresh order | clear | scan direction, not addressing |
+/// | 3 `0x08` | `BGR` colour order | **set** | GRAM → panel driver channel order |
+/// | 2 `0x04` | `MH` horizontal refresh order | clear | as `ML`, horizontally |
+///
+/// `MY|MX` together is a 180° rotation and `BGR` is a red/blue swap, and BOTH
+/// were the symptom on this board's `present`/direct path: badge `1` drawn
+/// top-left appeared bottom-right, and red read as blue. **`MADCTL=0x00`
+/// (`MY|MX|BGR` all clear) was read off the glass to fix both at once** — badge
+/// `1` top-left, the +X wedge yellow, text forwards — so `0x00` is the shipped
+/// default and the software R/B swap ([`crate::present::RB_SWAP`]) is off by
+/// default with it.
+///
+/// One reading is still PENDING: the `lcd`/SPI path's colour at `0x00` has not
+/// been confirmed on the glass. If the panel is physically BGR-wired, `0x00`
+/// could fix `present` by breaking `lcd` (this path has no software swap). So
+/// the value stays a compile-time parameter — `scripts/board-madctl.py` sweeps
+/// it, `VYR_MADCTL=0xC8` restores ST's stock — and the swap mechanism is kept
+/// rather than deleted in case that reading refutes `0x00`.
+pub(crate) const MADCTL: u8 = madctl_from_env();
+
+/// `VYR_MADCTL` as a `u8`, or the default `0x00`. Accepts `0xNN`, `NN` or
+/// decimal-ish hex without prefix; a malformed value is a **compile error**,
+/// never a silently-wrong panel configuration.
+const fn madctl_from_env() -> u8 {
+    match option_env!("VYR_MADCTL") {
+        None => 0x00,
+        Some(s) => {
+            let b = s.as_bytes();
+            let mut i = if b.len() > 2 && b[0] == b'0' && (b[1] == b'x' || b[1] == b'X') {
+                2
+            } else {
+                0
+            };
+            let mut v: u8 = 0;
+            while i < b.len() {
+                let d = match b[i] {
+                    c @ b'0'..=b'9' => c - b'0',
+                    c @ b'a'..=b'f' => c - b'a' + 10,
+                    c @ b'A'..=b'F' => c - b'A' + 10,
+                    _ => panic!("VYR_MADCTL must be a hex byte, e.g. 0xC8"),
+                };
+                v = v * 16 + d;
+                i += 1;
+            }
+            v
+        }
+    }
+}
+
+/// `MADCTL` spelt out, for the log line and the on-glass identity strip — so a
+/// photograph of the panel says which configuration produced it and a
+/// correct-looking panel can never be mistaken for a correct configuration.
+///
+/// `bad_bit_mask` is allowed because [`MADCTL`] is a compile-time PARAMETER: at
+/// the shipped default `0x00` clippy const-folds `MADCTL & bit` to `0 & bit` and
+/// flags it, but a `VYR_MADCTL` build makes it non-zero and the mask is exactly
+/// how each named bit is decoded. The `!= 0` compare is correct at every value.
+#[allow(clippy::bad_bit_mask)]
+pub(crate) fn madctl_flags() -> alloc::string::String {
+    let mut s = alloc::string::String::new();
+    for (bit, name) in [
+        (0x80u8, "MY"),
+        (0x40, "MX"),
+        (0x20, "MV"),
+        (0x10, "ML"),
+        (0x08, "BGR"),
+        (0x04, "MH"),
+    ] {
+        if MADCTL & bit != 0 {
+            if !s.is_empty() {
+                s.push('|');
+            }
+            s.push_str(name);
+        }
+    }
+    if s.is_empty() {
+        s.push_str("none");
+    }
+    s
+}
 
 /// ST's init for this exact panel, with the deltas tabulated in the module
 /// header. The magic numbers are ST's — `ili9341.c` in
@@ -503,8 +804,8 @@ pub(crate) fn panel_init(rgb: bool) {
     }
     cmd(0xC7); // VCOM2
     data(0x90);
-    cmd(0x36); // MADCTL — ST's 0xC8 (MY|MX|BGR) for this board's panel
-    data(0xC8);
+    cmd(0x36); // MADCTL — default 0x00 (ST's stock was 0xC8), or VYR_MADCTL
+    data(MADCTL);
     cmd(0xF2); // 3GAMMA_EN
     data(0x00);
     if rgb {
@@ -631,8 +932,34 @@ fn fill(color: u16) {
 /// buffer's row pitch in bytes, which for a dirty rect is `w * 3` and NOT the
 /// screen pitch — the buffer's origin is the rect's top-left, never the
 /// screen's (invariant I1).
+/// BY DEFAULT this is DMA2 Stream 4 Channel 2 (see [`crate::spidma`]), the
+/// measured win — it overlaps the RGB565 conversion with the transfer and cut
+/// CPU-blocked-on-wire from 218 ms to 10 ms at /16. `--features spipio` selects
+/// the busy-wait loop instead. The busy-wait path is never deleted —
+/// [`flush_rect_pio`] stays compiled in both configurations so one flashed image
+/// can price the two against each other, and it is the comparison baseline.
 #[cfg(all(feature = "lcd", not(feature = "ltdc")))]
 pub(crate) fn flush_rect(x: u32, y: u32, w: u32, h: u32, buf: &[u8], stride: usize) {
+    #[cfg(not(feature = "spipio"))]
+    crate::spidma::flush_rect_dma(x, y, w, h, buf, stride);
+    #[cfg(feature = "spipio")]
+    flush_rect_pio(x, y, w, h, buf, stride);
+}
+
+/// The original programmed-I/O flush: convert a pixel, busy-wait on TXE, poke
+/// the data register, repeat. Measured at 513–515 core cycles per pixel against
+/// a theoretical 512 at PCLK2/16 — ~99.6 % wire efficiency, i.e. the CPU is
+/// keeping the shift register fed and there is nothing to win from tighter
+/// code. What there IS to win is the 512 cycles per pixel the core spends doing
+/// nothing, which is [`crate::spidma`]'s entire argument.
+///
+/// Kept compiled even when `spidma` has taken over `flush_rect` — that is the
+/// point of it, not an oversight, so the dead-code warning is silenced rather
+/// than obeyed. Deleting the path a measurement is taken against is how a
+/// comparison quietly becomes an assertion.
+#[cfg(all(feature = "lcd", not(feature = "ltdc")))]
+#[allow(dead_code)]
+pub(crate) fn flush_rect_pio(x: u32, y: u32, w: u32, h: u32, buf: &[u8], stride: usize) {
     set_window(x, y, w, h);
     burst_begin();
     let row_bytes = (w * 3) as usize;
@@ -746,8 +1073,18 @@ pub fn show_panel_scene(
 ) -> Result<u64, RenderError> {
     emit(&alloc::format!(
         "INFO  [vyr-size] lcd: ILI9341 {PANEL_W}x{PANEL_H} over SPI5 \
-         (SCK PF7 / MOSI PF9 / CS PC2 / DCX PD13, PCLK2/16 = 5.625 MHz), \
-         GRAM fed from the serial port (0xF6 RM=0 DM=00)"
+         (SCK PF7 / MOSI PF9 / CS PC2 / DCX PD13), GRAM fed from the serial \
+         port (0xF6 RM=0 DM=00), MADCTL={MADCTL:#04x} ({}), \
+         spi_br={SPI_BR} pclk2_hz={PCLK2_HZ} spi_hz={SPI_HZ} \
+         (PCLK2/{}) rate_qualifier=read-back-per-unit (see spirate; no datasheet \
+         for these clone panels) flush_engine={}",
+        madctl_flags(),
+        1u32 << (SPI_BR as u32 + 1),
+        if cfg!(feature = "spipio") {
+            "pio-busywait"
+        } else {
+            "dma2-s4-c2"
+        }
     ));
     spi_init();
     panel_init(false); // serial GRAM: this leg's whole point
@@ -807,6 +1144,71 @@ pub fn show_panel_scene(
     emit(
         "ALERT [vyr-size] lcd: frame is on the glass — the panel refreshes itself from ILI9341 GRAM, so the image persists after the target halts",
     );
+
+    // `--features testcard`: draw the LABELLED COLOUR TEST CARD over the top,
+    // last, so this leg leaves the fixture on the glass rather than the mock-up.
+    // Same renderer, same `flush_rect`, same RGB888 -> RGB565 truncation as the
+    // scene above. It is also the ONLY validation instrument this exercise has
+    // that a human can adjudicate: marginal SPI timing corrupts pixels rather
+    // than failing cleanly, and "it looked fine" against a dashboard mock-up
+    // nobody can check from memory is not evidence, whereas a block labelled
+    // RED that is not red is.
+    #[cfg(feature = "testcard")]
+    {
+        // The mock-up above is finished with; its parsed tree, its glyph cache
+        // at two sizes it does not share with the card, and the checker asset
+        // are all still holding arena. Free them before the card's 68-node tree
+        // is parsed — see `testcard::reclaim` for the panic that taught this.
+        drop(req);
+        crate::testcard::reclaim(emit, &mut fonts, &mut assets, crate::workload::SUBSET_FONT)?;
+        let card =
+            crate::testcard::render_card(&mut fonts, &assets, band_buf, quality, |y, h, buf| {
+                flush_rect(0, y, PANEL_W, h, buf, stride)
+            })?;
+        crate::testcard::report(emit, "lcd-spi-gram", card, quality);
+        // Line 3 is the CONFIGURATION, on the glass, in the photograph: the
+        // MADCTL actually written and the wire rate it was written at. A card
+        // that does not state the rate it was drawn at cannot be used as
+        // evidence about that rate.
+        let ident = vyr_core::ir::Request::parse(&crate::testcard::identity_ir(
+            "PATH lcd: SPI5 -> ILI9341 GRAM",
+            &alloc::format!(
+                "SPI {} kHz /{} {}",
+                SPI_HZ / 1000,
+                1u32 << (SPI_BR as u32 + 1),
+                if cfg!(feature = "spipio") {
+                    "PIO"
+                } else {
+                    "DMA"
+                }
+            ),
+            &alloc::format!("MADCTL {MADCTL:#04x} {} / RB sw none", madctl_flags()),
+        ))?;
+        crate::testcard::banded(
+            &ident,
+            &mut fonts,
+            &assets,
+            band_buf,
+            quality,
+            crate::testcard::IDENT_RECT,
+            0,
+            |y, h, buf| flush_rect(0, y, PANEL_W, h, buf, stride),
+        )?;
+        emit(&alloc::format!(
+            "ALERT [vyr-size] testcard: the {} is on the glass via SPI at \
+             {SPI_HZ} Hz (PCLK2/{}, rate qualified per-unit by read-back, not a \
+             datasheet — these are clone panels), MADCTL={MADCTL:#04x} ({}), \
+             software R/B swap=NOT applied (this path has none). This leg \
+             converts RGB888 -> RGB565 in vyr's own software and never touches an \
+             LTDC layer format, so it is the CONTROL for the channel-order \
+             experiment: if the card is wrong HERE the fault is the \
+             panel/MADCTL/COLMOD, not LTDC's byte order. {}",
+            crate::testcard::CARD_NAME,
+            1u32 << (SPI_BR as u32 + 1),
+            madctl_flags(),
+            crate::testcard::READ_ME
+        ));
+    }
     // LAST, deliberately: ask the controller to identify itself and echo back
     // the configuration it was given. Nothing here changes what is displayed.
     panel_probe(emit);

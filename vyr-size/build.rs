@@ -14,6 +14,14 @@ fn main() {
     println!("cargo:rerun-if-changed=link.ld");
     println!("cargo:rerun-if-changed=link-qemu.ld");
     println!("cargo:rerun-if-changed=link-board.ld");
+    // The panel bring-up sweep's compile-time parameters (`src/lcd.rs` MADCTL
+    // and SPI_BR, `src/present.rs` RB_SWAP). rustc already records `option_env!`
+    // as a dependency, so this is belt-and-braces — but a stale image flashed
+    // to a board is a wrong ANSWER, not a slow build, and the runner
+    // additionally verifies the value the running target reports.
+    println!("cargo:rerun-if-env-changed=VYR_MADCTL");
+    println!("cargo:rerun-if-env-changed=VYR_RB_SWAP");
+    println!("cargo:rerun-if-env-changed=VYR_SPI_BR");
     // TARGET is the triple cargo is building FOR (host builds see the host
     // triple here): gate every link arg on the MCU target.
     let target = std::env::var("TARGET").unwrap_or_default();

@@ -120,6 +120,76 @@ ltdc = ["board"]
 # `--features board,ltdc` compile none of it and are unchanged byte for byte.
 # Runner: scripts/board-present.py.
 present = ["ltdc"]
+# The LABELLED COLOUR TEST CARD (display bring-up fixture): a panel-native
+# 240x320 scene where every swatch carries the NAME of the colour it is
+# supposed to be, so channel order is a reading and not a judgement call.
+# Additive to every display leg and to the emulated/host legs alike:
+#   --features board,lcd,testcard        card over SPI5 into ILI9341 GRAM
+#   --features board,ltdc,testcard       card blitted (RGB888->RGB565) into SDRAM
+#   --features board,ltdc,present,testcard  card rendered DIRECT as RGB888,
+#                                        no software R/B swap by default — the
+#                                        experiment (MADCTL default is 0x00)
+#   --features run-qemu,testcard         card rendered for its HASH only
+#                                        (host x86-64 and emulated M4)
+# Requires run-qemu because the card is drawn with the same ASCII subset font
+# and band buffer that leg owns. `--features board` compiles none of it and is
+# byte-for-byte unchanged. Runners: scripts/board-testcard.py (board),
+# scripts/testcard-host.py (reference PNG + cross-ISA hash).
+testcard = ["run-qemu"]
+# The CORNER AND ORIENTATION CARD — the SAME fixture with a different asset, not
+# a second mechanism. `testcard` owns the machinery (band loop, body/identity
+# split, hash, `reclaim`); this feature only decides which committed IR
+# `testcard::CARD_IR` includes and what the human is told to read off the glass.
+#
+# It answers a question the colour card cannot: which PHYSICAL corner is the
+# renderer's (0,0), which way +X and +Y run on the panel, and whether the scan
+# is mirrored. Four numbered corner badges, two direction wedges, edge rulers
+# and an origin block make all EIGHT orientations (4 rotations x mirrored/not)
+# look different.
+#   --features board,lcd,orientcard        card over SPI5 into ILI9341 GRAM
+#   --features board,ltdc,orientcard       card blitted (RGB888->RGB565)
+#   --features board,ltdc,present,orientcard  card rendered DIRECT as RGB888.
+#                                        The software R/B swap defaults OFF like
+#                                        every card now does (MADCTL=0x00 is the
+#                                        shipped correction); `VYR_RB_SWAP=1`
+#                                        turns the software pass back on if the
+#                                        pending lcd-path reading refutes 0x00.
+# `--features board` compiles none of it and is byte-for-byte unchanged.
+# Runners: scripts/board-testcard.py --card orient (board),
+# scripts/testcard-host.py --card orient (reference PNG + cross-ISA hash).
+orientcard = ["testcard"]
+# --- SPI link rate + DMA (#28 follow-on) ------------------------------------
+# The SPI5 baud-rate divisor is NOT a feature: it is `VYR_SPI_BR`, an
+# `option_env!` compile-time parameter read by `lcd::SPI_BR`, defaulting to
+# /16 (5.625 MHz), the universally-safe rate. See vyr-size/src/lcd.rs. A rung is
+# only meaningful with a read-back verdict attached (see `spicheck`); there is
+# no authoritative datasheet for these clone panels, so the read-back IS the
+# qualifier and it is per-unit. A feature would have needed one per rung.
+#
+# spicheck: the RATE VERDICT leg. Writes a deterministic high-transition
+# pattern into ILI9341 GRAM at each rung of the divisor ladder and READS IT
+# BACK over the bit-banged serial port (which the panel's own read ceiling
+# governs, not SPI5's baud rate), folding the returned bytes to FNV-1a. A rung
+# whose read-back hash equals the reference /16 rung's is bit-exact ON THE WIRE
+# for THIS unit — a machine verdict with no human in the loop, and no claim
+# about any other unit. Additive to `lcd`; the measurement build compiles none
+# of it. Runner: scripts/board-spirate.py.
+spicheck = ["lcd"]
+# DMA IS THE DEFAULT FLUSH: with `lcd` compiled, `lcd::flush_rect` streams the
+# pixel flush out of SPI5 with DMA2 Stream 4 Channel 2 (SPI5_TX per ST's CubeMX
+# device database) instead of busy-waiting on TXE for ~513 cycles per pixel.
+# Measured: CPU-blocked-on-wire fell 218 ms -> 10 ms at /16 because the RGB565
+# conversion overlaps the transfer. The engine is hash-neutral — the per-band
+# FNV fold happens on the source bytes before either engine sees them.
+#
+# spipio: OPT OUT of DMA and use the programmed-I/O busy-wait flush instead.
+# The busy-wait path (`lcd::flush_rect_pio`) stays compiled in BOTH
+# configurations so one flashed image can price the two against each other; this
+# feature is how the comparison baseline is selected. Additive to `lcd`;
+# `--features board` and `--features board,lcd` still compile the DMA default,
+# and `--features board` (the measurement build) compiles no display code at
+# all and is byte-for-byte unchanged.
+spipio = ["lcd"]
 
 [dependencies]
 vyr-core = { path = "../vyr-core" }

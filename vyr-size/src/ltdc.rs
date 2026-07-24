@@ -1327,5 +1327,79 @@ pub fn show_scene(
     #[cfg(feature = "present")]
     crate::present::compare(emit, band_buf, &req, &mut fonts, &assets, hz)?;
 
+    // --- 8. `--features testcard`: everything above is finished with -------
+    // Free the mock-up before the card is parsed. This has to happen HERE and
+    // not inside the display legs, because `req`, `fonts` and `assets` are
+    // owned by this function and `present::compare` only borrows them — see
+    // `testcard::reclaim` for the arena arithmetic that makes it necessary.
+    #[cfg(feature = "testcard")]
+    {
+        drop(req);
+        crate::testcard::reclaim(emit, &mut fonts, &mut assets, crate::workload::SUBSET_FONT)?;
+    }
+
+    // `--features testcard,present`: the DIRECT path draws the card, because
+    // that is the configuration in question. Deliberately with NO R/B swap.
+    #[cfg(all(feature = "testcard", feature = "present"))]
+    crate::present::testcard_direct(emit, &mut fonts, &assets)?;
+
+    // --- 8b. `--features testcard`: the colour test card, banded -----------
+    // Only when `present` is NOT compiled: with `present` the card is drawn by
+    // the DIRECT path instead (that is the configuration under question), and
+    // drawing it twice would leave the panel showing whichever ran last for no
+    // stated reason.
+    //
+    // This leg's blit converts RGB888 -> RGB565 in software and hands LTDC an
+    // RGB565 layer, so like the SPI leg it is a CONTROL for the channel-order
+    // experiment: it exercises LTDC scan-out but not LTDC's RGB888 pixel-data
+    // mapping, which is the thing actually in doubt.
+    #[cfg(all(feature = "testcard", not(feature = "present")))]
+    {
+        // Band → fold → `blit`, i.e. exactly what `render_rect_from` does minus
+        // the cycle accounting, which a bring-up fixture has no business
+        // reporting. The load-bearing half is `blit` itself: the same software
+        // RGB888 → RGB565 fold, into the same framebuffer, scanned by the same
+        // RGB565 layer.
+        let card =
+            crate::testcard::render_card(&mut fonts, &assets, band_buf, quality, |y, h, buf| {
+                blit(0, y, PANEL_W, h, buf)
+            })?;
+        crate::testcard::report(emit, "ltdc-banded-rgb565", card, quality);
+        // Line 3 states the configuration on the glass — see the same line in
+        // `lcd::show_panel_scene`. A photograph that does not say which MADCTL
+        // and which software corrections were active is evidence of nothing.
+        let ident = vyr_core::ir::Request::parse(&crate::testcard::identity_ir(
+            "PATH ltdc: banded render + blit",
+            "FMT RGB565 fb 0xD0000000 L1PFCR=2",
+            &alloc::format!(
+                "MADCTL {:#04x} {} / RB sw none",
+                crate::lcd::MADCTL,
+                crate::lcd::madctl_flags()
+            ),
+        ))?;
+        crate::testcard::banded(
+            &ident,
+            &mut fonts,
+            &assets,
+            band_buf,
+            quality,
+            crate::testcard::IDENT_RECT,
+            0,
+            |y, h, buf| blit(0, y, PANEL_W, h, buf),
+        )?;
+        emit(&alloc::format!(
+            "ALERT [vyr-size] testcard: the {} is in the RGB565 framebuffer and \
+             LTDC is scanning it. CORRECTIONS ACTIVE: MADCTL={:#04x} ({}), \
+             software R/B swap=NOT applied (this path has none). {} The RGB888 \
+             -> RGB565 conversion here is vyr's own software fold, so this is \
+             the CONTROL for the direct-render experiment — LTDC's RGB888 \
+             pixel-data mapping is not exercised by this build at all.",
+            crate::testcard::CARD_NAME,
+            crate::lcd::MADCTL,
+            crate::lcd::madctl_flags(),
+            crate::testcard::READ_ME
+        ));
+    }
+
     Ok(hash)
 }
