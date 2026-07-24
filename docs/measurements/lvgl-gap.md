@@ -177,9 +177,16 @@ still links, but it takes what is left for the application from 454,427 B
 vyr**. That is not a call this document can make on a product's behalf, and it
 is the only reason `z` survives:
 
-> **Recommendation — keep `release-mcu` at `opt-level="z"`; ship `2` on any
-> part with ≥ 256 KiB of flash to spare, for half the frame at Exact and Fast
-> and no RAM cost whatsoever.**
+> **Not a recommendation — a dimension.** `opt-level` is measured at all four
+> levels every run and belongs in the matrix, not in a decision made once and
+> baked in. `release-mcu` ships `"z"` because it fits the smallest part
+> `plan.md` §5 contemplates (a 1 MiB H735-DK), which makes it a safe DEFAULT —
+> not the best choice for any particular product. A 2 MiB F429 application has
+> ~256 KiB spare and `2` halves the frame at Exact and Fast for zero RAM and
+> zero pixel change; a flash-tight application does not. **Choose from the
+> matrix at deployment time**, per application, with the numbers in front of
+> you. Any column is reproducible in ~12 s:
+> `cargo build --config profile.release-mcu.opt-level=2 …`
 
 Concretely: `2` costs +183 KiB of flash and buys −51 % Exact / −54 % Fast /
 −24 % Draft, with heap peak, stack depth and every pixel unchanged. On a 2 MiB
