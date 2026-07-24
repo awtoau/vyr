@@ -52,23 +52,29 @@
 //! compile time by `VYR_MADCTL` so `scripts/board-madctl.py` can sweep the
 //! panel's scan order on the glass. An unparameterised build writes `0xC8`.
 //!
-//! # The BAUD RATE is a parameter too, and its default is the safe one
+//! # The BAUD RATE is a parameter, and the default is the fastest rung
 //!
-//! [`SPI_BR`] is the CR1 `BR[2:0]` field, `VYR_SPI_BR`, defaulting to `3` =
-//! PCLK2/16 = 5.625 MHz — the universally-safe rate, so an unparameterised build
-//! is byte-for-byte the configuration every earlier measurement was taken on.
-//! The ladder above it (`2` = /8 = 11.25 MHz, `1` = /4 = 22.5 MHz, `0` = /2 =
-//! 45 MHz) has NO authoritative datasheet to check against — these panels are
-//! clones — so no rung is labelled "in spec" or "overclock" here. A rate is only
-//! meaningful with a verdict attached: see [`crate::spirate`], which writes a
-//! pattern at each rung and reads the controller's GRAM back to say bit-exact or
-//! not. That read-back IS the qualifier, and it is PER-UNIT: this unit read back
-//! bit-exact at every rung to 45 MHz, which says nothing about the next unit.
+//! [`SPI_BR`] is the CR1 `BR[2:0]` field, `VYR_SPI_BR`, defaulting to `0` =
+//! PCLK2/2 = **45 MHz** — the fastest rung the divisor ladder can produce, and
+//! what this project runs on its board. The ladder below it is `1` = /4 =
+//! 22.5 MHz, `2` = /8 = 11.25 MHz, `3` = /16 = 5.625 MHz (the rate every
+//! earlier measurement was taken on; set `VYR_SPI_BR=3` to reproduce them).
+//!
+//! There is NO authoritative datasheet to check any of this against — these
+//! panels are clones — so no rung is "in spec" or an "overclock". A rate is
+//! only meaningful with a verdict attached: [`crate::spirate`] writes a pattern
+//! at each rung and reads the controller's GRAM back to say bit-exact or not.
+//! That read-back IS the qualifier, and it is PER-UNIT: the bench board reads
+//! back bit-exact at every rung to 45 MHz (verified under a gapless DMA
+//! stream), which is why 45 MHz is the default here — but it says nothing about
+//! the next unit, so a build targeting an UNQUALIFIED panel should set
+//! `VYR_SPI_BR=3` for the universally-safe 5.625 MHz. #49 is the bring-up
+//! self-qualifier that picks the fastest safe rung automatically per unit.
 //! The panel's ~6.66 MHz READ ceiling does not constrain this field at all —
 //! every read in this file is bit-banged on GPIO, not clocked by SPI5.
 //!
 //! Consequences, stated plainly: over SPI a full-screen flush is 153,600
-//! bytes at 5.625 MHz ≈ 220 ms, so that path is for static frames. Neither
+//! bytes at 45 MHz ≈ 27 ms (≈ 220 ms at the /16 fallback). Neither
 //! path is in the DWT-timed measurement window (see `show_panel_scene` and
 //! `ltdc::show_scene`). Nothing about the existing 480×270
 //! measurement changes — `--features board` alone still builds and behaves
@@ -305,7 +311,7 @@ pub(crate) fn spi_init() {
     // that only the gyro drives is left out of the LCD's business.
 
     // CR1: master, mode 0, 8-bit, MSB first, software NSS asserted,
-    // BR = SPI_BR (default 0b011 = /16, PCLK2 90 MHz -> 5.625 MHz), SPI enabled.
+    // BR = SPI_BR (default 0b000 = /2, PCLK2 90 MHz -> 45 MHz), SPI enabled.
     wr(SPI5 + SPI_CR1, MSTR | ((SPI_BR as u32) << 3) | SSI | SSM);
     wr(SPI5 + SPI_CR1, rd(SPI5 + SPI_CR1) | SPE);
 }
@@ -343,12 +349,21 @@ pub(crate) const PCLK2_HZ: u32 = 90_000_000;
 /// rungs are reachable via `VYR_SPI_BR` for a build that has run the check.
 pub(crate) const SPI_BR: u8 = spi_br_from_env();
 
-/// `VYR_SPI_BR` as a `u8` in `0..=7`, or the default `3`. A malformed or out-of-range
-/// value is a **compile error**: a silently-clamped baud rate would make the
-/// ELF disagree with the log line that names it.
+/// `VYR_SPI_BR` as a `u8` in `0..=7`, or the default `0` (PCLK2/2 = 45 MHz). A
+/// malformed or out-of-range value is a **compile error**: a silently-clamped
+/// baud rate would make the ELF disagree with the log line that names it.
+///
+/// The default is the FASTEST rung, not the safe one, by explicit decision: the
+/// panel on the bench board reads back bit-exact at 45 MHz (verified under a
+/// gapless DMA stream, `crate::spirate`), and 45 MHz is what this project runs.
+/// The clone-panel caveat has NOT gone away — there is no datasheet, so this is
+/// a per-unit fact and a different unit must be re-qualified (#49 is the
+/// bring-up self-check that makes that automatic). A build targeting an
+/// unqualified panel should set `VYR_SPI_BR=3` for the universally-safe
+/// 5.625 MHz. But for THIS board, 45 MHz is the default.
 const fn spi_br_from_env() -> u8 {
     match option_env!("VYR_SPI_BR") {
-        None => 3,
+        None => 0,
         Some(s) => {
             let b = s.as_bytes();
             if b.len() != 1 {
