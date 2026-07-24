@@ -22,7 +22,7 @@
 //! With `--features board` the SAME runtime targets REAL silicon — an
 //! STM32F429I-DISC1 flashed and run over an ST-LINK/V2-1 (`probe-rs run`,
 //! which services the very same semihosting calls). Two things change:
-//! [`clock_init_180mhz`] brings the part up to its rated clock with
+//! [`clock_init_192mhz`] brings the part up to its rated clock with
 //! production flash settings, and the timer becomes DWT_CYCCNT — real CPU
 //! cycles rather than a host-wall-time proxy. Driver: `scripts/board-run.py`;
 //! the halted-target register truth behind the clock choices lives in
@@ -277,7 +277,13 @@ mod rcc {
     pub const HSE_HZ: u32 = 8_000_000;
 }
 
-/// Bring the STM32F429 to its rated 180 MHz with production flash settings.
+/// Bring the STM32F429 to 192 MHz with production flash settings.
+///
+/// **192 MHz is a deliberate 6.7% overclock** of the rated 180 MHz (APB2 96 MHz
+/// over its rated 90). It is the frequency where the tree divides cleanly:
+/// VCO 384 MHz gives exactly 48 MHz for USB (Q=8) and 48 MHz on SPI5
+/// (APB2/2). Per-frame instruction and DWT-cycle counts are clock-independent,
+/// so the ledger's counts are unaffected; only derived ms figures scale.
 ///
 /// The reset state (HSI 16 MHz, 0 flash wait states, ART off) is not a shipping
 /// configuration and would understate flash-fetch cost, so the board leg
@@ -292,7 +298,7 @@ mod rcc {
 ///   `HSERDY` forever — a silent boot hang with no output, which is exactly
 ///   what the bounded spins below exist to prevent.
 /// * **PLL → 180 MHz**: M chosen for a 1 MHz VCO input (HSE 8 MHz → M=8,
-///   HSI 16 MHz → M=16), N=360 (360 MHz VCO), P=2 (180 MHz SYSCLK), Q=7
+///   HSI 16 MHz → M=16), N=384 (384 MHz VCO), P=2 (192 MHz SYSCLK), Q=8
 ///   (unused; USB absent). HSE gives a true 180.0 MHz; the HSI fallback lands
 ///   wherever the RC actually is (182.4 MHz measured here — over the part's
 ///   rated maximum, hence fallback and not first choice).
@@ -311,7 +317,7 @@ mod rcc {
 /// recomputes the achieved clock from the registers afterwards and the boot
 /// line prints it.
 #[cfg(feature = "board")]
-fn clock_init_180mhz() {
+fn clock_init_192mhz() {
     use rcc::*;
 
     // Every hardware handshake below is bounded. A plain `while !ready {}` on a
@@ -371,14 +377,19 @@ fn clock_init_180mhz() {
             return;
         }
 
-        // PLL: (HSE 8 / M=8) or (HSI 16 / M=16) = 1 MHz ref, ×N=360 = 360 MHz
-        // VCO, /P=2 → 180 MHz. PLLP encodes 2 as 0b00; PLLSRC (bit 22) picks
-        // HSE. Q=7 keeps the unused 48 MHz domain in range.
+        // PLL: (HSE 8 / M=8) or (HSI 16 / M=16) = 1 MHz ref, ×N=384 = 384 MHz
+        // VCO, /P=2 → 192 MHz. This is a 6.7% OVERCLOCK of the F429's rated
+        // 180 MHz (and APB2 lands at 96 MHz, over its rated 90) — deliberate:
+        // 192 is the frequency where the tree divides cleanly, VCO 384 / Q=8 =
+        // exactly 48 MHz (USB-clean) and APB2/2 = 48 MHz on SPI5. Instruction
+        // counts and per-frame DWT cycles are clock-independent, so nothing in
+        // the ledger's counts moves; only derived ms figures scale (180→192).
+        // PLLP encodes 2 as 0b00; PLLSRC (bit 22) picks HSE. Q=8 gives 48 MHz.
         let m: u32 = if hse { 8 } else { 16 };
         let src: u32 = if hse { 1 << 22 } else { 0 };
         // PLLP (bits 17:16) encodes /2 as 0b00, so the P field contributes no
         // set bits and is deliberately absent from this OR.
-        RCC_PLLCFGR.write_volatile(m | (360 << 6) | src | (7 << 24));
+        RCC_PLLCFGR.write_volatile(m | (384 << 6) | src | (8 << 24));
         RCC_CR.write_volatile(RCC_CR.read_volatile() | PLLON);
         if !spin_until(|| RCC_CR.read_volatile() & PLLRDY != 0) {
             return; // PLL never locked — stay on HSI, still a valid cycle count
@@ -605,7 +616,7 @@ pub unsafe extern "C" fn reset() -> ! {
         // because at 0 WS instruction fetch is free. Measuring there would
         // understate the per-frame cycle cost.
         #[cfg(feature = "board")]
-        clock_init_180mhz();
+        clock_init_192mhz();
 
         let mut b = core::ptr::addr_of_mut!(__sbss);
         let be = core::ptr::addr_of_mut!(__ebss);
