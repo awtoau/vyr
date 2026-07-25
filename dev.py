@@ -306,65 +306,79 @@ def cmd_qemu_m4(rest: list[str]) -> int:
     # clippy/test inlines differently), which moved Draft 11.5M→17.0M between
     # otherwise-identical runs. Non-incremental = reproducible insns/frame, the
     # gate's whole point. (icount itself is exact; this fixes the BINARY.)
+    # #45: hash from the VERIFY build, timing from the PERF build; one feature
+    # apart, same commit and tier. _boot() runs an ELF behind the wall guard.
     noincr = {"CARGO_INCREMENTAL": "0"}
-    rc = _run(["cargo", "build", "--release", "-p", "vyr-size", *flags], env_extra=noincr)
+    feats_verify = feats + ",verify"
+
+    def _boot(elf: Path, label: str):
+        a = [
+            "qemu-system-arm", "-machine", QEMU_M4_MACHINE, "-nographic",
+            "-semihosting-config", "enable=on,target=native",
+            "-icount", "shift=0,sleep=off", "-kernel", str(elf),
+        ]
+        try:
+            g = subprocess.run(a, capture_output=True, text=True, cwd=REPO,
+                               check=False, timeout=QEMU_M4_DEADLINE_S)
+        except subprocess.TimeoutExpired as e:
+            o = e.stdout or ""
+            o = o.decode(errors="replace") if isinstance(o, bytes) else o
+            _append_block(log_path, f"M4 {label} (KILLED at deadline)", o)
+            _log(f"ERROR: qemu hit the {QEMU_M4_DEADLINE_S}s guard ({label}); see {log_path}")
+            return None
+        txt = g.stdout + g.stderr
+        _append_block(log_path, f"M4 {label}", txt)
+        if g.returncode != 0:
+            _log(f"ERROR: {label} rc={g.returncode} (SYS_EXIT error path; see {log_path})")
+            return None
+        return txt
+
+    # 1) Host VERIFY leg: the x86 reference hash + band==full self-check.
+    rc = _run(["cargo", "build", "--release", "-p", "vyr-size",
+               "--no-default-features", "--features", feats_verify], env_extra=noincr)
     if rc != 0:
         return rc
     host = subprocess.run(
         [str(REPO / "target" / "release" / "vyr-size")],
         capture_output=True, text=True, cwd=REPO, check=False,
     )
-    _append_block(log_path, "host x86-64 leg", host.stdout + host.stderr)
+    _append_block(log_path, "host x86-64 verify leg", host.stdout + host.stderr)
     if host.returncode != 0:
-        _log(f"ERROR: host run-qemu leg rc={host.returncode} (see {log_path})")
+        _log(f"ERROR: host verify leg rc={host.returncode} (see {log_path})")
         return 1
     m = re.search(r"frame fnv1a=(0x[0-9a-f]{16})", host.stdout)
     if not m:
-        _log("ERROR: host leg printed no frame hash")
+        _log("ERROR: host verify leg printed no frame hash")
         return 1
     host_hash = m.group(1)
     host_peak = _re1(r"workload ok: heap peak=(\d+) B", host.stdout)
 
-    # 2) The bootable ELF (vector table + crt0 + semihosting, link-qemu.ld).
-    rc = _run(
-        ["cargo", "build", "-p", "vyr-size", "--target", SIZE_TARGET,
-         "--profile", "release-mcu", *flags],
-        env_extra=noincr,
-    )
+    # 2) M4 VERIFY build: the M4 frame hash for the cross-ISA + drift gate.
+    t0 = time.monotonic()
+    rc = _run(["cargo", "build", "-p", "vyr-size", "--target", SIZE_TARGET,
+               "--profile", "release-mcu", "--no-default-features",
+               "--features", feats_verify], env_extra=noincr)
+    if rc != 0:
+        return rc
+    vout = _boot(REPO / "target" / SIZE_TARGET / "release-mcu" / "vyr-size",
+                 "verify guest")
+    if vout is None:
+        return 1
+    g_hash = _re1(r"frame fnv1a=(0x[0-9a-f]{16})", vout)
+
+    # 3) M4 PERF build: render-only insns (SYS_CLOCK, indicative) + heap + cov.
+    #    Compiles no fold, emits no hash (#45).
+    rc = _run(["cargo", "build", "-p", "vyr-size", "--target", SIZE_TARGET,
+               "--profile", "release-mcu", *flags], env_extra=noincr)
     if rc != 0:
         return rc
     elf = REPO / "target" / SIZE_TARGET / "release-mcu" / "vyr-size"
-
-    # 3) Boot it. Semihosting console on stdout; SYS_EXIT sets qemu's rc.
-    args = [
-        "qemu-system-arm", "-machine", QEMU_M4_MACHINE, "-nographic",
-        "-semihosting-config", "enable=on,target=native",
-        "-icount", "shift=0,sleep=off",
-        "-kernel", str(elf),
-    ]
-    _log("qemu exact command: " + " ".join(args))
-    t0 = time.monotonic()
-    try:
-        # Python-side hard wall-clock guard (never a shell timeout): run()
-        # polls the child and kills it when the deadline expires.
-        guest = subprocess.run(
-            args, capture_output=True, text=True, cwd=REPO, check=False,
-            timeout=QEMU_M4_DEADLINE_S,
-        )
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        _append_block(log_path, "M4 guest (KILLED at deadline)", out)
-        _log(f"ERROR: qemu hit the {QEMU_M4_DEADLINE_S}s guard — guest wedged, killed (see {log_path})")
+    gout = _boot(elf, "perf guest")
+    if gout is None:
         return 1
     wall = time.monotonic() - t0
-    gout = guest.stdout + guest.stderr  # qemu emits the semihosting console on stderr
-    _append_block(log_path, "M4 guest", gout)
-    if guest.returncode != 0:
-        _log(f"ERROR: guest exited rc={guest.returncode} (SYS_EXIT error path; see {log_path})")
-        return 1
 
-    # 4) The result block — parsed from the guest's semihosting lines.
-    g_hash = _re1(r"frame fnv1a=(0x[0-9a-f]{16})", gout)
+    # 4) Result block: hash from the verify guest, timing from the perf guest.
     g_peak = _re1(r"workload ok: heap peak=(\d+) B", gout)
     g_live = _re1(r"workload ok: heap peak=\d+ B live-end=(\d+) B", gout)
     g_cs = _re1(r"timed: \d+ warmed frames in (\d+) cs virtual", gout)

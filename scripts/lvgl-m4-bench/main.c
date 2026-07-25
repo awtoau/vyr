@@ -76,6 +76,9 @@ static char *put_u32(char *p, uint32_t v)
     return p;
 }
 
+/* Used only by the -DVERIFY build's hash lines (#45); harmless in the perf
+ * build, where it is simply not referenced. */
+__attribute__((unused))
 static char *put_hex64(char *p, uint64_t v)
 {
     static const char hexd[] = "0123456789abcdef";
@@ -128,34 +131,39 @@ static void checker_init(void)
 
 /* ---- FNV-1a streaming hash over every flushed band byte ---- */
 
-static uint64_t       g_hash;
-/* #44: folding is OFF inside the timed window. Volatile so the two timed
- * passes below cannot be merged or the branch hoisted out of flush_cb. */
-static volatile int   g_fold = 1;
 static uint32_t       g_bands_flushed;
 static uint32_t       g_px_flushed;
+/* #45: the hash is VERIFICATION, compiled ONLY under -DVERIFY. The perf build
+ * (no -DVERIFY) has no FNV constants, no fold, no hash line — the counterpart of
+ * vyr's `verify` feature. #44 kept the fold out of the timed window; that was
+ * procedural. This keeps it out of the binary, so the perf number cannot contain
+ * the benchmark's own hash by construction. run.py builds both: verify to prove
+ * the frame bytes, perf to measure. */
+#ifdef VERIFY
+static uint64_t       g_hash;
 static const uint64_t FNV_OFFSET = 0xcbf29ce484222325ULL;
 static const uint64_t FNV_PRIME  = 0x100000001b3ULL;
+#endif
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
     int32_t w = lv_area_get_width(area);
     int32_t h = lv_area_get_height(area);
-    /* Fold the exact bytes LVGL produced for this band into the hash. The
-     * draw buffer is tight (stride == w*3) for our partial bands. */
     uint32_t n = (uint32_t)w * (uint32_t)h * BAND_PX_BYTES;
     /* The barrier is UNCONDITIONAL and load-bearing — the C counterpart of
      * vyr's `core::hint::black_box`. It consumes the band pointer and clobbers
      * memory, so LVGL's writes into px_map must be committed before this point
-     * even when nothing reads them afterwards. Only the FNV fold below is
-     * skipped in the timed pass (#44). */
+     * even in the perf build where nothing reads them afterwards. The FNV fold
+     * is verify-only (#45). */
     __asm__ volatile("" : : "r"(px_map), "r"(n) : "memory");
-    if (g_fold) {
-        for (uint32_t i = 0; i < n; i++) {
-            g_hash ^= px_map[i];
-            g_hash *= FNV_PRIME;
-        }
+#ifdef VERIFY
+    /* Fold the exact bytes LVGL produced for this band into the hash. The
+     * draw buffer is tight (stride == w*3) for our partial bands. */
+    for (uint32_t i = 0; i < n; i++) {
+        g_hash ^= px_map[i];
+        g_hash *= FNV_PRIME;
     }
+#endif
 #ifdef DUMP_FRAME
     /* Bands arrive top-to-bottom and full-width in LV_DISPLAY_RENDER_MODE_
      * PARTIAL with this buffer size, so appending each band's tight bytes
@@ -337,8 +345,10 @@ int main(void)
 
     sh_write0("INFO  [lvgl-m4] scene built (480x270, 480x16 partial bands, RGB888)\n");
 
-    /* --- frame 1: full render, capture hash + bands + peak --- */
+    /* --- frame 1: full render, capture hash (verify) + bands + peak --- */
+#ifdef VERIFY
     g_hash          = FNV_OFFSET;
+#endif
     g_bands_flushed = 0;
     g_px_flushed    = 0;
     lv_refr_now(disp);
@@ -358,6 +368,7 @@ int main(void)
     emit_kv("ALERT [lvgl-m4] ", "lv_mem_peak=", (uint32_t)mon.max_used);
     emit_kv("INFO  [lvgl-m4] ", "lv_mem_frag_pct=", (uint32_t)mon.frag_pct);
 
+#ifdef VERIFY
     {
         char *p = g_line;
         p = put_str(p, "INFO  [lvgl-m4] frame fnv1a=");
@@ -369,6 +380,7 @@ int main(void)
     /* Captured HERE, not at the timed section: the optional DUMP_FRAME render
      * below folds another frame into g_hash without resetting it. */
     const uint64_t first_hash = g_hash;
+#endif
 
 #ifdef DUMP_FRAME
     /* --- fidelity dump: one extra full render, bands appended to a host file.
@@ -411,11 +423,11 @@ int main(void)
 #endif
     const uint32_t TIMED_FRAMES_N = TIMED_FRAMES;
 
-    /* --- verification (UNTIMED): one warmed re-render WITH the fold. The
-     * determinism proof is fully preserved; it just no longer runs on the
-     * stopwatch. A mismatch is fatal — a non-deterministic re-render invalidates
-     * every number below it. */
-    g_fold          = 1;
+#ifdef VERIFY
+    /* --- the VERIFY build: prove the frame, do not time it (#45). A warmed
+     * re-render WITH the fold must reproduce the first frame's hash; a mismatch
+     * is fatal. The perf build below contains none of this. */
+    (void)TIMED_FRAMES_N;
     g_hash          = FNV_OFFSET;
     g_bands_flushed = 0;
     lv_obj_invalidate(lv_screen_active());
@@ -433,51 +445,25 @@ int main(void)
                   "non-deterministic re-render\n");
         sh_exit(0);
     }
-
-    /* --- timed pass 1: RENDER ONLY (no fold). This is the headline series. */
-    g_fold      = 0;
-    int32_t t0  = sh_clock_cs();
+    sh_write0("INFO  [lvgl-m4] verify: warmed frame hash reproduced (-DVERIFY)\n");
+#else
+    /* --- the PERF build: a SINGLE render-only timed pass (#45). There is no
+     * fold in this binary, so render_only is the whole timed cost, structurally,
+     * not a difference of two passes. */
+    int32_t t0 = sh_clock_cs();
     for (uint32_t i = 0; i < TIMED_FRAMES_N; i++) {
         g_bands_flushed = 0;
         lv_obj_invalidate(lv_screen_active());
         lv_refr_now(disp);
     }
     int32_t t1 = sh_clock_cs();
-
-    /* --- timed pass 2: WITH the fold, so `fold` is measured on THIS cell
-     * rather than carried over from another tier/opt-level/compiler — the
-     * arithmetic that once inverted the sign of a published result. */
-    g_fold     = 1;
-    int32_t t2 = sh_clock_cs();
-    for (uint32_t i = 0; i < TIMED_FRAMES_N; i++) {
-        g_hash          = FNV_OFFSET;
-        g_bands_flushed = 0;
-        lv_obj_invalidate(lv_screen_active());
-        lv_refr_now(disp);
-    }
-    int32_t t3 = sh_clock_cs();
-
     uint32_t render_only = (uint32_t)(t1 - t0);
-    uint32_t total       = (uint32_t)(t3 - t2);
-    /* Separately quantized passes (1 cs resolution) can read total slightly
-     * below render_only; clamp rather than wrap to ~4e9. */
-    uint32_t fold_cs = total > render_only ? total - render_only : 0u;
-
-    /* Dead-code sanity gate — see the matching one in vyr's workload.rs. The
-     * fold's largest measured share of a frame is 54.7% (this harness), i.e.
-     * render_only was 45% of total at its worst; a 10% floor sits ~4.5x below
-     * that and can only trip on near-total elimination. */
-    if (render_only < total / 10u) {
-        sh_write0("ERROR [lvgl-m4] timed render_only < 10% of total — the timed "
-                  "render was probably eliminated; refusing to report\n");
-        sh_exit(0);
-    }
 
     emit_kv("INFO  [lvgl-m4] timed_frames=", "", TIMED_FRAMES_N);
     emit_kv("INFO  [lvgl-m4] timed_cs=", "", render_only);
     emit_kv("INFO  [lvgl-m4] render_only_cs=", "", render_only);
-    emit_kv("INFO  [lvgl-m4] total_cs=", "", total);
-    emit_kv("INFO  [lvgl-m4] fold_cs=", "", fold_cs);
+    sh_write0("INFO  [lvgl-m4] fold=absent-by-build (#45)\n");
+#endif
 
     sh_write0("ALERT [lvgl-m4] workload ok\n");
     sh_exit(1);

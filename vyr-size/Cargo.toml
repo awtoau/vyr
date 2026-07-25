@@ -29,6 +29,17 @@ image = []
 # fixtures). On hosts this feature runs the SAME workload under a counting
 # allocator and prints the same lines — the cross-ISA hash reference.
 run-qemu = ["dep:linked_list_allocator"]
+# #45: VERIFICATION as a build type, OFF by default. With it, the workload folds
+# every output byte into an FNV-1a hash, reports it, and (host) checks band
+# equivalence and (re-render) determinism — the cross-ISA claim made executable.
+# WITHOUT it (the perf build) NONE of that code is compiled: no FNV constants, no
+# fold call, no hash line, no timed second pass. The perf number therefore cannot
+# contain the benchmark's own hash by construction, not by anyone remembering to
+# keep it out of the window (#44 was procedural and failed three times). The
+# harness builds BOTH per cell — verify to prove correctness, perf to measure —
+# and a failed verify build suppresses the cell's perf number. Additive to
+# run-qemu; composes with every tier and platform.
+verify = ["run-qemu"]
 # F16 (#16): render the run-qemu workload at Quality::Draft (integer no-AA
 # fast path) instead of the default Quality::Exact. `./dev.py qemu-m4 --draft`
 # adds this feature; the M4 binary has no env, so the tier is a build-time

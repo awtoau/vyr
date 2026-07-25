@@ -32,7 +32,10 @@ MCU_COMBOS = [
     "board,ltdc,testcard",                # card blitted
     "board,ltdc,present,testcard",        # DIRECT colour card (the experiment)
     "board,ltdc,present,orientcard",      # DIRECT orient card
-    "run-qemu",                           # emulated-M4 workload
+    "run-qemu",                           # emulated-M4 workload (perf: no fold)
+    "verify",                             # #45 verify build (fold + hash proof)
+    "verify,fast",                        # verify composes with a tier
+    "verify,rig",                         # verify + animated chain hash
     "run-qemu,testcard",                  # cross-ISA colour card hash
     "run-qemu,orientcard",                # cross-ISA orient card hash
 ]
@@ -120,8 +123,9 @@ def main():
             m = re.search(r"card[^\n]*(0x[0-9a-f]{16})", out)
         hashes[key] = m.group(1) if m else "NO-HASH"
 
-    # Measurement frame hash from the plain run-qemu host leg.
-    out = host_run("run-qemu")
+    # Measurement frame hash from the VERIFY host leg (#45: the perf build
+    # compiles no fold and emits no hash — the hash is the verify build's job).
+    out = host_run("verify")
     m = re.search(r"frame fnv1a=(0x[0-9a-f]{16})", out or "")
     hashes["frame"] = m.group(1) if m else "NO-HASH"
 

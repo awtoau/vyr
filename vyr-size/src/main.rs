@@ -423,7 +423,14 @@ fn main() {
     // Under `rig` the workload's return value is a CHAIN over many frames,
     // so the single-frame comparison is made against frame 0 explicitly —
     // never against the chain, which would be comparing a run to a frame.
-    #[cfg(feature = "rig")]
+    //
+    // #45: this is VERIFICATION and lives in the verify build ONLY. The perf
+    // build computes no hash (`banded` is a sentinel 0), so band equivalence —
+    // like the cross-ISA hash — is proven by the verify build the harness runs
+    // beside the perf one, never by the build that produces the timing number.
+    #[cfg(not(feature = "verify"))]
+    let _ = banded;
+    #[cfg(all(feature = "rig", feature = "verify"))]
     {
         match workload::rig_frame0_hashes(quality) {
             Ok((banded0, full0)) if banded0 == full0 => {
@@ -445,7 +452,7 @@ fn main() {
             }
         }
     }
-    #[cfg(not(feature = "rig"))]
+    #[cfg(all(not(feature = "rig"), feature = "verify"))]
     match workload::full_frame_hash(quality) {
         Ok(full) if full == banded => {
             println!("INFO  [vyr-size] full-frame fnv1a={full:#018x} == banded (band equivalence)");

@@ -223,12 +223,19 @@ def gen_checker_header(logf):
     return path
 
 
-def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf"):
+def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf",
+          verify=False):
     """Compile + link the harness. `dump_path`, when set, adds -DDUMP_FRAME to
     the HARNESS translation units only (startup.c, main.c) — the LVGL objects
     are bit-identical either way, so they are reused from a previous build when
     they are newer than their source. The measurement ELF is therefore never
-    the ELF that carries the file-I/O path."""
+    the ELF that carries the file-I/O path.
+
+    #45: `verify=True` adds -DVERIFY to the harness TUs — the VERIFY build folds
+    every band into the FNV hash and proves it, and does NOT time. The default
+    (perf) build compiles no fold and reports render_only from a single timed
+    pass, so the measurement cannot contain the benchmark's own hash. The two
+    are the SAME source, one macro apart, exactly like vyr's `verify` feature."""
     gen_checker_header(logf)
     # Objects are opt-level-specific: a -Oz .o must never be reused for a -Os
     # link (or the anchor would silently be a mixture of both).
@@ -244,6 +251,8 @@ def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf"):
     harness_extra = []
     if dump_path:
         harness_extra = ["-DDUMP_FRAME=1", f'-DDUMP_FRAME_PATH="{dump_path}"']
+    if verify:
+        harness_extra += ["-DVERIFY=1"]
 
     sources = harness + lvgl_sources()
     log(f"compiling {len(sources)} translation units (LVGL + harness), "
@@ -404,6 +413,12 @@ def main():
                          "SYS_OPEN/WRITE (#27 fidelity comparison). The measurement "
                          "numbers from such a run are NOT the published ones — the "
                          "published ELF has no file-I/O path.")
+    ap.add_argument("--verify", action="store_true",
+                    help="#45: build the VERIFY variant (-DVERIFY) — it folds every "
+                         "band into the FNV hash, proves it, and does NOT time. The "
+                         "default (perf) build has no fold and reports render_only. "
+                         "Writes its own suffixed ELF/log/result so it never overwrites "
+                         "the perf artefacts.")
     args = ap.parse_args()
 
     global LVGL_ROOT, LVGL_SRC, LVGL_INC, OPT
@@ -416,7 +431,10 @@ def main():
     os.makedirs(TMP, exist_ok=True)
     benchlog = os.path.join(TMP, "lvgl-m4-bench.log")
     # A non-default -O level is a side experiment, never the published anchor.
+    # The verify variant is a separate artefact from the perf one (#45).
     sfx = "" if OPT == OPT_DEFAULT else OPT
+    if args.verify:
+        sfx += "-verify"
     elf_name = f"lvgl-m4{sfx}.elf"
     semilog = os.path.join(TMP, f"lvgl-m4{sfx}.log")
     resultjson = os.path.join(TMP, f"lvgl-m4{sfx}-result.json")
@@ -455,7 +473,8 @@ def main():
             + ("" if OPT == OPT_DEFAULT else "  *** NOT the published anchor level ***"),
             logf)
         elf = build(args.mem_kb, logf, args.frames, dump_path,
-                    "lvgl-m4-dump.elf" if dump_path else elf_name)
+                    "lvgl-m4-dump.elf" if dump_path else elf_name,
+                    verify=args.verify)
         if not elf:
             log("BUILD FAILED — see log", logf)
             return 2

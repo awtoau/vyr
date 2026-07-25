@@ -288,7 +288,6 @@ pub fn run(
             band_buf,
             quality,
             None,
-            true,
         )?;
         hashes.push((hash, pixels));
 
@@ -304,16 +303,26 @@ pub fn run(
                     band_buf,
                     quality,
                     None,
-                    false,
                 )?;
                 clk();
             }
         }
     }
 
+    // #45: the per-case hash and the run roll are the cross-ISA claim and live
+    // in the verify build; `hash` is a sentinel 0 in the perf build (which
+    // computed no fold), so the perf build reports pixels only and never a hash
+    // it did not measure.
     for (i, (hash, pixels)) in hashes.iter().enumerate() {
+        let _ = hash;
+        #[cfg(feature = "verify")]
         emit(&format!(
             "INFO  [vyr-probe] result i={i} name={} fnv1a={hash:#018x} pixels_written={pixels}",
+            CASES[i].name
+        ));
+        #[cfg(not(feature = "verify"))]
+        emit(&format!(
+            "INFO  [vyr-probe] result i={i} name={} pixels_written={pixels}",
             CASES[i].name
         ));
     }
@@ -324,15 +333,20 @@ pub fn run(
     ));
     // The run's own identity: one hash over every case hash, so a probe run
     // is a single cross-ISA comparable value like the fixture's frame hash.
-    let mut roll = 0xcbf2_9ce4_8422_2325u64;
-    for (h, _) in &hashes {
-        for b in h.to_le_bytes() {
-            roll ^= b as u64;
-            roll = roll.wrapping_mul(0x100_0000_01b3);
+    #[cfg(feature = "verify")]
+    {
+        let mut roll = 0xcbf2_9ce4_8422_2325u64;
+        for (h, _) in &hashes {
+            for b in h.to_le_bytes() {
+                roll ^= b as u64;
+                roll = roll.wrapping_mul(0x100_0000_01b3);
+            }
         }
+        emit(&format!("ALERT [vyr-probe] probe roll fnv1a={roll:#018x}"));
+        Ok(roll)
     }
-    emit(&format!("ALERT [vyr-probe] probe roll fnv1a={roll:#018x}"));
-    Ok(roll)
+    #[cfg(not(feature = "verify"))]
+    Ok(0)
 }
 
 /// Host-only: write every case's IR to `dir/<name>.json`, so the SAME case

@@ -20,8 +20,9 @@
 //! virtual time).
 
 use alloc::format;
-// vec! is only needed by the host-only full-frame cross-check below.
-#[cfg(not(target_os = "none"))]
+// vec! is only needed by the host-only full-frame cross-check below, which is
+// itself `verify`-only now (#45 — it is band-equivalence verification).
+#[cfg(all(not(target_os = "none"), feature = "verify"))]
 use alloc::vec;
 
 use vyr_core::{Assets, Fonts, Quality, Rect, RenderError, RenderStats, Shapes};
@@ -142,9 +143,19 @@ pub const FIXTURE_IR: &str = r##"{
 
 // FNV-1a 64 — the repo's golden-hash function (same constants as
 // vyr-rig::fnv1a; reimplemented here because vyr-rig is a std crate).
+//
+// #45: the fold is VERIFICATION, not rendering, and it is `--features verify`
+// ONLY. The default (perf) build compiles none of it — no constants, no fold
+// call, no hash line — so the benchmark structurally CANNOT measure its own
+// hash. #44 kept it out of the timed *window*; that was procedural and failed
+// three times. This keeps it out of the *binary*. The verify build proves the
+// cross-ISA determinism claim; the perf build measures. Two ELFs, one commit.
+#[cfg(feature = "verify")]
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+#[cfg(feature = "verify")]
 const FNV_PRIME: u64 = 0x100_0000_01b3;
 
+#[cfg(feature = "verify")]
 fn fnv1a_fold(mut h: u64, data: &[u8]) -> u64 {
     for &b in data {
         h ^= b as u64;
@@ -167,6 +178,9 @@ fn phase(emit: &mut dyn FnMut(&str), heap: &dyn Fn() -> (usize, usize), name: &s
 /// the per-phase story). Returns (frame hash, Σ pixels_written, last band's
 /// stats — whose glyph-cache counters are the Fonts registry's cumulative
 /// truth).
+/// The returned hash is [`FNV_OFFSET`] under `--features verify` folded over
+/// every output byte, and a fixed `0` otherwise — the perf build compiles no
+/// fold, so it has no hash to return and never emits one (#45).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn render_frame_banded(
     req: &vyr_core::ir::Request,
@@ -176,10 +190,10 @@ pub(crate) fn render_frame_banded(
     band_buf: &mut [u8],
     quality: Quality,
     report: Option<(&mut dyn FnMut(&str), &dyn Fn() -> (usize, usize))>,
-    fold: bool,
 ) -> Result<(u64, u64, RenderStats), RenderError> {
     let stride = (FIXTURE_W * 3) as usize;
     let mut report = report;
+    #[cfg(feature = "verify")]
     let mut hash = FNV_OFFSET;
     let mut pixels = 0u64;
     let mut fastpath = 0u64;
@@ -210,13 +224,17 @@ pub(crate) fn render_frame_banded(
         )?;
         pixels += stats.pixels_written;
         fastpath += stats.fastpath_pixels;
-        // black_box is UNCONDITIONAL and load-bearing: it forces the band
-        // bytes to be materialized, so the renderer cannot be optimized away
-        // when `fold` is false. Only the FNV fold itself is skipped — see #44.
+        // black_box is UNCONDITIONAL and load-bearing: it forces the band bytes
+        // to be materialized, so the renderer cannot be optimized away even in
+        // the perf build where nothing reads them. The FNV fold is `verify`
+        // ONLY — the perf build compiles none of it (#45).
         let band = core::hint::black_box(&band_buf[..len]);
-        if fold {
+        #[cfg(feature = "verify")]
+        {
             hash = fnv1a_fold(hash, band);
         }
+        #[cfg(not(feature = "verify"))]
+        let _ = band;
         if y == 0
             && let Some((emit, heap)) = report.take()
         {
@@ -227,7 +245,10 @@ pub(crate) fn render_frame_banded(
     // Carry the FRAME-summed fast-path coverage (the per-band stats hold only
     // the last band's) so the F16 honesty number is the whole frame's.
     stats.fastpath_pixels = fastpath;
-    Ok((hash, pixels, stats))
+    #[cfg(feature = "verify")]
+    return Ok((hash, pixels, stats));
+    #[cfg(not(feature = "verify"))]
+    Ok((0, pixels, stats))
 }
 
 /// Run the whole workload, emitting the structured report lines through
@@ -314,13 +335,25 @@ fn run_static(
         band_buf,
         quality,
         Some((&mut *emit, heap)),
-        true,
     )?;
     phase(emit, heap, "frame");
     let bands = FIXTURE_H.div_ceil(BAND_H);
+    // #45: the frame hash is the cross-ISA determinism claim, and it is emitted
+    // ONLY by the verify build — the perf build computed no hash (`hash` is a
+    // sentinel 0 there) and must not print one, or a reader would trust a number
+    // the build did not measure.
+    #[cfg(feature = "verify")]
     emit(&format!(
         "INFO  [vyr-size] frame fnv1a={hash:#018x} bands={bands} pixels_written={pixels}"
     ));
+    #[cfg(not(feature = "verify"))]
+    {
+        let _ = hash;
+        emit(&format!(
+            "INFO  [vyr-size] frame bands={bands} pixels_written={pixels} \
+             (perf build — no hash; determinism is the verify build's job, #45)"
+        ));
+    }
     // F16 (#16) honesty: how much of THIS frame the integer fast path carried
     // (0 under Exact). The remaining pixels took the tiny-skia/Exact path —
     // the residue the headline insns/frame still pays for.
@@ -350,26 +383,17 @@ fn run_static(
         shapes.overflow()
     ));
 
-    if let Some(clock) = clock_cs {
-        // Warmed steady state: glyph cache is full, so these frames are the
-        // per-frame render cost. SYS_CLOCK ticks are centiseconds (1 cs = 10⁷
-        // insns); 20 frames so the ±1 cs quantization is ÷20 = ±0.5 M/frame,
-        // fine enough to resolve Draft's ~12 M/frame against the LVGL 10 M
-        // anchor (4 frames quantized to ±2.5 M/frame — too coarse near LVGL).
-        const TIMED_FRAMES: u32 = 20;
-
-        // #44: the hash fold is NOT inside the timed window. It was 36.2% of
-        // Draft's frame and 54.7% of LVGL's, so leaving it in meant every
-        // published per-frame figure was part renderer, part benchmark — and
-        // because it is a roughly fixed cost it flattered the SMALLER frame,
-        // which is exactly the comparison that matters. Subtracting it
-        // afterwards proved unreliable: the fold's own cost varies with tier,
-        // opt-level and compiler, and a stale fold figure once inverted the
-        // sign of a published result.
-        //
-        // Determinism is still proven, just not on the stopwatch: this
-        // verification pass renders and folds OUTSIDE the window and must
-        // reproduce the reference hash before the timed pass runs.
+    // #45: verification is the VERIFY build's job and it happens OUTSIDE any
+    // timed window — a warmed re-render that must reproduce the frame hash. The
+    // perf build compiles none of it, so a determinism failure suppresses the
+    // whole run (and the harness suppresses the cell's perf number when the
+    // verify build fails). A warmed frame proves the memo/glyph-cache steady
+    // state renders the same bytes as the cold first frame.
+    // The verify build is untimed; the clock is the perf build's instrument.
+    #[cfg(feature = "verify")]
+    let _ = clock_cs;
+    #[cfg(feature = "verify")]
+    {
         let (h_verify, _, _) = render_frame_banded(
             &req,
             &mut fonts,
@@ -378,7 +402,6 @@ fn run_static(
             band_buf,
             quality,
             None,
-            true,
         )?;
         if h_verify != hash {
             emit(&format!(
@@ -386,6 +409,24 @@ fn run_static(
             ));
             return Err(RenderError::Unimplemented("non-deterministic re-render"));
         }
+        emit(&format!(
+            "INFO  [vyr-size] verify: warmed frame hash {hash:#018x} reproduced (--features verify)"
+        ));
+    }
+
+    // The perf measurement: a SINGLE render-only timed pass. There is nothing
+    // to subtract because there is no fold in this binary (#45) — `render_only`
+    // is the whole timed cost, structurally, not a difference of two passes.
+    // The verify build is not timed; only this one is, and only when a clock is
+    // supplied.
+    #[cfg(not(feature = "verify"))]
+    if let Some(clock) = clock_cs {
+        // Warmed steady state: glyph cache is full, so these frames are the
+        // per-frame render cost. SYS_CLOCK ticks are centiseconds (1 cs = 10⁷
+        // insns); 20 frames so the ±1 cs quantization is ÷20 = ±0.5 M/frame,
+        // fine enough to resolve Draft's ~12 M/frame against the LVGL 10 M
+        // anchor (4 frames quantized to ±2.5 M/frame — too coarse near LVGL).
+        const TIMED_FRAMES: u32 = 20;
 
         let t0 = clock();
         for _ in 0..TIMED_FRAMES {
@@ -397,7 +438,6 @@ fn run_static(
                 band_buf,
                 quality,
                 None,
-                false,
             )?;
         }
         let t1 = clock();
@@ -409,63 +449,19 @@ fn run_static(
         // delta.
         let delta = (t1 as u32).wrapping_sub(t0 as u32);
 
-        // #44: a SECOND timed pass, identical but WITH the fold, so `total`,
-        // `fold` and `render_only` are all MEASURED on this cell rather than
-        // derived from a fold figure taken on some other tier/opt-level/
-        // compiler — the arithmetic that once inverted the sign of a published
-        // result. `render_only` is the headline; `total` keeps old rows
-        // comparable; `fold` is their difference and is reported, not assumed.
-        let t2 = clock();
-        for _ in 0..TIMED_FRAMES {
-            render_frame_banded(
-                &req,
-                &mut fonts,
-                &assets,
-                &mut shapes,
-                band_buf,
-                quality,
-                None,
-                true,
-            )?;
-        }
-        let t3 = clock();
-        let total = (t3 as u32).wrapping_sub(t2 as u32);
-        // Saturating: the two passes are separately quantized (1 cs on the
-        // qemu leg), so a short run can read total slightly BELOW render_only.
-        // That is quantization noise, not a negative fold — clamp at 0 rather
-        // than wrapping to ~4e9 and reporting a spectacular fake.
-        let fold = total.saturating_sub(delta);
-
-        // Dead-code sanity gate. Removing the fold risks the compiler
-        // eliminating the render itself, which would look like an enormous
-        // speedup. The fold's largest measured share of a frame is 54.7%
-        // (LVGL), i.e. render_only was 45% of total at its worst; a 10% floor
-        // sits ~4.5x below that and can only trip on near-total elimination,
-        // not on a genuinely fold-dominated frame.
-        if delta < total / 10 {
-            emit(&format!(
-                "ERROR [vyr-size] timed render_only {delta} < 10% of total {total} \
-                 — the timed render was probably eliminated; refusing to report"
-            ));
-            return Err(RenderError::Unimplemented("timed loop eliminated"));
-        }
-
         #[cfg(feature = "board")]
         emit(&format!(
             "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {delta} cycles \
-             (DWT_CYCCNT, REAL SILICON — {} cycles/frame) \
-             render_only={delta} total={total} fold={fold} \
-             render_only_per_frame={} total_per_frame={} fold_per_frame={}",
+             (DWT_CYCCNT, REAL SILICON — {} cycles/frame) render_only={delta} \
+             render_only_per_frame={} fold=absent-by-build",
             delta / TIMED_FRAMES,
-            delta / TIMED_FRAMES,
-            total / TIMED_FRAMES,
-            fold / TIMED_FRAMES
+            delta / TIMED_FRAMES
         ));
         #[cfg(not(feature = "board"))]
         emit(&format!(
             "INFO  [vyr-size] timed: {TIMED_FRAMES} warmed frames in {delta} cs virtual \
              (SYS_CLOCK; icount shift=0 makes 1 virtual ns = 1 guest insn) \
-             render_only={delta} total={total} fold={fold}"
+             render_only={delta} fold=absent-by-build"
         ));
     }
 
@@ -568,6 +564,8 @@ fn run_animated(
     // deltas stay far smaller than the timed window (qemu-insn.py takes the
     // LARGEST delta; a coarse survey must never out-run the measurement).
     let report_every = (RIG_FRAMES / 20).max(1);
+    // #45: the frame chain is the animated cross-ISA claim and is `verify` only.
+    #[cfg(feature = "verify")]
     let mut chain = vyr_scene::FNV_OFFSET;
     for f in 0..RIG_FRAMES {
         // The IR STRING is dropped before the render starts: on a part with
@@ -578,7 +576,7 @@ fn run_animated(
             let ir = vyr_scene::scene_ir(FIXTURE_W, FIXTURE_H, f, RIG_DETAIL);
             vyr_core::ir::Request::parse(opaque(ir.as_str()))?
         };
-        let (hash, pixels, stats) = render_frame_banded(
+        let (_hash, pixels, stats) = render_frame_banded(
             &req,
             &mut fonts,
             &assets,
@@ -586,13 +584,21 @@ fn run_animated(
             band_buf,
             quality,
             None,
-            true,
         )?;
-        chain = vyr_scene::fnv1a_chain(chain, hash);
+        #[cfg(feature = "verify")]
+        {
+            chain = vyr_scene::fnv1a_chain(chain, _hash);
+        }
         if f.is_multiple_of(report_every) || f + 1 == RIG_FRAMES {
             let (live, peak) = heap();
+            // The hash column is verify-only; the heap/memo/glyph story that
+            // makes this survey worth running is not, so the perf build keeps it.
+            #[cfg(feature = "verify")]
+            let hcol = alloc::format!("hash={_hash:#018x} ");
+            #[cfg(not(feature = "verify"))]
+            let hcol = "";
             emit(&format!(
-                "INFO  [vyr-size] rig frame={f} hash={hash:#018x} px={pixels} \
+                "INFO  [vyr-size] rig frame={f} {hcol}px={pixels} \
                  heap_live={live} heap_peak={peak} glyph_bytes={} glyph_entries={} \
                  memo_bytes={} memo_hits={} memo_misses={} memo_overflow={} fastpath={}",
                 stats.glyph_cache_bytes,
@@ -606,9 +612,16 @@ fn run_animated(
         }
     }
     let (live, peak) = heap();
+    #[cfg(feature = "verify")]
     emit(&format!(
         "INFO  [vyr-size] rig chain fnv1a={chain:#018x} frames={RIG_FRAMES} \
          scene={} detail_frames_ok heap_peak={peak} heap_live={live}",
+        RIG_DETAIL.scene_id(),
+    ));
+    #[cfg(not(feature = "verify"))]
+    emit(&format!(
+        "INFO  [vyr-size] rig frames={RIG_FRAMES} scene={} detail_frames_ok \
+         heap_peak={peak} heap_live={live} (perf build — no chain hash, #45)",
         RIG_DETAIL.scene_id(),
     ));
 
@@ -632,7 +645,6 @@ fn run_animated(
                 band_buf,
                 quality,
                 None,
-                false,
             )?;
         }
         let t1 = clock();
@@ -656,7 +668,12 @@ fn run_animated(
     emit(&format!(
         "ALERT [vyr-size] rig workload ok: heap peak={peak} B live-end={live} B"
     ));
-    Ok(chain)
+    // The chain hash is the verify build's product; the perf build returns the
+    // sentinel 0 and its caller never emits it (#45).
+    #[cfg(feature = "verify")]
+    return Ok(chain);
+    #[cfg(not(feature = "verify"))]
+    Ok(0)
 }
 
 /// Host-only cross-check for the animated workload: frame 0 of the long
@@ -664,7 +681,7 @@ fn run_animated(
 /// chain, because a chain over many frames has no full-frame counterpart to
 /// compare against; band equivalence is a per-frame property and this is the
 /// per-frame form of it.
-#[cfg(all(not(target_os = "none"), feature = "rig"))]
+#[cfg(all(not(target_os = "none"), feature = "rig", feature = "verify"))]
 pub fn rig_frame0_hashes(quality: Quality) -> Result<(u64, u64), RenderError> {
     let mut fonts = Fonts::new();
     fonts.register("roboto", SUBSET_FONT.to_vec())?;
@@ -685,7 +702,6 @@ pub fn rig_frame0_hashes(quality: Quality) -> Result<(u64, u64), RenderError> {
         &mut band,
         quality,
         None,
-        true,
     )?;
     let stride = (FIXTURE_W * 3) as usize;
     let mut buf = vec![0u8; stride * FIXTURE_H as usize];
@@ -702,7 +718,7 @@ pub fn rig_frame0_hashes(quality: Quality) -> Result<(u64, u64), RenderError> {
 /// Host-only cross-check: the SAME fixture rendered full-frame in one pass
 /// (the 567,424 B gutter pixmap a 192 KiB part can never hold), hashed with
 /// the same FNV — must equal the banded stream's hash (band equivalence).
-#[cfg(all(not(target_os = "none"), not(feature = "rig")))]
+#[cfg(all(not(target_os = "none"), not(feature = "rig"), feature = "verify"))]
 pub fn full_frame_hash(quality: Quality) -> Result<u64, RenderError> {
     let mut fonts = Fonts::new();
     fonts.register("roboto", SUBSET_FONT.to_vec())?;
