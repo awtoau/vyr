@@ -1221,6 +1221,25 @@ PAGE_CSS_BODY = """
     font-size:12.5px;color:var(--ink-soft)}
   .legendrow .li{display:inline-flex;gap:7px;align-items:center}
   .legendrow .li-flat .lk{height:1px}
+  /* #chart-grid: the per-series show/hide grid below the chart. A dense,
+     scrollable list of one-line toggles — outliers first — that drive
+     u.setSeries(). Styled with the same tokens as the tables so it reads as
+     part of the same page. */
+  .tbar-grid{margin-top:14px}
+  .seriesgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+    gap:1px 14px;max-height:280px;overflow:auto;border:1px solid var(--line);
+    border-radius:8px;padding:6px 8px;background:var(--surface)}
+  .seriesgrid .sg{display:flex;gap:8px;align-items:center;padding:3px 4px;
+    font-size:12px;line-height:1.3;cursor:pointer;border-radius:5px;min-width:0}
+  .seriesgrid .sg:hover{background:var(--line)}
+  .seriesgrid .sg input{margin:0;flex:none;cursor:pointer}
+  .seriesgrid .sg .lk{flex:none}
+  .seriesgrid .sg .sgk{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-soft);flex:1 1 auto}
+  .seriesgrid .sg .sgr{flex:none;color:var(--ink-mut);font-size:11px;
+    font-variant-numeric:tabular-nums}
+  .seriesgrid .sg[data-off="1"]{opacity:.4}
+  .seriesgrid .sg[data-off="1"] .sgk{text-decoration:line-through}
   .charttip{position:absolute;pointer-events:none;z-index:5;max-width:min(360px,72vw);
     background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);
     border-radius:8px;box-shadow:var(--shadow);padding:7px 10px;font-size:12.5px;
@@ -1749,6 +1768,112 @@ CHART_JS = r"""
       u.setData(data, true);
     });
   }
+
+  /* --- the per-series show/hide grid -------------------------------------- */
+  /* One toggle per plotted series. uPlot's y auto-range ignores series with
+     show:false, so hiding the outliers rescales the plot to what remains. Rows
+     are ordered by SWING — the largest |indexed - 100| a series reaches — so
+     the lines that flatten the axis are at the top, easy to switch off. */
+  (function(){
+    var grid = document.getElementById('t-chart-grid');
+    if (!grid) { return; }
+    var rows = [];   // {si, el, key, swing, lo, hi}
+    for (var si = 1; si < META.length; si++) {
+      var ys = u.data[si], lo = Infinity, hi = -Infinity, seen = false;
+      for (var j = 0; j < N; j++) {
+        var v = ys[j];
+        if (v == null) { continue; }
+        seen = true;
+        if (v < lo) { lo = v; }
+        if (v > hi) { hi = v; }
+      }
+      if (!seen) { continue; }
+      var swing = Math.max(Math.abs(hi - 100), Math.abs(lo - 100));
+      rows.push({si: si, key: META[si].key, swing: swing, lo: lo, hi: hi});
+    }
+    /* biggest swing first; a stable key tiebreak so the order is deterministic */
+    rows.sort(function(a, b){ return (b.swing - a.swing) || (a.key < b.key ? -1 : 1); });
+
+    function mkMark(si){
+      var m = document.createElement('span');
+      m.className = 'lk';
+      m.style.setProperty('--k', colorOf(si));
+      if (META[si].flat) { m.style.height = '1px'; }
+      return m;
+    }
+    rows.forEach(function(r){
+      var lab = document.createElement('label');
+      lab.className = 'sg';
+      lab.setAttribute('data-off', '0');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true;
+      var key = document.createElement('span');
+      key.className = 'sgk'; key.textContent = r.key; key.title = r.key;
+      var rng = document.createElement('span');
+      rng.className = 'sgr';
+      rng.textContent = Math.round(r.lo) + '–' + Math.round(r.hi);
+      lab.appendChild(cb);
+      lab.appendChild(mkMark(r.si));
+      lab.appendChild(key);
+      lab.appendChild(rng);
+      grid.appendChild(lab);
+      r.el = lab; r.cb = cb;
+      cb.addEventListener('change', function(){
+        lab.setAttribute('data-off', cb.checked ? '0' : '1');
+        u.setSeries(r.si, {show: cb.checked});
+        updateCount();
+      });
+    });
+
+    var count = document.getElementById('t-chart-gcount');
+    function updateCount(){
+      var on = 0;
+      rows.forEach(function(r){ if (r.cb.checked) { on++; } });
+      if (count) { count.textContent = on + ' of ' + rows.length + ' series shown'; }
+    }
+    function setAll(show){
+      rows.forEach(function(r){
+        if (r.cb.checked !== show) {
+          r.cb.checked = show;
+          r.el.setAttribute('data-off', show ? '0' : '1');
+          u.setSeries(r.si, {show: show}, false);
+        }
+      });
+      u.redraw();       // one rescale after the batch, not one per series
+      updateCount();
+    }
+    var bAll = document.getElementById('t-chart-gall');
+    var bNone = document.getElementById('t-chart-gnone');
+    var bOut = document.getElementById('t-chart-gout');
+    if (bAll) { bAll.addEventListener('click', function(){ setAll(true); }); }
+    if (bNone) { bNone.addEventListener('click', function(){ setAll(false); }); }
+    if (bOut) {
+      bOut.addEventListener('click', function(){
+        /* an outlier is any series that leaves the 40–200 index band */
+        rows.forEach(function(r){
+          var out = r.hi > 200 || r.lo < 40;
+          var show = !out;
+          if (r.cb.checked !== show) {
+            r.cb.checked = show;
+            r.el.setAttribute('data-off', show ? '0' : '1');
+            u.setSeries(r.si, {show: show}, false);
+          }
+        });
+        u.redraw();
+        updateCount();
+      });
+    }
+    var gsearch = document.getElementById('t-chart-gsearch');
+    if (gsearch) {
+      gsearch.addEventListener('input', function(){
+        var q = gsearch.value.toLowerCase();
+        rows.forEach(function(r){
+          r.el.style.display = (!q || r.key.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+        });
+      });
+    }
+    updateCount();
+  })();
 })();
 """
 
@@ -1835,7 +1960,28 @@ def _chart_block(chart: dict) -> str:
         'observation with no neighbour is drawn as a single point. Series that '
         'never moved sit exactly on the 100 rule; they are drawn faintly because '
         'stability is evidence but it should not drown the lines that moved. Every '
-        'value plotted here is also a row in the tables below.</p></section>')
+        'value plotted here is also a row in the tables below.</p>'
+        # #chart-grid: one row per plotted series, each a show/hide toggle for the
+        # chart. The y-axis auto-rescales to the SHOWN series, so hiding the few
+        # outliers that dominate the range lets the rest resolve. The grid is
+        # sorted by how far each series travels from 100, so the outliers are at
+        # the top where they are easy to switch off.
+        '<div class="tbar tbar-grid">'
+        '<input id="t-chart-gsearch" type="search" placeholder="filter series…" '
+        'aria-label="filter chart series">'
+        '<button id="t-chart-gall" type="button">Show all</button>'
+        '<button id="t-chart-gnone" type="button">Hide all</button>'
+        '<button id="t-chart-gout" type="button" '
+        'title="hide every series whose indexed value leaves the 40–200 band">'
+        'Hide outliers</button>'
+        '<span class="count" id="t-chart-gcount"></span></div>'
+        '<div class="seriesgrid" id="t-chart-grid" role="group" '
+        'aria-label="show or hide chart series"></div>'
+        '<p class="hint">Each row is one plotted series; the box shows it on the '
+        'chart. Rows are ordered by <b>swing</b> — how far the indexed value '
+        'travels from 100 — so the outliers that flatten everything else sit at '
+        'the top. Hiding them rescales the y-axis to what is left. This changes '
+        'only the chart; the tables below always hold every value.</p></section>')
 
 
 def page_html(history: list[dict]) -> str:
