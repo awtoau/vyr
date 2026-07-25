@@ -171,7 +171,11 @@ def one_run(elf: Path, plugin: Path, tag: str) -> dict:
     # (with-fold) pass was actually run. No token => one pass => the largest
     # delta is the whole timed window.
     ranked = sorted(hits, key=lambda h: int(h[2]), reverse=True)
-    two_pass = ("total=" in gout) or ("total_cs=" in gout)
+    # The #44 two-pass marker is a space-prefixed ` total=` (vyr) or `total_cs=`
+    # (LVGL). Match those exactly — a bare `total=` also occurs in LVGL's
+    # `lv_mem_total=` line, which has nothing to do with the timed passes and
+    # would falsely trip the two-window path on a #45 single-pass perf build.
+    two_pass = (" total=" in gout) or ("total_cs=" in gout)
 
     if two_pass and len(ranked) > 1:
         # The with-fold pass is necessarily the larger of the two.
