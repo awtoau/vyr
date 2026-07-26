@@ -1681,6 +1681,122 @@ TABLE_JS = r"""
 """
 
 
+VSLVGL_JS = r"""
+(function(){
+  var host = document.getElementById('t-vslvgl');
+  if (!host) { return; }
+  var D = JSON.parse(document.getElementById('ledger-data').textContent);
+  var V = D.vslvgl;
+  function dead(m){ host.textContent = m; host.setAttribute('data-dead','1'); }
+  if (!V || !V.runs || V.runs.length < 2 || typeof uPlot === 'undefined') {
+    dead('The vyr-vs-LVGL ratio needs the LVGL anchor and two runs; see the '
+       + 'tables (derived.render_only_vs_lvgl).'); return;
+  }
+  var RUNS = V.runs, N = RUNS.length;
+  var TOK = ['--s1','--s2','--s3','--line','--line-strong','--ink','--ink-soft',
+             '--ink-mut','--surface'];
+  var PAL = {};
+  function pal(){ var cs = getComputedStyle(host); TOK.forEach(function(t){ PAL[t]=cs.getPropertyValue(t).trim(); }); }
+  pal();
+
+  /* x = run index; one flat LVGL baseline at 1x, then the three tier multiples. */
+  var xs = []; for (var i=0;i<N;i++){ xs.push(i); }
+  var base = xs.map(function(){ return 1; });
+  var data = [xs, base, V.exact, V.fast, V.draft];
+  /* label, colour token, whether it is the flat LVGL reference */
+  var SER = [
+    {n:'LVGL', c:'--ink-mut', ref:true},
+    {n:'Exact', c:'--s1'},
+    {n:'Fast', c:'--s2'},
+    {n:'Draft', c:'--s3'}
+  ];
+  function num(v,d){ return v==null?'':v.toLocaleString('en-AU',{maximumFractionDigits:d==null?2:d}); }
+  function font(px){ return px+'px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif'; }
+
+  var tip = document.createElement('div'); tip.className='charttip';
+  var tv=document.createElement('div'); tv.className='tv';
+  var tk=document.createElement('div'); tk.className='tk';
+  var tm=document.createElement('div'); tm.className='tm';
+  tip.appendChild(tv); tip.appendChild(tk); tip.appendChild(tm);
+  var focused=null;
+  function hideTip(){ tip.setAttribute('data-on','0'); }
+  function showTip(u){
+    var si=focused, idx=u.cursor.idx;
+    if(si==null||si<1||idx==null){ hideTip(); return; }
+    var val=u.data[si][idx]; if(val==null){ hideTip(); return; }
+    tv.textContent = num(val)+'× LVGL';
+    tk.textContent = SER[si-1].n;
+    var r=RUNS[idx]; tm.textContent = (r?r.c:'')+(r&&r.s?' — '+r.s:'');
+    var L=u.valToPos(idx,'x'), T=u.valToPos(val,'y'), w=200;
+    var lft=L+14; if(lft+w>u.bbox.width/uPlot.pxRatio) lft=L-w-14;
+    tip.style.transform='translate('+lft+'px,'+(T-10)+'px)'; tip.setAttribute('data-on','1');
+  }
+
+  /* direct end labels: the final multiple for each tier, so the colours never
+     have to carry identity. */
+  function ends(u){
+    var ctx=u.ctx, pr=uPlot.pxRatio, out=[];
+    for(var si=1; si<data.length; si++){
+      var ys=u.data[si], last=-1;
+      for(var j=N-1;j>=0;j--){ if(ys[j]!=null){ last=j; break; } }
+      if(last<0) continue;
+      out.push({si:si, x:u.valToPos(last,'x',true), y:u.valToPos(ys[last],'y',true),
+                t: SER[si-1].n+' '+num(ys[last],1)+'×'});
+    }
+    out.sort(function(a,b){ return a.y-b.y; });
+    var gap=15*pr, prev=-1e9;
+    ctx.save(); ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.font='600 '+font(11.5*pr); ctx.lineJoin='round';
+    out.forEach(function(e){
+      var ty=Math.max(e.y, prev+gap); prev=ty;
+      ctx.beginPath(); ctx.arc(e.x,e.y,3.5*pr,0,6.2832); ctx.fillStyle=PAL[SER[e.si-1].c]; ctx.fill();
+      ctx.lineWidth=4*pr; ctx.strokeStyle=PAL['--surface']; ctx.strokeText(e.t,e.x+8*pr,ty);
+      ctx.fillStyle=PAL['--ink-soft']; ctx.fillText(e.t,e.x+8*pr,ty);
+    });
+    ctx.restore();
+  }
+
+  var series=[{}].concat(SER.map(function(s,n){
+    var si=n+1;
+    return { label:s.n, stroke:function(){ return PAL[s.c]; },
+             width: s.ref?1:2, dash: s.ref?[4,4]:[],
+             points:{show:false} };
+  }));
+  var opts={
+    width: Math.max(320, host.clientWidth||900), height: 340,
+    padding:[14,86,0,6], legend:{show:false}, focus:{alpha:.15},
+    cursor:{x:true,y:false,points:{show:false},focus:{prox:30}},
+    scales:{x:{time:false}, y:{range:function(u,mn,mx){ return [0, Math.ceil(mx*1.05)]; }}},
+    axes:[
+      {stroke:function(){return PAL['--ink-mut'];}, font:font(11),
+       grid:{show:true,stroke:function(){return PAL['--line'];},width:1},
+       ticks:{show:true,stroke:function(){return PAL['--line'];},width:1,size:4},
+       rotate:-45, size:70,
+       values:function(u,sp){ return sp.map(function(v){ var r=RUNS[v]; return r?r.c:''; }); },
+       label:'run — in commit order', labelFont:font(11.5), labelSize:22},
+      {stroke:function(){return PAL['--ink-mut'];}, font:font(11),
+       grid:{show:true,stroke:function(){return PAL['--line'];},width:1}, size:52,
+       values:function(u,sp){ return sp.map(function(v){ return v+'×'; }); },
+       label:'× vs LVGL (render-only)', labelFont:font(11.5), labelSize:20}
+    ],
+    series:series,
+    hooks:{
+      init:[function(u){ u.over.appendChild(tip); }],
+      draw:[ends],
+      setSeries:[function(u,si){ focused=si; showTip(u); }],
+      setCursor:[function(u){ showTip(u); }]
+    }
+  };
+  var u=new uPlot(opts, data, host);
+  host.addEventListener('mouseleave', hideTip);
+  if(window.ResizeObserver){ new ResizeObserver(function(){ var w=Math.max(320,host.clientWidth); if(w!==u.width) u.setSize({width:w,height:u.height}); }).observe(host); }
+  function repaint(){ pal(); u.redraw(false,true); }
+  new MutationObserver(repaint).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+  if(window.matchMedia){ var mq=window.matchMedia('(prefers-color-scheme: dark)'); (mq.addEventListener?mq.addEventListener.bind(mq,'change'):mq.addListener.bind(mq))(repaint); }
+})();
+"""
+
+
 CHART_JS = r"""
 (function(){
   var host = document.getElementById('t-chart');
@@ -2191,6 +2307,46 @@ def _table_block(tid: str, heading: str, sub: str) -> str:
             f'the ledger recorded for it — hover to read it.</p></section>')
 
 
+def vslvgl_data(allrows: list[dict]) -> dict:
+    """The ABSOLUTE vyr-vs-LVGL multiple per run — not indexed. LVGL is the 1x
+    baseline; each vyr tier is its render-only / LVGL's. This is the comparison
+    itself, on its own dimensionless axis (a multiple), so it reads directly
+    ('Exact is 15x LVGL, closing') without the double-normalisation that made the
+    indexed ratio look like it hit zero."""
+    runs, ex, fa, dr = [], [], [], []
+    for r in allrows:
+        if r.get("kind", "measurement") != "measurement":
+            continue
+        d = (r.get("derived") or {}).get("render_only_vs_lvgl")
+        if not d:
+            continue
+        runs.append({"c": r.get("commit", "?"), "s": (r.get("subject") or "")[:60]})
+        ex.append(d.get("exact"))
+        fa.append(d.get("fast"))
+        dr.append(d.get("draft"))
+    return {"runs": runs, "exact": ex, "fast": fa, "draft": dr}
+
+
+def _vslvgl_block() -> str:
+    return (
+        '<section class="chunk"><h2>vyr vs LVGL — instructions per frame, '
+        '&times; the LVGL anchor</h2>'
+        '<p class="lede">The comparison the project exists to answer, on its own '
+        'axis — a <b>multiple</b>, not an index. <b>LVGL is the 1&times; baseline</b> '
+        '(the flat line); each vyr tier sits above it at its actual multiple and '
+        'descends toward it as vyr is optimised. Render-only on both sides '
+        '(#44/#45), so it is renderer against renderer. 1&times; would mean '
+        '“as cheap as LVGL”; below 1&times; would mean cheaper.</p>'
+        '<div class="chartcard"><div id="t-vslvgl"></div></div>'
+        '<p class="hint">Hover a line for the exact multiple at that commit. The '
+        'same numbers are in the tables below under '
+        '<code>derived.render_only_vs_lvgl</code>. This chart shows the ABSOLUTE '
+        'ratio; the big chart below indexes every series to its own first '
+        'observation, which is right for a trend but double-normalises a ratio '
+        '(a falling line there means the gap shrank, not that vyr passed LVGL).'
+        '</p></section>')
+
+
 def _chart_block(chart: dict) -> str:
     ser = chart["series"]
     n_emph = sum(1 for s in ser if s["e"])
@@ -2283,6 +2439,7 @@ def page_html(history: list[dict]) -> str:
     payload = {
         "notes": notes.list,
         "chart": chart,
+        "vslvgl": vslvgl_data(allrows),
         "tables": [
             {"id": "t-cells", "cols": MATRIX_COLS, "rows": mrows, "height": "640px"},
             {"id": "t-values", "cols": OTHER_COLS, "rows": orows, "height": "560px"},
@@ -2346,6 +2503,8 @@ latest <code>{_esc(latest['commit'])}</code> {_esc(latest.get('subject', ''))} �
 how each number is produced:
 <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 
+{_vslvgl_block()}
+
 {_chart_block(chart)}
 
 {_table_block("t-cells", "Matrix cells",
@@ -2380,6 +2539,7 @@ fetches nothing when it is opened.</p>
 <script src="vendor/{UPLOT_JS}"></script>
 <script id="ledger-data" type="application/json">{blob}</script>
 <script>{TABLE_JS}</script>
+<script>{VSLVGL_JS}</script>
 <script>{CHART_JS}</script>
 <script>{THEME_JS}</script>
 </body>
