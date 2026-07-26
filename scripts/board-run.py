@@ -42,6 +42,11 @@ TMP = os.path.join(REPO, "tmp")
 
 TARGET = "thumbv7em-none-eabihf"
 PROFILE = "release-mcu"
+# The checkout whose SOURCE is built. Defaults to this script's own repo, but
+# --repo points it at a worktree so the CURRENT tooling can build and flash an
+# OLD commit's code — the ledger principle "new instrument, old renderer" applied
+# to the board (scripts/board-history.py). TMP/logs stay in the primary repo.
+BUILD_REPO = REPO
 ELF = os.path.join(REPO, "target", TARGET, PROFILE, "vyr-size")
 
 # --- the silicon target registry (#52) --------------------------------------
@@ -146,16 +151,17 @@ def build(tier, logf, verify=False):
         "--target", TARGET, "--profile", PROFILE,
         "--no-default-features", "--features", feats,
     ]
-    log(f"build: {' '.join(cmd)}", logf)
-    r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+    log(f"build: {' '.join(cmd)} (cwd={BUILD_REPO})", logf)
+    r = subprocess.run(cmd, cwd=BUILD_REPO, capture_output=True, text=True)
     logf.write(r.stdout + r.stderr + "\n")
     logf.flush()
     if r.returncode != 0:
         log("BUILD FAILED — see log", logf)
         return None
+    elf = os.path.join(BUILD_REPO, "target", TARGET, PROFILE, "vyr-size")
     snapshot = os.path.join(TMP, f"board-{snap}.elf")
-    shutil.copyfile(ELF, snapshot)
-    with open(ELF, "rb") as f:
+    shutil.copyfile(elf, snapshot)
+    with open(elf, "rb") as f:
         digest = hashlib.sha256(f.read()).hexdigest()
     log(f"snapshot {snapshot} (sha256:{digest[:16]})", logf)
     return snapshot, digest
@@ -252,7 +258,7 @@ def parse(text, logf):
     return res
 
 
-def one_tier(tier, repeat, logf):
+def one_tier(tier, repeat, logf, verify=True):
     built = build(tier, logf)
     if not built:
         return None
@@ -287,15 +293,19 @@ def one_tier(tier, repeat, logf):
     # #45: the frame hash is the VERIFY build's product — flash one verify image
     # (untimed: it proves the pixels, it does not measure cycles). The cross-ISA
     # gate below then compares THIS hash, not the perf build's (which has none).
+    # `verify=False` (the bulk-history mode) skips that second flash: cycles are
+    # what a history wants, and the hash is already proven at HEAD and across all
+    # of history in the qemu replay.
     verify_hash = None
-    vbuilt = build(tier, logf, verify=True)
-    if vbuilt:
-        vsemi = os.path.join(TMP, f"board-{tier}-verify.log")
-        vtext, _ = run_once(vbuilt[0], logf, vsemi)
-        if vtext:
-            verify_hash = parse(vtext, logf).get("frame_hash")
-        log(f"{tier} verify: frame hash {verify_hash} (from the --features verify image)",
-            logf)
+    if verify:
+        vbuilt = build(tier, logf, verify=True)
+        if vbuilt:
+            vsemi = os.path.join(TMP, f"board-{tier}-verify.log")
+            vtext, _ = run_once(vbuilt[0], logf, vsemi)
+            if vtext:
+                verify_hash = parse(vtext, logf).get("frame_hash")
+            log(f"{tier} verify: frame hash {verify_hash} (from the --features verify image)",
+                logf)
     summary = {
         "tier": tier.capitalize(),
         "elf": elf,
@@ -365,9 +375,19 @@ def main():
     ap.add_argument("--repeat", type=int, default=1,
                     help="runs per tier (>=3 to see run-to-run spread)")
     ap.add_argument("--out", default=os.path.join(TMP, "board-result.json"))
+    ap.add_argument("--repo", default=None,
+                    help="build the SOURCE at this checkout (a worktree) instead of "
+                         "this script's own repo — new tooling, old renderer, for "
+                         "scripts/board-history.py.")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="cycles only: skip the second (verify) flash and the hash "
+                         "gate. For the bulk history, where the hash is already "
+                         "proven at HEAD and across history in the qemu replay.")
     args = ap.parse_args()
 
-    global CHIP, PROBE, _CLOCK_OK
+    global CHIP, PROBE, _CLOCK_OK, BUILD_REPO
+    if args.repo:
+        BUILD_REPO = os.path.abspath(args.repo)
     tgt = TARGETS[args.target]
     if not tgt["ported"]:
         print(f"board-run: target '{args.target}' ({tgt['board']}) is not yet "
@@ -408,7 +428,7 @@ def main():
         }
         rc = 0
         for tier in tiers:
-            s = one_tier(tier, args.repeat, logf)
+            s = one_tier(tier, args.repeat, logf, verify=not args.no_verify)
             if s is None:
                 rc = 2
                 continue
@@ -424,7 +444,10 @@ def main():
                     f"these cycles are NOT the 192 MHz + ART configuration ***",
                     logf)
                 rc = 3
-            if not s["hash_matches_reference"]:
+            if args.no_verify:
+                log(f"{s['tier']}: hash gate SKIPPED (--no-verify, cycles-only); "
+                    f"hash proven at HEAD + qemu history", logf)
+            elif not s["hash_matches_reference"]:
                 log(f"*** {s['tier']}: FRAME HASH MISMATCH vs "
                     f"{s['reference_hash']} — cross-ISA determinism broken ***",
                     logf)
