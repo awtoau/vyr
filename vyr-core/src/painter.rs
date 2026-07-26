@@ -521,17 +521,19 @@ enum ClipFate {
 /// coverage-aware integer curve rasteriser, not a routing change
 /// (docs/performance.md §3.1).
 pub struct TinySkiaCanvas {
-    /// Scratch/output premultiplied surface, **allocated lazily on first real
-    /// use** ([`Self::pixmap_mut`]). Exact/Fast reach for it on their very
-    /// first op (it IS their surface), so they allocate it immediately. Draft
-    /// writes RGB888 into `rgb` directly and only touches tiny-skia — hence
-    /// this pixmap — in two rare cases: the rounded-clip fallback ([`Self::fill`])
+    /// Scratch/output premultiplied surface. **Exact/Fast allocate it eagerly
+    /// at construction** ([`Self::new_with_quality`]) — it IS their surface, and
+    /// on the F405-class heap it must be claimed while the heap is empty (a lazy
+    /// first-op allocation OOMs once the heap has fragmented, #46). **Draft
+    /// leaves it `None` and allocates lazily** ([`Self::pixmap_mut`]): Draft
+    /// writes RGB888 into `rgb` directly and only touches tiny-skia — hence this
+    /// pixmap — in two rare cases, the rounded-clip fallback ([`Self::fill`])
     /// and the clip A8 mask ([`Self::ensure_mask`]). A Draft band that hits
-    /// neither leaves this `None`, saving `(area·4)` B of alloc + per-band
+    /// neither never allocates it, saving `(area·4)` B of alloc + per-band
     /// zeroing (~30 KB/band at 480×270) that the old unconditional
     /// `Pixmap::new` paid on every band of every Draft frame (#35). Every
     /// width/height read goes through [`Self::pixmap_dims`] (a pure function of
-    /// `area`+`gutter`) so it never forces this allocation.
+    /// `area`+`gutter`) so it never forces the lazy Draft allocation.
     pixmap: Option<Pixmap>,
     /// **Draft only** — the output surface IS this straight-RGB888 band buffer
     /// (`area.w · area.h · 3` bytes, draw-order composited). The Draft fast
@@ -639,17 +641,32 @@ impl TinySkiaCanvas {
             Quality::Fast => FAST_GUTTER,
             Quality::Draft => 0,
         };
-        // The scratch pixmap is allocated LAZILY on first real use (#35), not
-        // here — a Draft scene that never hits a rounded clip or an A8 mask
-        // never allocates it, dropping ~30 KB of alloc + zeroing per band. We
-        // still validate its dimensions up front so `new_with_quality` returns
-        // `None` for degenerate dims EXACTLY as the old `Pixmap::new()?` did:
-        // tiny-skia's `Pixmap::new` reports `None` ONLY when `IntSize::from_wh`
-        // rejects the dims (a zero side) — OOM aborts through the global
-        // allocator and is never surfaced as `None`. Validating with the same
-        // `IntSize::from_wh` is therefore the exact feasibility gate, minus the
-        // allocation, and it is what lets `pixmap_mut`'s `.expect()` be sound.
-        IntSize::from_wh(area.w + 2 * gutter, area.h + 2 * gutter)?;
+        // The scratch pixmap is allocated LAZILY for **Draft only** (#35): a
+        // Draft scene that never hits a rounded clip or an A8 mask never
+        // allocates it, dropping ~30 KB of alloc + zeroing per band. For Draft
+        // we still validate its dimensions up front so `new_with_quality`
+        // returns `None` for degenerate dims EXACTLY as the old `Pixmap::new()?`
+        // did — tiny-skia's `Pixmap::new` reports `None` ONLY when
+        // `IntSize::from_wh` rejects the dims (a zero side); OOM aborts through
+        // the global allocator and is never surfaced as `None`. That same
+        // `IntSize::from_wh` is the exact feasibility gate minus the allocation,
+        // and it is what lets `pixmap_mut`'s `.expect()` be sound.
+        //
+        // Exact and Fast ALWAYS need the pixmap (it is their surface), and on
+        // the F405-class heap it MUST be allocated HERE, at construction, while
+        // the heap is empty — allocating it lazily on the first op instead put
+        // the 46,848 B request after the rgb buffer and the first-band churn had
+        // fragmented the heap, and it failed to find a contiguous block (#46).
+        // So: eager for Exact/Fast, lazy for Draft.
+        let pixmap = match quality {
+            Quality::Draft => {
+                IntSize::from_wh(area.w + 2 * gutter, area.h + 2 * gutter)?;
+                None
+            }
+            Quality::Exact | Quality::Fast => {
+                Some(Pixmap::new(area.w + 2 * gutter, area.h + 2 * gutter)?)
+            }
+        };
         // Draft/Fast: the output surface IS this zeroed RGB888 band; the
         // backdrop fill (first op of every scene) covers it opaque before any
         // sampling. Exact: stays empty — the premul pixmap is its surface.
@@ -660,7 +677,7 @@ impl TinySkiaCanvas {
             }
         };
         Some(Self {
-            pixmap: None,
+            pixmap,
             rgb,
             area,
             quality,
