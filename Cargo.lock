@@ -332,6 +332,9 @@ dependencies = [
 [[package]]
 name = "vyr-scene"
 version = "0.0.1"
+dependencies = [
+ "vyr-core",
+]
 
 [[package]]
 name = "vyr-size"

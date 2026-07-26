@@ -1,11 +1,28 @@
 //! vyr-scene — frame-indexed animated test scenes, as IR JSON.
 //!
-//! `no_std + alloc` **on purpose**, and with zero dependencies: the same
-//! generator has to run on the host (vyr-rig: hash chain, PNG dump,
-//! resolution ladder) and inside the emulated-M4 measurement vehicle
-//! (vyr-size `--features run-qemu,rig`). One generator means the two legs
-//! animate the *same* pixels, so the M4's instruction counts and the host's
-//! dirty-rect statistics describe one scene rather than two.
+//! `no_std + alloc` **on purpose**: the same generator has to run on the host
+//! (vyr-rig: hash chain, PNG dump, resolution ladder) and inside the
+//! emulated-M4 measurement vehicle (vyr-size `--features run-qemu,rig`). One
+//! generator means the two legs animate the *same* pixels, so the M4's
+//! instruction counts and the host's dirty-rect statistics describe one scene
+//! rather than two.
+//!
+//! # Two animation paths, one source of truth (#55)
+//!
+//! [`scene_ir`] emits the scene as an IR JSON STRING for frame *f* — the
+//! reference oracle (the goldens, the optional cross-ISA JSON emit, the test's
+//! `A` render). It is total and referentially transparent (below).
+//!
+//! [`scene_tree`] + [`animate`] are the FAST path a real animating device runs
+//! and the rig now measures: parse the scene ONCE into a typed
+//! [`vyr_core::ir::Request`], record the index-path of every animating node in
+//! [`Handles`], then per frame mutate ONLY those fields — writing the typed
+//! `Geom`/`Resolved` caches directly through vyr-core's setters, with no
+//! `format!`, no re-parse and no whole-tree re-resolve. `animate` drives every
+//! field from the SAME driver expressions `scene_ir` uses, so a persistent
+//! tree animated to frame *f* renders byte-for-byte like `Request::parse` of
+//! `scene_ir(_, _, f, _)` — the property `vyr-rig/tests` asserts across a frame
+//! sweep, both detail levels and all three quality tiers.
 //!
 //! Three rules the scene obeys, all of them load-bearing:
 //!
@@ -51,6 +68,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
+use vyr_core::ir::{Request, parse_color};
 
 // --- suite identity ----------------------------------------------------------
 
@@ -676,6 +694,260 @@ fn text_node(
             r##""text": "{text}", "color": "{color}", "font_family": "roboto", "font_size": "{size}""##
         ),
     )
+}
+
+// --- the persistent typed tree (#55) -----------------------------------------
+
+/// Design-x → screen px as the render core's geom cast stores it: the parse
+/// path resolves `x`/`width` as `(decimal(sx(v)) → f32) as i32`. The scaled
+/// coordinates here are exact integers far inside f32's 24-bit mantissa, so
+/// routing through `f32` reproduces that cast byte-for-byte (#55).
+fn gx(v: i64, w: u32) -> i32 {
+    sx(v, w) as f32 as i32
+}
+/// See [`gx`].
+fn gy(v: i64, h: u32) -> i32 {
+    sy(v, h) as f32 as i32
+}
+/// See [`gx`] — the `width`/`height` form (`u32`, clamped at 0 like the parse
+/// path's `u32_attr`).
+fn gxu(v: i64, w: u32) -> u32 {
+    (sx(v, w) as f32).max(0.0) as u32
+}
+/// See [`gxu`].
+fn gyu(v: i64, h: u32) -> u32 {
+    (sy(v, h) as f32).max(0.0) as u32
+}
+
+/// The index-paths of every animating node in the long scene, recorded once so
+/// [`animate`] can address them positionally without re-searching. The tree's
+/// structure (node count and order) is frame-invariant within a detail level,
+/// so the paths are stable for the life of the run; only the presence of the
+/// bar chart ([`Detail::Full`] only) shifts the indices after the trace chart.
+#[derive(Debug, Clone)]
+pub struct Handles {
+    detail: Detail,
+    /// header card (`vy_frame`) — its `background` tracks the theme.
+    header: usize,
+    /// the frame-counter `vy_lcd`.
+    lcd: usize,
+    /// the rolling-ASCII ticker `vy_label`.
+    ticker: usize,
+    /// the breathing `vy_gauge` (geometry + accent colour).
+    gauge: usize,
+    /// the orbit `vy_container`; its `background` tracks the theme and its
+    /// three children (circle A `[container,0]`, circle B `[container,1]`,
+    /// image `[container,2]`) orbit.
+    container: usize,
+    /// the scrolling trace `vy_chart`.
+    trace: usize,
+    /// the bar `vy_chart` — [`Detail::Full`] only.
+    bars: Option<usize>,
+    /// the translucent `vy_frame` panel (slot geometry, accent, opacity).
+    panel: usize,
+    /// the `vy_button` (slot geometry); its label is `[button,0]`.
+    button: usize,
+    /// the `vy_slider`.
+    slider: usize,
+    /// the `vy_progress`.
+    progress: usize,
+    /// the `vy_toggle`.
+    toggle: usize,
+    /// the natural-size roaming `vy_image`.
+    roaming: usize,
+}
+
+impl Handles {
+    /// The stable paths for a detail level — computed from the emit order in
+    /// [`scene_ir`] (header 0, title 1, lcd 2, ticker 3, gauge 4, container 5,
+    /// trace 6, then the bar chart at 7 for `Full` only, shifting the tail).
+    fn for_detail(detail: Detail) -> Handles {
+        let mut i = 7usize;
+        let bars = if detail.bars() {
+            let b = i;
+            i += 1;
+            Some(b)
+        } else {
+            None
+        };
+        let panel = i;
+        let button = i + 1;
+        let slider = i + 2;
+        let progress = i + 3;
+        let toggle = i + 4;
+        let roaming = i + 5;
+        Handles {
+            detail,
+            header: 0,
+            lcd: 2,
+            ticker: 3,
+            gauge: 4,
+            container: 5,
+            trace: 6,
+            bars,
+            panel,
+            button,
+            slider,
+            progress,
+            toggle,
+            roaming,
+        }
+    }
+}
+
+/// Parse the long scene ONCE (frame 0) into a persistent typed [`Request`] and
+/// record the [`Handles`] of its animating nodes. [`animate`] then advances the
+/// SAME tree per frame by writing the typed caches directly — no re-parse. The
+/// returned tree at frame 0 already IS frame 0 (it was parsed from
+/// `scene_ir(w, h, 0, detail)`); a caller that starts at another frame calls
+/// [`animate`] before the first render.
+///
+/// Panics only if `scene_ir(w, h, 0, detail)` is not valid IR, which is a bug
+/// in the generator, not a runtime condition.
+pub fn scene_tree(w: u32, h: u32, detail: Detail) -> (Request, Handles) {
+    let ir = scene_ir(w, h, 0, detail);
+    let req = Request::parse(&ir).expect("scene_ir(frame 0) must be valid IR");
+    let handles = Handles::for_detail(detail);
+    // Cheap structural guard (compiled out in release): the positional paths
+    // must land on the nodes they name, or a scene reorder would silently
+    // animate the wrong widget. The byte-identity test is the real proof; this
+    // fails LOUD and EARLY if the emit order and `Handles::for_detail` drift.
+    debug_assert_eq!(name_at(&req, &[handles.header]), Some("vy_frame"));
+    debug_assert_eq!(name_at(&req, &[handles.lcd]), Some("vy_lcd"));
+    debug_assert_eq!(name_at(&req, &[handles.ticker]), Some("vy_label"));
+    debug_assert_eq!(name_at(&req, &[handles.gauge]), Some("vy_gauge"));
+    debug_assert_eq!(name_at(&req, &[handles.container]), Some("vy_container"));
+    debug_assert_eq!(name_at(&req, &[handles.container, 0]), Some("vy_circle"));
+    debug_assert_eq!(name_at(&req, &[handles.container, 1]), Some("vy_circle"));
+    debug_assert_eq!(name_at(&req, &[handles.container, 2]), Some("vy_image"));
+    debug_assert_eq!(name_at(&req, &[handles.trace]), Some("vy_chart"));
+    if let Some(b) = handles.bars {
+        debug_assert_eq!(name_at(&req, &[b]), Some("vy_chart"));
+    }
+    debug_assert_eq!(name_at(&req, &[handles.panel]), Some("vy_frame"));
+    debug_assert_eq!(name_at(&req, &[handles.button]), Some("vy_button"));
+    debug_assert_eq!(name_at(&req, &[handles.button, 0]), Some("vy_label"));
+    debug_assert_eq!(name_at(&req, &[handles.slider]), Some("vy_slider"));
+    debug_assert_eq!(name_at(&req, &[handles.progress]), Some("vy_progress"));
+    debug_assert_eq!(name_at(&req, &[handles.toggle]), Some("vy_toggle"));
+    debug_assert_eq!(name_at(&req, &[handles.roaming]), Some("vy_image"));
+    (req, handles)
+}
+
+/// The `name` of the node at `path` (for the [`scene_tree`] structural guard).
+/// Always compiled — `debug_assert_eq!` still type-checks its arguments in
+/// release (where `debug_assertions` is off, e.g. `release-mcu`), so a
+/// `#[cfg(debug_assertions)]` definition would leave the call sites undefined.
+/// `allow(dead_code)` because the asserts that call it are compiled out there.
+#[allow(dead_code)]
+fn name_at<'a>(req: &'a Request, path: &[usize]) -> Option<&'a str> {
+    let mut node = &req.root;
+    for &i in path {
+        node = node.children.get(i)?;
+    }
+    Some(node.name.as_str())
+}
+
+/// Advance the persistent tree to `frame`: set every animating field via the
+/// vyr-core setters, from the SAME driver expressions [`scene_ir`] uses. After
+/// this call the tree renders byte-for-byte like `Request::parse` of
+/// `scene_ir(w, h, frame, handles.detail)` — the property `vyr-rig/tests`
+/// asserts. Pure in `frame`: no residue carries between frames, so a persistent
+/// tree replayed across ascending frames matches a fresh parse of each.
+pub fn animate(req: &mut Request, handles: &Handles, w: u32, h: u32, frame: u32) {
+    let detail = handles.detail;
+    let th = theme(frame);
+    let t = motion_frame(frame);
+    let card = parse_color(CARDS[th]);
+    let accent = parse_color(ACCENTS[th]);
+
+    // Root backdrop: read LIVE from the root's `background` attr string at
+    // paint (NOT from `Resolved.bg`), so the ROOT alone animates by rewriting
+    // the attr; every other node reads its resolved cache.
+    req.root.set_attr("background", BACKDROPS[th]);
+
+    // header card fill.
+    if let Some(n) = req.root.child_mut(&[handles.header]) {
+        n.set_bg(card);
+    }
+    // the near-static counter + the rolling ticker.
+    if let Some(n) = req.root.child_mut(&[handles.lcd]) {
+        n.set_text(Some(counter_text(frame)));
+    }
+    if let Some(n) = req.root.child_mut(&[handles.ticker]) {
+        n.set_text(Some(ticker_text(frame, detail)));
+    }
+    // the breathing gauge: one driver → y + width + height, plus accent arc.
+    let gd = gauge_d(frame);
+    if let Some(n) = req.root.child_mut(&[handles.gauge]) {
+        n.set_geom(gx(20, w), gy(62 + (72 - gd) / 2, h), gyu(gd, h), gyu(gd, h));
+        n.set_fg(accent);
+    }
+    // the clipped orbit container + its three orbiting children.
+    if let Some(n) = req.root.child_mut(&[handles.container]) {
+        n.set_bg(card);
+    }
+    let (cw, ch) = (200i64, 116i64);
+    let (ax, ay) = orbit(cw, ch, 54, 30, t * 3, 44);
+    let (bx, by) = orbit(cw, ch, 118, 66, 256 - (t * 5) % 256, 22);
+    let (ix, iy) = orbit(cw, ch, 70, 40, t * 2 + 90, 40);
+    if let Some(n) = req.root.child_mut(&[handles.container, 0]) {
+        n.set_geom_pos(gx(ax, w), gy(ay, h));
+    }
+    if let Some(n) = req.root.child_mut(&[handles.container, 1]) {
+        n.set_geom_pos(gx(bx, w), gy(by, h));
+        n.set_bg(accent);
+    }
+    if let Some(n) = req.root.child_mut(&[handles.container, 2]) {
+        n.set_geom_pos(gx(ix, w), gy(iy, h));
+    }
+    // the scrolling trace: series + accent line + card fill.
+    if let Some(n) = req.root.child_mut(&[handles.trace]) {
+        // The CSV is byte-identical to what `scene_ir` emits, so the shared
+        // parse rebuilds the same points; the chart's only frame-varying line
+        // colour is the accent.
+        let _ = n.set_chart_points_csv(&trace_csv(frame, detail));
+        n.set_chart_line_col(accent);
+        n.set_bg(card);
+    }
+    // the bar chart (Full only): series + card fill (its line colour is static).
+    if let Some(b) = handles.bars
+        && let Some(n) = req.root.child_mut(&[b])
+    {
+        let _ = n.set_chart_points_csv(&bars_csv(frame));
+        n.set_bg(card);
+    }
+    // the translucent panel: slot geometry + accent + the 3-way opacity.
+    let slot = panel_slot(frame);
+    let px = [16i64, 96, 176][slot as usize];
+    if let Some(n) = req.root.child_mut(&[handles.panel]) {
+        n.set_geom(gx(px, w), gy(126, h), gxu(280, w), gyu(88, h));
+        n.set_bg(accent);
+        n.set_opacity((88 + slot * 40) as f32);
+    }
+    // the button rides the panel; its label reads "RUN {slot}".
+    if let Some(n) = req.root.child_mut(&[handles.button]) {
+        n.set_geom(gx(px + 190, w), gy(140, h), gxu(76, w), gyu(26, h));
+    }
+    if let Some(n) = req.root.child_mut(&[handles.button, 0]) {
+        n.set_text(Some(alloc::format!("RUN {slot}")));
+    }
+    // the cheap widgets on their own periods.
+    if let Some(n) = req.root.child_mut(&[handles.slider]) {
+        n.set_fraction(slider_value(frame) as f32, 0.0, 100.0);
+    }
+    if let Some(n) = req.root.child_mut(&[handles.progress]) {
+        n.set_fraction(progress_value(frame) as f32, 0.0, 100.0);
+    }
+    if let Some(n) = req.root.child_mut(&[handles.toggle]) {
+        n.set_value_on(toggle_on(frame));
+    }
+    // the natural-size roaming blit.
+    let rx = 320 + wave(140, t * 4);
+    let ry = 226 + wave(14, t * 7);
+    if let Some(n) = req.root.child_mut(&[handles.roaming]) {
+        n.set_geom_pos(gx(rx, w), gy(ry, h));
+    }
 }
 
 // --- FNV-1a hashing + the run chain ------------------------------------------

@@ -513,9 +513,12 @@ pub const RIG_FRAMES: u32 = 300;
 ///    hash fold stays OUT of it). `--features rig-perframe` adds a clock
 ///    read per frame instead, turning that window into a per-frame series.
 ///
-/// The pass-2 window INCLUDES scene generation and IR parse. That is not
-/// slack: an animating UI re-emits its IR every frame, so those are frame
-/// costs, and hiding them would make the number describe a still image.
+/// The pass-2 window INCLUDES the per-frame scene MUTATION (#55): the scene is
+/// parsed into a typed tree ONCE, and each timed frame mutates only the
+/// animating fields (via the vyr-core setters) before the banded render. That
+/// is the shape a real animating device runs — hold the widget tree, poke what
+/// changed — and it is what the number now describes, in place of the old
+/// re-emit-the-whole-IR-string-and-re-parse-it-every-frame cost.
 #[cfg(feature = "rig")]
 fn run_animated(
     emit: &mut dyn FnMut(&str),
@@ -560,6 +563,18 @@ fn run_animated(
     // first time the 8 KiB budget is asked to hold more than one shape.
     let mut shapes = Shapes::new();
 
+    // #55: ONE persistent typed tree for the WHOLE run. Parse the scene ONCE
+    // (frame 0) into a typed `Request` + record its animating nodes' paths;
+    // each frame then mutates ONLY those fields via the vyr-core setters —
+    // NO per-frame stringify→parse→resolve round-trip. A real animating device
+    // holds its widget tree and pokes the values that changed; this is that
+    // shape, and it drops the 3–4 KB scene string + whole-tree re-`prepare`
+    // that the old `scene_ir`+`Request::parse` path paid every frame. `opaque`
+    // keeps the one parse off the const-folder (see [`opaque`]).
+    let (req, handles) = vyr_scene::scene_tree(FIXTURE_W, FIXTURE_H, RIG_DETAIL);
+    let mut req = opaque(req);
+    phase(emit, heap, "scene-tree");
+
     // ~20 samples whatever the preset, so the survey's own semihosting
     // deltas stay far smaller than the timed window (qemu-insn.py takes the
     // LARGEST delta; a coarse survey must never out-run the measurement).
@@ -568,14 +583,9 @@ fn run_animated(
     #[cfg(feature = "verify")]
     let mut chain = vyr_scene::FNV_OFFSET;
     for f in 0..RIG_FRAMES {
-        // The IR STRING is dropped before the render starts: on a part with
-        // 122,880 B of arena, holding a 3–4 KB scene string alive across a
-        // banded frame is 3–4 KB of peak nobody needs, and a real animating
-        // device would not do it either.
-        let req = {
-            let ir = vyr_scene::scene_ir(FIXTURE_W, FIXTURE_H, f, RIG_DETAIL);
-            vyr_core::ir::Request::parse(opaque(ir.as_str()))?
-        };
+        // Mutate the persistent tree to frame `f` in place (pure in `f` — no
+        // residue from the previous frame).
+        vyr_scene::animate(&mut req, &handles, FIXTURE_W, FIXTURE_H, f);
         let (_hash, pixels, stats) = render_frame_banded(
             &req,
             &mut fonts,
@@ -633,10 +643,9 @@ fn run_animated(
             // WORST frame gets a number instead of an estimate.
             #[cfg(feature = "rig-perframe")]
             let _ = clock();
-            let req = {
-                let ir = vyr_scene::scene_ir(FIXTURE_W, FIXTURE_H, f, RIG_DETAIL);
-                vyr_core::ir::Request::parse(opaque(ir.as_str()))?
-            };
+            // #55: mutate the persistent tree in place — the timed window now
+            // prices the animating-field write, not a full re-emit + re-parse.
+            vyr_scene::animate(&mut req, &handles, FIXTURE_W, FIXTURE_H, f);
             render_frame_banded(
                 &req,
                 &mut fonts,
