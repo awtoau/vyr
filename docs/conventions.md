@@ -5,6 +5,28 @@ and the conventions proven in awto-vyvanse / awto-l8-app. Where this repo is
 public and others may contribute, the rules are restated here rather than
 referenced privately.
 
+## Regular patterns — apply a pattern completely, never by ROI
+
+When a pattern is introduced — a cache, a resolve-once, a validation approach, an
+error shape, a naming scheme — apply it to **every** case it fits, in the same
+pass. The value of code is in being **regular**: the next reader must be able to
+trust "attributes are resolved once" without checking each one; the next change
+must be able to follow the established shape without discovering exceptions.
+
+- **ROI decides whether to introduce a pattern, never whether to finish it.**
+  "Geometry was 13 % but colours only 1 %, so I stopped" leaves the code
+  irregular — some attributes cached, some re-parsed — which is *worse* than
+  either extreme: a trap the next person steps in. If a pattern is worth doing it
+  is worth doing everywhere it applies; if it is not worth doing everywhere,
+  reconsider doing it at all.
+- **The cost of irregularity is not measured in the profiler.** It is the reader
+  who can no longer trust an invariant, and the change that breaks because it
+  followed the pattern into a place the pattern was never finished.
+- Half-applying a pattern and calling the work done is the specific failure this
+  rule exists to prevent (learned on #34: geometry + colours resolved-once, but
+  `value`/`text`/`font` left re-parsing — regularity, not the extra 1 %, is why
+  it had to be finished).
+
 ## Logging — heaps of timestamps, logs everywhere
 
 The single most-load-bearing convention. Every tool in this repo logs **every
