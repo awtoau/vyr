@@ -33,18 +33,28 @@ JSONL ledger is untouched — folding this into it is a separate, deliberate
 step (see docs/design/painter-simd-tax.md §6).
 
 Output: the DB + tmp/microbench.log
+Parallel: tiers and per-point isolated builds fan out across `--jobs` workers,
+each with its OWN `CARGO_TARGET_DIR` (concurrent cargo builds cannot share one
+— they lock it and emit the same ELF). Default jobs = min(12, cpu//2).
+
 Usage:  python3 scripts/microbench.py [--tiers exact,fast,draft]
-                                      [--deep [--deep-full]] [--opt z|s|3]
-                                      [--db tmp/microbench.db] [--keep-elf]
+                                      [--deep [--deep-full]] [--jobs N]
+                                      [--opt z|s|3] [--db tmp/microbench.db]
+                                      [--keep-elf]
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
+import contextlib
+import multiprocessing
 import os
+import queue
 import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -75,14 +85,17 @@ DEEP_SUBSET = {
 }
 
 _lines: list[str] = []
+_log_lock = threading.Lock()
 
 
 def log(msg: str) -> None:
     line = f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] {msg}"
-    print(line, flush=True)
-    _lines.append(line)
-    WORK.mkdir(parents=True, exist_ok=True)
-    LOG.write_text("\n".join(_lines) + "\n")
+    # Worker threads call this; serialise so lines and the file don't interleave.
+    with _log_lock:
+        print(line, flush=True)
+        _lines.append(line)
+        WORK.mkdir(parents=True, exist_ok=True)
+        LOG.write_text("\n".join(_lines) + "\n")
 
 
 def git_commit() -> str:
@@ -94,12 +107,36 @@ def git_commit() -> str:
 # --- build + run -------------------------------------------------------------
 
 
-def build(tier: str, opt: str | None, strip: bool, point: str | None) -> Path:
+class BuildError(RuntimeError):
+    """A cargo build failed. Catchable so one task does not abort the pool."""
+
+
+class Slots:
+    """A pool of per-worker CARGO_TARGET_DIRs. Concurrent `cargo build`s MUST
+    NOT share a target dir — cargo locks it (serialising the builds away) and
+    they all emit the same `vyr-size` ELF (clobbering each other). Each worker
+    acquires a private dir; builds within it stay incremental."""
+
+    def __init__(self, n: int):
+        self.q: queue.Queue[Path] = queue.Queue()
+        for i in range(n):
+            self.q.put(WORK / f"target-{i}")
+
+    @contextlib.contextmanager
+    def acquire(self):
+        d = self.q.get()
+        try:
+            yield d
+        finally:
+            self.q.put(d)
+
+
+def build(tier: str, opt: str | None, strip: bool, point: str | None, target_dir: Path) -> Path:
     cfg = ["--config", f"profile.release-mcu.strip={'true' if strip else 'false'}"]
     if opt:
         toml = f'"{opt}"' if opt in ("z", "s") else opt
         cfg += ["--config", f"profile.release-mcu.opt-level={toml}"]
-    env = {**os.environ, "CARGO_INCREMENTAL": "0"}
+    env = {**os.environ, "CARGO_INCREMENTAL": "0", "CARGO_TARGET_DIR": str(target_dir)}
     if point:
         env["VYR_PROBE_POINT"] = point
     cmd = ["cargo", "build", "--profile", "release-mcu", "-p", "vyr-size",
@@ -107,11 +144,11 @@ def build(tier: str, opt: str | None, strip: bool, point: str | None) -> Path:
            "--features", FEATURES[tier], *cfg]
     r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, env=env)
     if r.returncode != 0:
-        log("BUILD FAILED: " + " ".join(cmd) + "\n" + (r.stdout + r.stderr)[-3000:])
-        raise SystemExit(1)
+        raise BuildError(f"{tier}/{point or 'landscape'}: " + (r.stdout + r.stderr)[-1200:])
+    src = target_dir / "thumbv7em-none-eabihf" / "release-mcu" / "vyr-size"
     tag = f"{tier}{'-O' + opt if opt else ''}{'-' + point if point else ''}{'' if strip else '-syms'}"
     dest = WORK / f"mb-{tag}.elf"
-    dest.write_bytes(ELF.read_bytes())
+    dest.write_bytes(src.read_bytes())
     return dest
 
 
@@ -230,18 +267,53 @@ def class_split(elf: Path, tag: str) -> dict:
     return S.float_weighting(img, S.blocks(plog))
 
 
+# --- parallel tasks (run in worker threads; NO db access — main thread writes) ---
+
+
+def landscape_task(tier: str, opt: str | None, slots: Slots, keep: bool) -> dict:
+    with slots.acquire() as td:
+        elf = build(tier, opt, strip=True, point=None, target_dir=td)
+        try:
+            deltas, gout = run_libinsn(elf, tier)
+        finally:
+            if not keep:
+                elf.unlink(missing_ok=True)
+    meta, cases = parse_cases(gout)
+    renders = map_deltas(deltas, meta, len(cases))
+    return {"tier": tier, "meta": meta, "cases": cases, "renders": renders}
+
+
+def split_task(tier: str, point: str, opt: str | None, slots: Slots, keep: bool) -> dict:
+    with slots.acquire() as td:
+        elf = build(tier, opt, strip=False, point=point, target_dir=td)
+        try:
+            w = class_split(elf, f"{tier}-{point}")
+        finally:
+            if not keep:
+                elf.unlink(missing_ok=True)
+    return {"tier": tier, "point": point, "w": w}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tiers", default="exact,fast,draft")
     ap.add_argument("--opt", default=None)
     ap.add_argument("--deep", action="store_true", help="fill the {int,mem,hw-f32,soft-f64} split")
     ap.add_argument("--deep-full", action="store_true", help="deep on EVERY point, not the subset")
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="parallel workers (each gets its own CARGO_TARGET_DIR); "
+                         "0 = auto (min(12, cpu//2))")
     ap.add_argument("--db", default=str(TMP / "microbench.db"))
     ap.add_argument("--note", default="")
     ap.add_argument("--keep-elf", action="store_true")
     a = ap.parse_args()
     WORK.mkdir(parents=True, exist_ok=True)
     tiers = [t.strip() for t in a.tiers.split(",") if t.strip()]
+    # Each worker holds a private target dir (~1 GB) and a cargo build that
+    # itself uses several cores; cap so W builds do not thrash the box or disk.
+    jobs = a.jobs or min(12, max(1, multiprocessing.cpu_count() // 2))
+    slots = Slots(jobs)
+    keep = a.keep_elf
 
     db = open_db(Path(a.db))
     cur = db.cursor()
@@ -249,77 +321,97 @@ def main() -> int:
                 (time.strftime("%Y-%m-%dT%H:%M:%S%z"), git_commit(), a.opt or "z",
                  MACHINE, a.note))
     run_id = cur.lastrowid
-    log(f"run_id={run_id} commit={git_commit()} tiers={tiers} deep={a.deep} db={a.db}")
+    log(f"run_id={run_id} commit={git_commit()} tiers={tiers} deep={a.deep} "
+        f"jobs={jobs} db={a.db}")
 
-    failed_tiers = []
-    for tier in tiers:
-        log(f"=== {tier}: landscape (libinsn, all points, one boot) ===")
-        elf = build(tier, a.opt, strip=True, point=None)
-        try:
-            deltas, gout = run_libinsn(elf, tier)
-        except GuestError as e:
-            log(f"  {tier}: SKIPPED — {e}")
-            failed_tiers.append(tier)
-            if not a.keep_elf:
-                elf.unlink(missing_ok=True)
-            continue
-        meta, cases = parse_cases(gout)
-        cur.execute("UPDATE run SET band_h=? WHERE run_id=?", (meta["band_h"], run_id))
-        renders = map_deltas(deltas, meta, len(cases))
-        if renders is None:
-            log(f"  {tier}: delta stream did not align — skipping tier")
-            continue
-        null_insns = renders[[c["name"] for c in cases].index("null")]
-        rows = []
-        for ci, case in enumerate(cases):
-            above = renders[ci] - null_insns
-            ipp = above / case["px"] if case["px"] else None
-            rows.append((run_id, tier, case["name"], case["kind"], case["w"], case["count"],
-                         case["alpha"], case["radius"], case["px"], renders[ci], ipp))
-        cur.executemany(
-            "INSERT OR REPLACE INTO points(run_id,tier,name,kind,w,count,alpha,radius,px,"
-            "insns,insns_per_px) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
-        db.commit()
-        log(f"  {tier}: {len(rows)} points priced (null={null_insns:,} insns)")
-        if not a.keep_elf:
-            elf.unlink(missing_ok=True)
+    failed_tiers: list[str] = []
+    ok_tiers: dict[str, list[dict]] = {}  # tier -> cases (for the deep phase)
+    t0 = time.monotonic()
 
-        if a.deep:
+    # --- phase A: landscapes, one boot per tier, all tiers in parallel ---
+    log(f"=== landscape: {len(tiers)} tiers in parallel ({jobs} workers) ===")
+    with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
+        futs = {ex.submit(landscape_task, t, a.opt, slots, keep): t for t in tiers}
+        for fut in cf.as_completed(futs):
+            tier = futs[fut]
+            try:
+                r = fut.result()
+            except (GuestError, BuildError) as e:
+                log(f"  {tier}: SKIPPED — {e}")
+                failed_tiers.append(tier)
+                continue
+            meta, cases, renders = r["meta"], r["cases"], r["renders"]
+            if renders is None:
+                log(f"  {tier}: delta stream did not align — skipping tier")
+                failed_tiers.append(tier)
+                continue
+            cur.execute("UPDATE run SET band_h=? WHERE run_id=?", (meta["band_h"], run_id))
+            null_insns = renders[[c["name"] for c in cases].index("null")]
+            rows = []
+            for ci, case in enumerate(cases):
+                above = renders[ci] - null_insns
+                ipp = above / case["px"] if case["px"] else None
+                rows.append((run_id, tier, case["name"], case["kind"], case["w"], case["count"],
+                             case["alpha"], case["radius"], case["px"], renders[ci], ipp))
+            cur.executemany(
+                "INSERT OR REPLACE INTO points(run_id,tier,name,kind,w,count,alpha,radius,px,"
+                "insns,insns_per_px) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+            db.commit()
+            ok_tiers[tier] = cases
+            log(f"  {tier}: {len(rows)} points priced (null={null_insns:,} insns)")
+
+    # --- phase B: deep class split, every (tier, point) in parallel ---
+    if a.deep and ok_tiers:
+        # Boot floor per tier (the null-isolated split), computed in parallel.
+        log("=== deep: boot floors (null-isolated, per tier) ===")
+        floors: dict[str, dict] = {}
+        with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
+            futs = {ex.submit(split_task, t, "null", a.opt, slots, keep): t for t in ok_tiers}
+            for fut in cf.as_completed(futs):
+                try:
+                    r = fut.result()
+                except (GuestError, BuildError) as e:
+                    log(f"  floor {futs[fut]}: FAILED — {e}")
+                    continue
+                floors[r["tier"]] = r["w"]
+        # The points: subset unless --deep-full.
+        tasks = []
+        for tier, cases in ok_tiers.items():
+            if tier not in floors:
+                continue
             want = {c["name"] for c in cases} if a.deep_full else DEEP_SUBSET
-            names = [c["name"] for c in cases if c["name"] in want]
-            log(f"=== {tier}: deep class split on {len(names)} points (isolated hotblocks) ===")
-            # boot+floor once per tier, subtracted so the split is the RENDER's.
-            nz = build(tier, a.opt, strip=False, point="null")
-            floor = class_split(nz, f"{tier}-null")
-            if not a.keep_elf:
-                nz.unlink(missing_ok=True)
-            boot = floor.get("total", 0)
-            boot_f64 = floor.get("soft_f64_insns", 0)
-            boot_hw = floor.get("hw_f32_insns", 0)
-            boot_mem = floor.get("mem_insns", 0)
-            for name in names:
-                if name == "null":
+            tasks += [(tier, c["name"]) for c in cases if c["name"] in want and c["name"] != "null"]
+        log(f"=== deep: {len(tasks)} (tier,point) class splits in parallel ({jobs} workers) ===")
+        done = 0
+        with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
+            futs = {ex.submit(split_task, t, p, a.opt, slots, keep): (t, p) for t, p in tasks}
+            for fut in cf.as_completed(futs):
+                tier, point = futs[fut]
+                try:
+                    w = fut.result()["w"]
+                except (GuestError, BuildError) as e:
+                    log(f"  deep {tier}/{point}: FAILED — {e}")
                     continue
-                pelf = build(tier, a.opt, strip=False, point=name)
-                w = class_split(pelf, f"{tier}-{name}")
-                if not a.keep_elf:
-                    pelf.unlink(missing_ok=True)
+                floor = floors[tier]
+                boot = floor.get("total", 0)
                 if not w or w.get("total", 0) <= boot:
-                    log(f"  deep {tier}/{name}: no usable split")
+                    log(f"  deep {tier}/{point}: no usable split")
                     continue
-                # subtract the boot floor; the remainder is the render itself.
                 tot = w["total"] - boot
-                f64 = max(0, w["soft_f64_insns"] - boot_f64)
-                hw = max(0, w["hw_f32_insns"] - boot_hw)
-                mem = max(0, w["mem_insns"] - boot_mem)
+                f64 = max(0, w["soft_f64_insns"] - floor.get("soft_f64_insns", 0))
+                hw = max(0, w["hw_f32_insns"] - floor.get("hw_f32_insns", 0))
+                mem = max(0, w["mem_insns"] - floor.get("mem_insns", 0))
                 cur.execute(
                     "UPDATE points SET soft_f64=?,hw_f32=?,mem=?,total_deep=?,"
                     "f64_share=?,f32_hw_share=?,mem_share=? WHERE run_id=? AND tier=? AND name=?",
-                    (f64, hw, mem, tot, f64 / tot, hw / tot, mem / tot, run_id, tier, name))
+                    (f64, hw, mem, tot, f64 / tot, hw / tot, mem / tot, run_id, tier, point))
                 db.commit()
-                log(f"  {tier}/{name}: f64 {100 * f64 / tot:5.1f}%  hw-f32 {100 * hw / tot:5.1f}%  "
+                done += 1
+                log(f"  {tier}/{point}: f64 {100 * f64 / tot:5.1f}%  hw-f32 {100 * hw / tot:5.1f}%  "
                     f"mem {100 * mem / tot:5.1f}%  ({tot:,} render insns)")
+        log(f"deep: {done}/{len(tasks)} points split")
 
+    log(f"wall: {time.monotonic() - t0:.0f}s")
     # A short landscape summary from the DB itself.
     log("=== landscape (top per-px, latest run) ===")
     for tier in tiers:
