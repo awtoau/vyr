@@ -412,6 +412,15 @@ def main() -> int:
         log(f"deep: {done}/{len(tasks)} points split")
 
     log(f"wall: {time.monotonic() - t0:.0f}s")
+    # Regenerate the viewer page (best-effort — a render failure must not lose
+    # the measured DB). docs/perf/microbench.html, grid + graphs like index.html.
+    try:
+        r = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "microbench-html.py"), "--db", a.db],
+            cwd=REPO, capture_output=True, text=True)
+        log(r.stdout.strip() or f"html: rc={r.returncode} {r.stderr[-200:]}")
+    except Exception as e:  # noqa: BLE001 — never fatal
+        log(f"html regen skipped: {e}")
     # A short landscape summary from the DB itself.
     log("=== landscape (top per-px, latest run) ===")
     for tier in tiers:
