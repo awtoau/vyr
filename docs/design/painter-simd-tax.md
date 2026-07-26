@@ -147,11 +147,19 @@ Other readings worth recording:
 * **An empty Exact frame costs 7.74 M insns** — the band loop and the
   gutter-pixmap clear, ~15 % of a real frame, before anything is drawn. This
   is the same seam as #38/#40 (`GUTTER`).
-* **Partial alpha is brutally expensive at every tier**: `blend480` vs
-  `w480` is +892 % at Exact, +356 % at Fast, +387 % at Draft. The integer
-  fast path evidently does not carry alpha, so a translucent rect falls all
-  the way back. That is a tier-coverage finding, not a painter finding, and
-  probably deserves its own issue.
+* **Partial alpha is expensive — but the "fallback" diagnosis was wrong
+  (#60, resolved).** `blend480` vs `w480` is +892 % at Exact, +356 % at Fast,
+  +387 % at Draft. The obvious read — that the integer fast path does not carry
+  alpha, so a translucent rect falls all the way back to the tiny-skia
+  source-over pipeline — is **false for Draft and Fast**: `draft_span` carries
+  an integer `d255` source-over, so a flat translucent rect stays **100 %
+  fast-path** (proven by `tests/blend_golden.rs::blend_draft_fast_full_fastpath`)
+  and comes out **byte-identical to Exact's tiny-skia result**
+  (`blend_tiers_agree_byte_exact` — the opaque-dst identity). The +356/387 % is
+  the inherent cost of a per-pixel blend over a memset-cheap opaque baseline,
+  not a fallback. Only **Exact** routes it through tiny-skia `lowp::source_over`
+  (+892 %) — the oracle price, by design. The blend cases are now gated so the
+  number cannot be silently rediscovered as a "bug".
 * **Fast and Draft price flat rects identically** and diverge only on curves
   (`rrect120`: +81 % Fast vs +4.6 % Draft) — exactly what the tier definitions
   promise, now measured rather than asserted.
