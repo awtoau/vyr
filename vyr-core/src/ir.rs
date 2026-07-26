@@ -462,6 +462,88 @@ const INK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 const DEFAULT_FONT: &str = "roboto";
 const DEFAULT_FONT_SIZE: u32 = 14;
 
+// --- shared resolve math (#55) ------------------------------------------------
+//
+// The parse path (`Node::prepare` and the `_resolve` helpers) and the animated
+// per-field setters ([`Node::set_fraction`], [`Node::set_opacity`], …) MUST
+// compute a resolved field the same way, or a persistent-tree animation would
+// render different bytes from a fresh re-parse of the same frame. These free
+// functions are the ONE implementation each of them calls, so the setter cannot
+// drift from the parse — the byte-identity test (`vyr-rig/tests`) enforces it,
+// and this factoring is what makes the enforcement structural rather than a
+// promise to keep two copies in sync.
+
+/// `#RRGGBB` / `0xRRGGBB` / `RRGGBB` (and their 8-hex `#RRGGBBAA` forms, RGB
+/// triple only) → colour. The hex parse `Node::color` uses, exposed so a
+/// caller mutating a resolved colour (vyr-scene's `animate`) resolves it
+/// BYTE-IDENTICALLY to a fresh parse (#55).
+pub fn parse_color(s: &str) -> Option<Rgb> {
+    let hexs = s.trim();
+    let hexs = hexs
+        .strip_prefix('#')
+        .or_else(|| hexs.strip_prefix("0x"))
+        .or_else(|| hexs.strip_prefix("0X"))
+        .unwrap_or(hexs);
+    // 6-hex `#RRGGBB` or 8-hex `#RRGGBBAA` (alpha read separately by
+    // color_alpha — here we take only the RGB triple).
+    let rgb = match hexs.len() {
+        6 => u32::from_str_radix(hexs, 16).ok()?,
+        8 => u32::from_str_radix(hexs, 16).ok()? >> 8,
+        _ => return None,
+    };
+    Some(Rgb {
+        r: (rgb >> 16) as u8,
+        g: (rgb >> 8) as u8,
+        b: rgb as u8,
+    })
+}
+
+/// `(value − min)/(max − min)` clamped to 0..=1 — the slider/progress/bar
+/// fraction. Shared by [`Node::fraction_resolve`] (parse) and
+/// [`Node::set_fraction`] (animate).
+fn resolve_fraction(value: f32, min: f32, max: f32) -> f32 {
+    if max <= min {
+        return 0.0;
+    }
+    ((value - min) / (max - min)).clamp(0.0, 1.0)
+}
+
+/// A numeric `opacity` attr → fill alpha 0..=255: `0.0..=1.0` floats scale to
+/// the byte range, values `>1` are already `0..=255`. This is the FIRST
+/// (highest-precedence) branch of the fill-alpha resolve, shared by
+/// [`Node::fill_alpha_resolve`] (parse) and [`Node::set_opacity`] (animate).
+fn resolve_opacity(opacity: f32) -> u8 {
+    let v = if opacity <= 1.0 {
+        (opacity * 255.0 + 0.5) as i32
+    } else {
+        opacity as i32
+    };
+    v.clamp(0, 255) as u8
+}
+
+/// Parse a chart `points` CSV (the single y-series). Empty tokens are skipped;
+/// a non-empty non-numeric token is a hard `BadIr`. Shared by
+/// [`Node::chart_points`] (parse) and [`Node::set_chart_points_csv`] (animate)
+/// so a rebuilt series is byte-identical to a re-parsed one (#55).
+fn parse_points_csv(s: &str) -> Result<Vec<f32>, RenderError> {
+    let mut out = Vec::new();
+    for tok in s.split(',') {
+        let t = tok.trim();
+        if t.is_empty() {
+            continue;
+        }
+        match t.parse::<f32>() {
+            Ok(v) => out.push(v),
+            Err(_) => {
+                return Err(RenderError::BadIr(format!(
+                    "vy_chart points has a non-numeric value {t:?}"
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
 impl Node {
     /// #34: resolve this node's geometry once, then recurse. Called from
     /// [`Request::parse`] on the whole tree before any band is walked. The
@@ -514,6 +596,109 @@ impl Node {
         self.geom
     }
 
+    // --- per-field animate setters (#55) --------------------------------------
+    //
+    // A persistent typed tree animates by writing these caches DIRECTLY — no
+    // `format!`, no re-`parse`, no whole-tree `prepare()`. Each setter writes
+    // exactly the field the parse path resolved, through the SAME shared math
+    // ([`parse_color`], [`resolve_fraction`], [`resolve_opacity`],
+    // [`parse_points_csv`]), so the mutated tree renders byte-for-byte like a
+    // re-parse of the same frame. Child addressing is positional (index paths);
+    // see [`Node::child_mut`]. The byte-identity test enforces no divergence.
+
+    /// The node at `path` — an index path into `children` (`[]` is `self`,
+    /// `[5, 1]` is `children[5].children[1]`). `None` if any index is out of
+    /// range. The frame-invariant node order (a detail level's tree structure
+    /// does not change with the frame) makes these paths stable across a run.
+    pub fn child_mut(&mut self, path: &[usize]) -> Option<&mut Node> {
+        let mut node = self;
+        for &i in path {
+            node = node.children.get_mut(i)?;
+        }
+        Some(node)
+    }
+
+    /// Overwrite this node's own (parent-relative) geometry (#34 `Geom` is
+    /// parent-relative; the absolute position is recomputed in [`walk`] from
+    /// the parent's rect, so no parent recompute is needed).
+    pub fn set_geom(&mut self, x: i32, y: i32, w: u32, h: u32) {
+        self.geom = Geom { x, y, w, h };
+    }
+
+    /// Overwrite only the position (width/height unchanged) — the orbiting
+    /// discs and the roaming blit move without resizing.
+    pub fn set_geom_pos(&mut self, x: i32, y: i32) {
+        self.geom.x = x;
+        self.geom.y = y;
+    }
+
+    /// Set the slider/progress/bar fraction from `value` against `min`/`max`,
+    /// via the shared [`resolve_fraction`] (the parse path's math).
+    pub fn set_fraction(&mut self, value: f32, min: f32, max: f32) {
+        self.resolved.fraction = resolve_fraction(value, min, max);
+    }
+
+    /// Set the toggle/switch on-state (`value != 0`).
+    pub fn set_value_on(&mut self, on: bool) {
+        self.resolved.value_on = on;
+    }
+
+    /// Set the resolved `text` run.
+    pub fn set_text(&mut self, text: Option<String>) {
+        self.resolved.text = text;
+    }
+
+    /// Set the resolved `background` fill colour.
+    pub fn set_bg(&mut self, bg: Option<Rgb>) {
+        self.resolved.bg = bg;
+    }
+
+    /// Set the resolved ink/`color` (a gauge's arc colour, a button's inherited
+    /// text ink).
+    pub fn set_fg(&mut self, fg: Option<Rgb>) {
+        self.resolved.fg = fg;
+    }
+
+    /// Set the fill alpha from a numeric `opacity`, via the shared
+    /// [`resolve_opacity`] (the highest-precedence branch of the fill-alpha
+    /// resolve — the only signal the animated panel carries).
+    pub fn set_opacity(&mut self, opacity: f32) {
+        self.resolved.fill_alpha = resolve_opacity(opacity);
+    }
+
+    /// Rebuild ONLY a chart's series points from a `points` CSV, leaving the
+    /// rest of the resolved [`ChartParams`] (range, grid, markers, colour)
+    /// intact. Uses the shared [`parse_points_csv`] so the rebuilt series is
+    /// byte-identical to a re-parse. A no-op on a non-chart node.
+    pub fn set_chart_points_csv(&mut self, csv: &str) -> Result<(), RenderError> {
+        let pts = parse_points_csv(csv)?;
+        if let Some(Ok(params)) = &mut self.resolved.chart {
+            params.pts = pts;
+        }
+        Ok(())
+    }
+
+    /// Set a chart's series colour (the `line_color`/`color` field of the
+    /// resolved [`ChartParams`]). A no-op on a non-chart node.
+    pub fn set_chart_line_col(&mut self, col: Option<Rgb>) {
+        if let Some(Ok(params)) = &mut self.resolved.chart {
+            params.line_col = col;
+        }
+    }
+
+    /// Write a raw string attribute. The ONLY node whose paint reads an attr
+    /// string live is the screen root (`render_with_shapes` reads
+    /// `self.root.color("background")` for the backdrop, NOT `Resolved.bg`), so
+    /// the root backdrop is animated by rewriting its `background` attr — every
+    /// other node reads its resolved cache. Kept here (not in vyr-scene)
+    /// because building a `serde_json::Value` needs vyr-core's serde_json.
+    pub fn set_attr(&mut self, key: &str, value: &str) {
+        self.attrs.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
+    }
+
     fn raw(&self, key: &str) -> Option<&serde_json::Value> {
         self.attrs.get(key)
     }
@@ -545,27 +730,12 @@ impl Node {
         self.f32_attr(key, default as f32).max(0.0) as u32
     }
 
-    /// `#RRGGBB` / `0xRRGGBB` / `RRGGBB` attr → colour.
+    /// `#RRGGBB` / `0xRRGGBB` / `RRGGBB` attr → colour. Reads the attr string,
+    /// then defers the hex parse to the shared [`parse_color`] free function so
+    /// the parse-path and the animate setters (which call `parse_color` too)
+    /// cannot drift (#55).
     fn color(&self, key: &str) -> Option<Rgb> {
-        let s = self.str_attr(key)?;
-        let hexs = s.trim();
-        let hexs = hexs
-            .strip_prefix('#')
-            .or_else(|| hexs.strip_prefix("0x"))
-            .or_else(|| hexs.strip_prefix("0X"))
-            .unwrap_or(hexs);
-        // 6-hex `#RRGGBB` or 8-hex `#RRGGBBAA` (alpha read separately by
-        // color_alpha — here we take only the RGB triple).
-        let rgb = match hexs.len() {
-            6 => u32::from_str_radix(hexs, 16).ok()?,
-            8 => u32::from_str_radix(hexs, 16).ok()? >> 8,
-            _ => return None,
-        };
-        Some(Rgb {
-            r: (rgb >> 16) as u8,
-            g: (rgb >> 8) as u8,
-            b: rgb as u8,
-        })
+        parse_color(&self.str_attr(key)?)
     }
 
     /// Corner radius: semantic `radius` or already-lowered `style_radius`.
@@ -624,13 +794,7 @@ impl Node {
         if let Some(s) = self.str_attr("opacity") {
             let t = s.trim();
             if let Ok(f) = t.parse::<f32>() {
-                // 0..=1 floats scale to 0..=255; values >1 are already 0..=255.
-                let v = if f <= 1.0 {
-                    (f * 255.0 + 0.5) as i32
-                } else {
-                    f as i32
-                };
-                return v.clamp(0, 255) as u8;
+                return resolve_opacity(f);
             }
         }
         if let Some(a) = self.color_alpha("background") {
@@ -726,10 +890,7 @@ impl Node {
         let min = self.f32_attr("min", 0.0);
         let max = self.f32_attr("max", 100.0);
         let v = self.f32_attr("value", 0.0);
-        if max <= min {
-            return 0.0;
-        }
-        ((v - min) / (max - min)).clamp(0.0, 1.0)
+        resolve_fraction(v, min, max)
     }
 
     /// Parse a bool-ish attr used by chart tuning knobs.
@@ -754,25 +915,10 @@ impl Node {
     /// renders just its frame + grid). vyr paints what the IR declares — it
     /// never invents demo data the way each backend currently does.
     fn chart_points(&self) -> Result<Vec<f32>, RenderError> {
-        let Some(s) = self.str_attr("points") else {
-            return Ok(Vec::new());
-        };
-        let mut out = Vec::new();
-        for tok in s.split(',') {
-            let t = tok.trim();
-            if t.is_empty() {
-                continue;
-            }
-            match t.parse::<f32>() {
-                Ok(v) => out.push(v),
-                Err(_) => {
-                    return Err(RenderError::BadIr(format!(
-                        "vy_chart points has a non-numeric value {t:?}"
-                    )));
-                }
-            }
+        match self.str_attr("points") {
+            Some(s) => parse_points_csv(&s),
+            None => Ok(Vec::new()),
         }
-        Ok(out)
     }
 }
 
