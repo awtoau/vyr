@@ -114,7 +114,7 @@ use alloc::vec::Vec;
 use crate::shapes::{Key, Shapes};
 use crate::{Canvas, OpClass, PlacedGlyph, Quality, Rect, RenderStats, Rgb, RgbaImage};
 use tiny_skia::{
-    FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap, Point,
+    FillRule, GradientStop, IntSize, LinearGradient, Mask, Paint, PathBuilder, Pixmap, Point,
     PremultipliedColorU8, SpreadMode, Transform,
 };
 
@@ -123,6 +123,15 @@ use tiny_skia::{
 /// two is exact — so quantized world coords survive integer translation
 /// bit-exactly.
 const SUBPX: f32 = 64.0;
+
+/// The `expect` message for the lazy scratch-pixmap allocation (#35). Shared by
+/// every allocation site (the [`TinySkiaCanvas::pixmap_mut`] accessor and the
+/// field-borrow-splitting sites that must inline `get_or_insert_with`). It
+/// cannot fire: the dims are the exact `(area + 2·gutter)` that
+/// `new_with_quality` validated with `IntSize::from_wh`, and tiny-skia's
+/// `Pixmap::new` returns `None` only for dims that check rejects (OOM aborts
+/// through the global allocator; it is never surfaced as `None`).
+const SCRATCH_DIMS_OK: &str = "scratch pixmap dims validated at construction (#35)";
 
 /// Overscan gutter, in pixels, rasterized around every band and discarded.
 /// Bounds the tiny-skia AA fringe in the clip-adjacent rows (the polygon
@@ -512,7 +521,18 @@ enum ClipFate {
 /// coverage-aware integer curve rasteriser, not a routing change
 /// (docs/performance.md §3.1).
 pub struct TinySkiaCanvas {
-    pixmap: Pixmap,
+    /// Scratch/output premultiplied surface, **allocated lazily on first real
+    /// use** ([`Self::pixmap_mut`]). Exact/Fast reach for it on their very
+    /// first op (it IS their surface), so they allocate it immediately. Draft
+    /// writes RGB888 into `rgb` directly and only touches tiny-skia — hence
+    /// this pixmap — in two rare cases: the rounded-clip fallback ([`Self::fill`])
+    /// and the clip A8 mask ([`Self::ensure_mask`]). A Draft band that hits
+    /// neither leaves this `None`, saving `(area·4)` B of alloc + per-band
+    /// zeroing (~30 KB/band at 480×270) that the old unconditional
+    /// `Pixmap::new` paid on every band of every Draft frame (#35). Every
+    /// width/height read goes through [`Self::pixmap_dims`] (a pure function of
+    /// `area`+`gutter`) so it never forces this allocation.
+    pixmap: Option<Pixmap>,
     /// **Draft only** — the output surface IS this straight-RGB888 band buffer
     /// (`area.w · area.h · 3` bytes, draw-order composited). The Draft fast
     /// path writes RGB888 here directly, skipping the premul-pixmap→demul
@@ -619,7 +639,17 @@ impl TinySkiaCanvas {
             Quality::Fast => FAST_GUTTER,
             Quality::Draft => 0,
         };
-        let pixmap = Pixmap::new(area.w + 2 * gutter, area.h + 2 * gutter)?;
+        // The scratch pixmap is allocated LAZILY on first real use (#35), not
+        // here — a Draft scene that never hits a rounded clip or an A8 mask
+        // never allocates it, dropping ~30 KB of alloc + zeroing per band. We
+        // still validate its dimensions up front so `new_with_quality` returns
+        // `None` for degenerate dims EXACTLY as the old `Pixmap::new()?` did:
+        // tiny-skia's `Pixmap::new` reports `None` ONLY when `IntSize::from_wh`
+        // rejects the dims (a zero side) — OOM aborts through the global
+        // allocator and is never surfaced as `None`. Validating with the same
+        // `IntSize::from_wh` is therefore the exact feasibility gate, minus the
+        // allocation, and it is what lets `pixmap_mut`'s `.expect()` be sound.
+        IntSize::from_wh(area.w + 2 * gutter, area.h + 2 * gutter)?;
         // Draft/Fast: the output surface IS this zeroed RGB888 band; the
         // backdrop fill (first op of every scene) covers it opaque before any
         // sampling. Exact: stays empty — the premul pixmap is its surface.
@@ -630,7 +660,7 @@ impl TinySkiaCanvas {
             }
         };
         Some(Self {
-            pixmap,
+            pixmap: None,
             rgb,
             area,
             quality,
@@ -658,6 +688,30 @@ impl TinySkiaCanvas {
     /// Take the contour memo back out (leaving the canvas an empty one).
     pub fn take_cache(&mut self) -> Shapes {
         core::mem::take(&mut self.shapes)
+    }
+
+    /// The scratch pixmap's dimensions — a pure function of `area` + `gutter`,
+    /// identical to `pixmap.width()`/`.height()` but WITHOUT forcing the lazy
+    /// allocation. Every width/height read uses this; only sites that actually
+    /// touch pixels go through [`Self::pixmap_mut`]. For Draft `gutter == 0`,
+    /// so this equals the band's own `area.w × area.h` (the value the old
+    /// eager pixmap reported, unchanged).
+    fn pixmap_dims(&self) -> (u32, u32) {
+        (self.area.w + 2 * self.gutter, self.area.h + 2 * self.gutter)
+    }
+
+    /// The scratch pixmap, allocating it on first use (#35). Used by the paths
+    /// that rasterize into or sample from it while borrowing NO other `self`
+    /// field concurrently: Exact/Fast on their first op, plus the Exact finish
+    /// blit and the two blit tails. Sites that must also touch `self.rgb` or
+    /// `self.clip_mask` at the same time inline the identical
+    /// `get_or_insert_with` (a whole-`self` method borrow would collide; a
+    /// direct field borrow splits). The dimensions are [`Self::pixmap_dims`];
+    /// the `.expect` cannot fire — see [`SCRATCH_DIMS_OK`].
+    fn pixmap_mut(&mut self) -> &mut Pixmap {
+        let (w, h) = self.pixmap_dims();
+        self.pixmap
+            .get_or_insert_with(|| Pixmap::new(w, h).expect(SCRATCH_DIMS_OK))
     }
 
     /// [`circle_points`] through the memo (#32) — same arguments, same `f32`
@@ -782,10 +836,17 @@ impl TinySkiaCanvas {
     fn seed_scratch(&mut self, region: (i32, i32, i32, i32)) {
         let (wx0, wy0, wx1, wy1) = region;
         let aw = self.area.w as usize;
-        let pm_w = self.pixmap.width() as usize;
+        let (pw, ph) = self.pixmap_dims();
+        let pm_w = pw as usize;
         let g = self.gutter as i32;
         let (rx, ry) = (self.area.x, self.area.y);
-        let px = self.pixmap.pixels_mut();
+        // Field-borrow split: `self.pixmap` (mut) and `self.rgb` (read, below)
+        // are disjoint fields, so `get_or_insert_with` inline is legal where
+        // the whole-`self` `pixmap_mut()` accessor would not be.
+        let px = self
+            .pixmap
+            .get_or_insert_with(|| Pixmap::new(pw, ph).expect(SCRATCH_DIMS_OK))
+            .pixels_mut();
         for wy in wy0..wy1 {
             let prow = (wy - ry + g) as usize * pm_w + g as usize;
             let rrow = (wy - ry) as usize * aw * 3;
@@ -811,10 +872,17 @@ impl TinySkiaCanvas {
     fn demul_scratch(&mut self, region: (i32, i32, i32, i32)) {
         let (wx0, wy0, wx1, wy1) = region;
         let aw = self.area.w as usize;
-        let pm_w = self.pixmap.width() as usize;
+        let (pw, ph) = self.pixmap_dims();
+        let pm_w = pw as usize;
         let g = self.gutter as i32;
         let (rx, ry) = (self.area.x, self.area.y);
-        let px = self.pixmap.pixels();
+        // Field-borrow split: `self.pixmap` (read) and `self.rgb` (write,
+        // below) are disjoint fields (see `seed_scratch`). The pixmap already
+        // exists here — `seed_scratch` ran first — so this just returns it.
+        let px = self
+            .pixmap
+            .get_or_insert_with(|| Pixmap::new(pw, ph).expect(SCRATCH_DIMS_OK))
+            .pixels();
         for wy in wy0..wy1 {
             let prow = (wy - ry + g) as usize * pm_w + g as usize;
             let rrow = (wy - ry) as usize * aw * 3;
@@ -975,7 +1043,8 @@ impl TinySkiaCanvas {
         if self.clip_mask.is_some() {
             return;
         }
-        let mut mask = Mask::new(self.pixmap.width(), self.pixmap.height())
+        let (pmw, pmh) = self.pixmap_dims();
+        let mut mask = Mask::new(pmw, pmh)
             .expect("mask allocation (pixmap dimensions are valid by construction)");
         let mut first = true;
         // Indexed, over a COPY of the entry: the memo lookup below needs
@@ -1740,13 +1809,19 @@ impl TinySkiaCanvas {
                 };
                 if let Some(path) = self.path_from(contours) {
                     let paint = Self::paint_for(color, alpha);
-                    self.pixmap.fill_path(
-                        &path,
-                        &paint,
-                        FillRule::Winding,
-                        Transform::identity(),
-                        mask,
-                    );
+                    // Field-borrow split: `mask` above holds `self.clip_mask`
+                    // (shared); `self.pixmap` is a disjoint field, so the inline
+                    // `get_or_insert_with` is legal where `pixmap_mut()` is not.
+                    let (pw, ph) = self.pixmap_dims();
+                    self.pixmap
+                        .get_or_insert_with(|| Pixmap::new(pw, ph).expect(SCRATCH_DIMS_OK))
+                        .fill_path(
+                            &path,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            mask,
+                        );
                 }
             }
             for rg in &regions[..n] {
@@ -1760,13 +1835,18 @@ impl TinySkiaCanvas {
         };
         if let Some(path) = self.path_from(contours) {
             let paint = Self::paint_for(color, alpha);
-            self.pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                mask,
-            );
+            // Field-borrow split (see the fallback branch above): `mask` holds
+            // `self.clip_mask`; `self.pixmap` is disjoint.
+            let (pw, ph) = self.pixmap_dims();
+            self.pixmap
+                .get_or_insert_with(|| Pixmap::new(pw, ph).expect(SCRATCH_DIMS_OK))
+                .fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    mask,
+                );
         }
     }
 
@@ -1839,7 +1919,7 @@ impl TinySkiaCanvas {
             self.stats.bands_rendered += 1;
             return self.stats;
         }
-        let px = self.pixmap.pixels();
+        let px = self.pixmap_mut().pixels();
         for row in 0..h {
             let out = &mut buf[row * stride..row * stride + w * 3];
             let src_row = (row + g) * pm_w + g; // skip the gutter
@@ -2157,13 +2237,18 @@ impl Canvas for TinySkiaCanvas {
                     ClipFate::Masked => self.clip_mask.as_ref(),
                     _ => None,
                 };
-                self.pixmap.fill_path(
-                    &path,
-                    &paint,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    mask,
-                );
+                // Field-borrow split: `mask` holds `self.clip_mask`;
+                // `self.pixmap` is disjoint (see `fill`).
+                let (pw, ph) = self.pixmap_dims();
+                self.pixmap
+                    .get_or_insert_with(|| Pixmap::new(pw, ph).expect(SCRATCH_DIMS_OK))
+                    .fill_path(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        mask,
+                    );
             }
             self.demul_scratch(region);
             self.count(Self::class_for(alpha), r);
@@ -2173,13 +2258,18 @@ impl Canvas for TinySkiaCanvas {
             ClipFate::Masked => self.clip_mask.as_ref(),
             _ => None,
         };
-        self.pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            mask,
-        );
+        // Field-borrow split: `mask` holds `self.clip_mask`; `self.pixmap` is
+        // disjoint (see `fill`).
+        let (pw, ph) = self.pixmap_dims();
+        self.pixmap
+            .get_or_insert_with(|| Pixmap::new(pw, ph).expect(SCRATCH_DIMS_OK))
+            .fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                mask,
+            );
         // Gradient spans both classes; attribute by alpha like plain fills.
         self.count(Self::class_for(alpha), r);
     }
@@ -2231,8 +2321,9 @@ impl Canvas for TinySkiaCanvas {
             self.gutter as i32 - self.area.x,
             self.gutter as i32 - self.area.y,
         );
-        let pm_w = self.pixmap.width() as i32;
-        let pm_h = self.pixmap.height() as i32;
+        let (pmw, pmh) = self.pixmap_dims();
+        let pm_w = pmw as i32;
+        let pm_h = pmh as i32;
         // Draft/Fast: composite straight RGB888 into the output band directly.
         // Dst is opaque RGB (backdrop first), so na == 255 and the blend below
         // is byte-identical to the premul-store→demul. Indices: `ly·pm_w+lx` is
@@ -2299,7 +2390,7 @@ impl Canvas for TinySkiaCanvas {
                         rgb[i3 + 2] = nb as u8;
                         continue;
                     }
-                    let px = self.pixmap.pixels_mut();
+                    let px = self.pixmap_mut().pixels_mut();
                     let dst = px[i];
                     let na = d255(255 * a + dst.alpha() as u32 * ia);
                     let nr = d255(color.r as u32 * a + dst.red() as u32 * ia);
@@ -2416,8 +2507,9 @@ impl Canvas for TinySkiaCanvas {
             self.gutter as i32 - self.area.x,
             self.gutter as i32 - self.area.y,
         );
-        let pm_w = self.pixmap.width() as i32;
-        let pm_h = self.pixmap.height() as i32;
+        let (pmw, pmh) = self.pixmap_dims();
+        let pm_w = pmw as i32;
+        let pm_h = pmh as i32;
         let rgba = image.rgba();
         // Draft/Fast: composite straight RGB888 into the output band directly.
         // Dst is opaque RGB (backdrop first), so na == 255 and the blend is
@@ -2481,7 +2573,7 @@ impl Canvas for TinySkiaCanvas {
                     }
                     continue;
                 }
-                let px = self.pixmap.pixels_mut();
+                let px = self.pixmap_mut().pixels_mut();
                 if a == 0xFF {
                     // Opaque copy — byte-identical to the blend below
                     // (ia = 0 ⇒ each channel = d255(255·s) = s), split out
