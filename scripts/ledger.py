@@ -342,8 +342,10 @@ def board_history_cells() -> dict:
                 continue
             ms = tv.get("ms_per_frame")
             hz = ((tv.get("runs") or [{}])[0].get("sysclk_hz")) or "?"
+            # platform carries the TARGET (#52 acceptance): board-f429 · exact · z
+            # is a distinct series, so a future F769/H750 never collides with it.
             cells.append({
-                "platform": "board", "firmware": "vyr", "tier": name.lower(),
+                "platform": "board-f429", "firmware": "vyr", "tier": name.lower(),
                 "opt_level": "z", "target": "f429", "profile": "release-mcu",
                 "isa": "ARMv7E-M (STM32F429ZI real silicon)", "word_bits": 32,
                 "float": "hardware f32 only (VFPv4-SP)",
@@ -380,7 +382,7 @@ def inject_board_cells(rows: list[dict]) -> int:
             continue
         # never double-inject on a re-run of the rebuild
         existing = r["matrix"]["cells"]
-        if any(c.get("platform") == "board" for c in existing):
+        if any(str(c.get("platform", "")).startswith("board") for c in existing):
             continue
         existing.extend(cells)
         pa = r["matrix"].get("platforms_available")
