@@ -315,6 +315,83 @@ def matrix_section(rec: dict) -> dict:
     }
 
 
+def board_history_cells() -> dict:
+    """tmp/board-history.jsonl (scripts/board-history.py) -> {commit: [board cell]}.
+
+    Real F429 silicon, cycles/frame per tier over history (#52). The board's
+    honest metric is DWT_CYCCNT — architectural, so it charts as the same clean
+    trend as the emulated instruction count, but it is what the code ACTUALLY
+    costs on metal, with flash wait states + the ART cache emulation cannot
+    model. `ms_per_frame` is derived per commit from that commit's own sysclk
+    (180 MHz before the df54c00 overclock, 192 after), so it is recorded as a
+    note, not charted — cycles/frame carries the discontinuity-free trend.
+    """
+    p = TMP / "board-history.jsonl"
+    if not p.exists():
+        return {}
+    by_commit: dict = {}
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        tiers = (r.get("board") or {}).get("tiers") or {}
+        cells = []
+        for name, tv in tiers.items():
+            cyc = (tv.get("cycles_per_frame") or {}).get("median") if tv else None
+            if cyc is None:
+                continue
+            ms = tv.get("ms_per_frame")
+            hz = ((tv.get("runs") or [{}])[0].get("sysclk_hz")) or "?"
+            cells.append({
+                "platform": "board", "firmware": "vyr", "tier": name.lower(),
+                "opt_level": "z", "target": "f429", "profile": "release-mcu",
+                "isa": "ARMv7E-M (STM32F429ZI real silicon)", "word_bits": 32,
+                "float": "hardware f32 only (VFPv4-SP)",
+                "build_type": "board (real F429, DWT_CYCCNT; cycles-only history #52)",
+                "fold_provenance": "n/a — silicon runs no benchmark fold",
+                "status": "measured", "reason": None,
+                "metrics": {k: None for k in METRIC_FIELDS} | {"cycles_per_frame": cyc},
+                "metric_notes": {
+                    "insns_per_frame_render_only": "no instruction counter on silicon; "
+                    "DWT_CYCCNT counts real CPU cycles",
+                    "cycles_per_frame": f"{ms} ms/frame at this commit's {hz} Hz "
+                    "(cycles are clock-independent; ms is not, so cycles carry the trend)",
+                },
+            })
+        if cells:
+            by_commit[r["commit"]] = cells
+            for cov in r.get("covers", []):
+                by_commit.setdefault(cov, cells)
+    return by_commit
+
+
+def inject_board_cells(rows: list[dict]) -> int:
+    """Append the real-silicon board cells to each matrix row whose commit
+    matches a board-history record. Returns the number of rows touched."""
+    board = board_history_cells()
+    if not board:
+        return 0
+    touched = 0
+    for r in rows:
+        if not r.get("matrix"):
+            continue
+        cells = board.get(r.get("commit")) or board.get(r.get("commit_full", "")[:7])
+        if not cells:
+            continue
+        # never double-inject on a re-run of the rebuild
+        existing = r["matrix"]["cells"]
+        if any(c.get("platform") == "board" for c in existing):
+            continue
+        existing.extend(cells)
+        pa = r["matrix"].get("platforms_available")
+        if isinstance(pa, dict):
+            pa.setdefault("board", "real F429 silicon (board-history.py #52)")
+        elif isinstance(pa, list) and "board" not in pa:
+            pa.append("board")
+        touched += 1
+    return touched
+
+
 def sec_matrix() -> dict | None:
     p = TMP / "perf-harness-HEAD.json"
     d = _read(p)
@@ -627,6 +704,13 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
             continue
         rows.append(replay_row(rec))
     log(f"{len(rows)} replayed matrix row(s), {len(skips)} recorded skip(s)")
+
+    # #52: fold the real-silicon board history (cycles/frame per tier) into the
+    # matching matrix rows, so `board·<tier>·cycles_per_frame` is a series
+    # alongside the emulated instruction counts.
+    touched = inject_board_cells(rows)
+    if touched:
+        log(f"injected real-silicon board cells into {touched} matrix row(s)")
 
     allrows = kept + rows
     allrows.sort(key=lambda r: (_commit_order(r.get("commit_full") or r["commit"]),
@@ -1832,6 +1916,8 @@ CHART_JS = r"""
     var CATS = [
       [function(k){ return /insns_per_frame_render_only/.test(k); },
        'insns', 'Instructions / frame', 'CPU work per frame, render only (emulated M4)'],
+      [function(k){ return /cycles_per_frame/.test(k); },
+       'cycles', 'Cycles / frame (real silicon)', 'DWT_CYCCNT on the actual F429 — real hardware cost'],
       [function(k){ return /render_only_insn_px/.test(k); },
        'insnpx', 'Instructions / pixel', 'the same, divided by 129,600 delivered pixels'],
       [function(k){ return /heap_peak_b/.test(k); },
