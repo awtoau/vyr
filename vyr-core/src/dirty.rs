@@ -162,14 +162,15 @@ fn push_subtree(n: &Node, parent: Rect, clip: Rect, out: &mut Vec<Rect>) {
     }
 }
 
-/// A node's absolute rect — MUST mirror the walk's geometry resolution
-/// (`parent + x/y`, `width`/`height`, zero defaults).
+/// A node's absolute rect — MUST mirror the walk's geometry resolution. Reads
+/// the SAME resolved-once cache the walk does (#34), so they cannot drift.
 fn node_rect(n: &Node, parent: Rect) -> Rect {
+    let g = n.geom();
     Rect {
-        x: parent.x + n.i32_attr("x", 0),
-        y: parent.y + n.i32_attr("y", 0),
-        w: n.u32_attr("width", 0),
-        h: n.u32_attr("height", 0),
+        x: parent.x + g.x,
+        y: parent.y + g.y,
+        w: g.w,
+        h: g.h,
     }
 }
 

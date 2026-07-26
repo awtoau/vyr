@@ -158,6 +158,24 @@ pub struct Node {
     pub attrs: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     pub children: Vec<Node>,
+    /// #34: geometry resolved ONCE per `Request` (in [`Request::parse`]), not
+    /// re-parsed from strings on each of the 17 bands. `x`/`y`/`width`/`height`
+    /// are band-independent, so this is byte-identical to resolving per band —
+    /// same values, same pixels, no re-bless — it just does it once. Filled by
+    /// [`Node::prepare`]; the per-band [`walk`] and the dirty-rect geometry read
+    /// it. `#[serde(skip)]` so it defaults to zero on deserialize and prepare
+    /// overwrites it (Node is only ever built by serde, never by hand).
+    #[serde(skip)]
+    pub(crate) geom: Geom,
+}
+
+/// A node's own (parent-relative) geometry, resolved once (#34).
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Geom {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
 }
 
 /// IR schema versions vyr knows how to render. The machine contract with
@@ -179,7 +197,7 @@ pub struct Request {
 
 impl Request {
     pub fn parse(ir_json: &str) -> Result<Request, RenderError> {
-        let req: Request = serde_json::from_str(ir_json)
+        let mut req: Request = serde_json::from_str(ir_json)
             .map_err(|e| RenderError::BadIr(format!("request parse: {e}")))?;
         if let Some(v) = &req.schema_version
             && !ACCEPTED_SCHEMA_VERSIONS.contains(&v.as_str())
@@ -188,6 +206,9 @@ impl Request {
                 "schema_version {v:?} not accepted (vyr renders {ACCEPTED_SCHEMA_VERSIONS:?})"
             )));
         }
+        // #34: resolve band-independent geometry ONCE, so the per-band walk does
+        // not re-parse x/y/width/height from strings 17 times a frame.
+        req.root.prepare();
         Ok(req)
     }
 
@@ -363,6 +384,28 @@ const DEFAULT_FONT: &str = "roboto";
 const DEFAULT_FONT_SIZE: u32 = 14;
 
 impl Node {
+    /// #34: resolve this node's geometry once, then recurse. Called from
+    /// [`Request::parse`] on the whole tree before any band is walked. The
+    /// values are exactly what the per-band walk resolved before — same parse,
+    /// same defaults — just computed once instead of 17 times.
+    fn prepare(&mut self) {
+        self.geom = Geom {
+            x: self.i32_attr("x", 0),
+            y: self.i32_attr("y", 0),
+            w: self.u32_attr("width", 0),
+            h: self.u32_attr("height", 0),
+        };
+        for child in &mut self.children {
+            child.prepare();
+        }
+    }
+
+    /// This node's parent-relative geometry, resolved once (#34). The dirty-rect
+    /// diff reads this too, so its geometry stays identical to the walk's.
+    pub(crate) fn geom(&self) -> Geom {
+        self.geom
+    }
+
     fn raw(&self, key: &str) -> Option<&serde_json::Value> {
         self.attrs.get(key)
     }
@@ -743,10 +786,13 @@ fn walk(
     assets: &Assets,
     ink: Option<Rgb>,
 ) -> Result<(), RenderError> {
-    let x = parent.x + n.i32_attr("x", 0);
-    let y = parent.y + n.i32_attr("y", 0);
-    let w = n.u32_attr("width", 0);
-    let h = n.u32_attr("height", 0);
+    // #34: geometry was resolved once at parse (band-independent); read the
+    // cache instead of re-parsing x/y/width/height from strings per band.
+    let g = n.geom();
+    let x = parent.x + g.x;
+    let y = parent.y + g.y;
+    let w = g.w;
+    let h = g.h;
     let r = Rect { x, y, w, h };
     let name = n.name.as_str();
     let mut child_ink = ink;
