@@ -157,6 +157,10 @@ HEADER_RE = re.compile(r"probe \(#37\): (\d+) cases x (\d+) timed reps, "
 CASE_RE = re.compile(
     r"case i=(\d+) name=(\S+) kind=(\S+) w=(\d+) count=(\d+) alpha=(\d+)"
     r"(?: radius=(\d+))? px=(\d+)")
+# The perf build reports painted pixels per case AFTER the timed section. Used
+# as the px denominator for insns/px — MEASURED, so it is right for the
+# composite widgets (chart/text/…) whose analytic area is 0.
+RESULT_RE = re.compile(r"result i=(\d+) name=\S+ pixels_written=(\d+)")
 
 
 class GuestError(RuntimeError):
@@ -187,11 +191,15 @@ def parse_cases(gout: str) -> tuple[dict, list[dict]]:
     if not h:
         log("ERROR: no probe header — not a --features probe build?")
         raise SystemExit(1)
+    pw = {int(m.group(1)): int(m.group(2)) for m in RESULT_RE.finditer(gout)}
     cases = []
     for m in CASE_RE.finditer(gout):
-        cases.append({"i": int(m.group(1)), "name": m.group(2), "kind": m.group(3),
+        i = int(m.group(1))
+        cases.append({"i": i, "name": m.group(2), "kind": m.group(3),
                       "w": int(m.group(4)), "count": int(m.group(5)), "alpha": int(m.group(6)),
-                      "radius": int(m.group(7)) if m.group(7) else 0, "px": int(m.group(8))})
+                      "radius": int(m.group(7)) if m.group(7) else 0,
+                      "px": int(m.group(8)),        # analytic (rect/disc); 0 for widgets
+                      "pw": pw.get(i)})             # measured WHOLE-frame painted px
     meta = {"n": int(h.group(1)), "reps": int(h.group(2)), "band_h": int(h.group(5)),
             "quality": h.group(6)}
     return meta, cases
@@ -346,13 +354,20 @@ def main() -> int:
                 failed_tiers.append(tier)
                 continue
             cur.execute("UPDATE run SET band_h=? WHERE run_id=?", (meta["band_h"], run_id))
-            null_insns = renders[[c["name"] for c in cases].index("null")]
+            names = [c["name"] for c in cases]
+            null_insns = renders[names.index("null")]
+            null_pw = cases[names.index("null")].get("pw")  # background-only px
             rows = []
             for ci, case in enumerate(cases):
                 above = renders[ci] - null_insns
-                ipp = above / case["px"] if case["px"] else None
+                # px: analytic for rect/disc; for the composite widgets the
+                # painted-pixel delta over the background-only null frame.
+                px = case["px"]
+                if not px and case.get("pw") is not None and null_pw is not None:
+                    px = max(0, case["pw"] - null_pw)
+                ipp = above / px if px else None
                 rows.append((run_id, tier, case["name"], case["kind"], case["w"], case["count"],
-                             case["alpha"], case["radius"], case["px"], renders[ci], ipp))
+                             case["alpha"], case["radius"], px, renders[ci], ipp))
             cur.executemany(
                 "INSERT OR REPLACE INTO points(run_id,tier,name,kind,w,count,alpha,radius,px,"
                 "insns,insns_per_px) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)

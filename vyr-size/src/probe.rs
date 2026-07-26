@@ -80,6 +80,15 @@ pub enum Kind {
     /// heaviest flattening/AA per pixel, and the area/perimeter shape #36
     /// characterises. The point where the f64-trig determinism tax is largest.
     Disc,
+    /// A hand-written IR child node (`Case::raw`) — the rest of the IR the
+    /// parametric grid does not reach: `vy_chart`'s DIAGONAL AA polyline (the
+    /// #40/#42 band-equivalence case), axis-aligned `vy_line`, the `vy_gauge`
+    /// stroked ring, a bordered `vy_frame`, glyph runs (`vy_label`/`vy_lcd`),
+    /// image blits (`vy_image`), and the real composite widgets (slider /
+    /// progress / toggle). Pixel count is MEASURED (`pixels_written`), not
+    /// analytic. (Gradients are not here: no IR attribute reaches
+    /// `fill_linear_gradient` — it is painter-internal, not in the schema.)
+    Widget,
 }
 
 /// One probe case. `alpha` < 255 selects the blended source-over path;
@@ -91,6 +100,10 @@ pub struct Case {
     pub count: u32,
     pub alpha: u8,
     pub radius: u32,
+    /// [`Kind::Widget`] only: the raw IR child node(s) to drop into the scene,
+    /// and the short kind label to report (e.g. "chart", "text").
+    pub raw: Option<String>,
+    pub klabel: &'static str,
 }
 
 /// A hand-listed identifiability case (static name). `radius` defaults to 0
@@ -103,6 +116,8 @@ fn c(name: &'static str, kind: Kind, w: u32, count: u32, alpha: u8) -> Case {
         count,
         alpha,
         radius: 0,
+        raw: None,
+        klabel: "",
     }
 }
 
@@ -115,6 +130,24 @@ fn cr(name: String, kind: Kind, w: u32, count: u32, alpha: u8, radius: u32) -> C
         count,
         alpha,
         radius,
+        raw: None,
+        klabel: "",
+    }
+}
+
+/// A raw-IR "see the rest of the IR" case: `child` is a full IR node
+/// (`{"name":…,"attrs":{…}}`) dropped verbatim into the scene. `klabel` is the
+/// short kind reported (chart / line / ring / border / text / image / …).
+fn cw(name: &'static str, klabel: &'static str, child: &str) -> Case {
+    Case {
+        name: name.into(),
+        kind: Kind::Widget,
+        w: 0,
+        count: 1,
+        alpha: 255,
+        radius: 0,
+        raw: Some(child.into()),
+        klabel,
     }
 }
 
@@ -238,6 +271,86 @@ pub fn cases() -> Vec<Case> {
         }
     }
 
+    // --- the rest of the IR: hand-written showcase widgets (count 1 each) ---
+    // These reach what the rect/disc grid cannot — most importantly the
+    // DIAGONAL anti-aliased polyline (`vy_chart`), which is the exact geometry
+    // #40/#42 fight over band-equivalence on. Pixels are MEASURED, so the grid
+    // prices them the same way as the grid cases. Positions cross band seams.
+    v.push(cw(
+        "chart_diag",
+        "chart",
+        "{\"name\":\"vy_chart\",\"attrs\":{\"x\":\"40\",\"y\":\"30\",\"width\":\"400\",\
+         \"height\":\"200\",\"points\":\"5,95,25,60,80,20,50,88,15,70\",\"range_min\":\"0\",\
+         \"range_max\":\"100\",\"line_color\":\"#88C0D0\",\"line_width\":\"2\"}}",
+    ));
+    v.push(cw(
+        "chart_thick",
+        "chart",
+        "{\"name\":\"vy_chart\",\"attrs\":{\"x\":\"40\",\"y\":\"30\",\"width\":\"400\",\
+         \"height\":\"200\",\"points\":\"5,95,25,60,80,20,50,88,15,70\",\"range_min\":\"0\",\
+         \"range_max\":\"100\",\"line_color\":\"#88C0D0\",\"line_width\":\"5\"}}",
+    ));
+    v.push(cw(
+        "chart_bar",
+        "chart",
+        "{\"name\":\"vy_chart\",\"attrs\":{\"x\":\"40\",\"y\":\"30\",\"width\":\"400\",\
+         \"height\":\"200\",\"chart_type\":\"bar\",\"points\":\"25,55,40,75,50,88,35\",\
+         \"range_min\":\"0\",\"range_max\":\"100\",\"line_color\":\"#A3BE8C\"}}",
+    ));
+    v.push(cw(
+        "line_h",
+        "line",
+        "{\"name\":\"vy_line\",\"attrs\":{\"x\":\"20\",\"y\":\"133\",\"width\":\"440\",\
+         \"height\":\"3\",\"background\":\"#4C566A\"}}",
+    ));
+    v.push(cw(
+        "gauge",
+        "ring",
+        "{\"name\":\"vy_gauge\",\"attrs\":{\"x\":\"170\",\"y\":\"45\",\"width\":\"170\",\
+         \"height\":\"170\",\"value\":\"65\",\"color\":\"#88C0D0\"}}",
+    ));
+    v.push(cw(
+        "border",
+        "border",
+        "{\"name\":\"vy_frame\",\"attrs\":{\"x\":\"40\",\"y\":\"40\",\"width\":\"400\",\
+         \"height\":\"180\",\"background\":\"#2E3440\",\"radius\":\"12\",\"border_width\":\"3\",\
+         \"border_color\":\"#88C0D0\"}}",
+    ));
+    v.push(cw(
+        "text",
+        "text",
+        "{\"name\":\"vy_label\",\"attrs\":{\"x\":\"24\",\"y\":\"120\",\"width\":\"440\",\
+         \"height\":\"32\",\"text\":\"vyr glyph run 0123456789\",\"color\":\"#ECEFF4\",\
+         \"style_text_font\":\"roboto_20\"}}",
+    ));
+    v.push(cw("lcd", "text",
+        "{\"name\":\"vy_lcd\",\"attrs\":{\"x\":\"170\",\"y\":\"110\",\"width\":\"140\",\
+         \"height\":\"44\",\"text\":\"1480\",\"color\":\"#A3BE8C\",\"style_text_font\":\"roboto_20\"}}"));
+    v.push(cw(
+        "image",
+        "image",
+        "{\"name\":\"vy_image\",\"attrs\":{\"x\":\"216\",\"y\":\"96\",\"width\":\"48\",\
+         \"height\":\"48\",\"src\":\"checker-24.png\"}}",
+    ));
+    v.push(cw(
+        "slider",
+        "widget",
+        "{\"name\":\"vy_slider\",\"attrs\":{\"x\":\"40\",\"y\":\"120\",\"width\":\"400\",\
+         \"height\":\"22\",\"value\":\"62\"}}",
+    ));
+    v.push(cw(
+        "progress",
+        "widget",
+        "{\"name\":\"vy_progress\",\"attrs\":{\"x\":\"40\",\"y\":\"120\",\"width\":\"400\",\
+         \"height\":\"14\",\"value\":\"80\"}}",
+    ));
+    v.push(cw(
+        "toggle",
+        "widget",
+        "{\"name\":\"vy_toggle\",\"attrs\":{\"x\":\"210\",\"y\":\"116\",\"width\":\"60\",\
+         \"height\":\"32\",\"value\":\"1\"}}",
+    ));
+
     // Build-time single-point isolation for the deep pass.
     if let Some(sel) = option_env!("VYR_PROBE_POINT") {
         v.retain(|case| case.name == sel || case.name == "null");
@@ -267,6 +380,9 @@ pub fn case_px(case: &Case) -> u64 {
         Kind::Rect => (case.w as u64) * (STRIP_H as u64) * (case.count as u64),
         // πr² with r = w/2, in integer arithmetic (no float in the report).
         Kind::Disc => (case.count as u64) * (355 * (case.w as u64) * (case.w as u64)) / (4 * 113),
+        // Composites have no closed-form area — the driver uses the measured
+        // `pixels_written` for these instead of this analytic value.
+        Kind::Widget => 0,
     }
 }
 
@@ -304,6 +420,12 @@ pub fn case_ir(case: &Case) -> String {
                  \"width\":\"{}\",\"height\":\"{}\",\"background\":\"{bg}\"}}}}",
                 case.w, case.w
             )),
+            // The raw IR node, dropped in verbatim (count is 1 for widgets).
+            Kind::Widget => {
+                if let Some(raw) = &case.raw {
+                    s.push_str(raw);
+                }
+            }
         }
     }
     s.push_str("]}}");
@@ -359,6 +481,7 @@ pub fn run(
                 Kind::Rect if case.radius > 0 => "rrect",
                 Kind::Rect => "rect",
                 Kind::Disc => "disc",
+                Kind::Widget => case.klabel,
             },
             case.w,
             case.count,
@@ -368,8 +491,16 @@ pub fn run(
         ));
     }
 
+    // Register the subset font + checker image so the `text`/`image` showcase
+    // cases render (the fill grid does not need them; the cost is tiny and
+    // outside every timed window). Mirrors workload.rs's registration.
     let mut fonts = Fonts::new();
-    let assets = Assets::new();
+    fonts.register("roboto", opaque(crate::workload::SUBSET_FONT).to_vec())?;
+    let mut assets = Assets::new();
+    assets.register(
+        vyr_core::demo::IMAGE_ASSET,
+        vyr_core::RgbaImage::new(24, 24, opaque(crate::workload::CHECKER).to_vec())?,
+    )?;
     let mut hashes: Vec<(u64, u64)> = Vec::with_capacity(cases.len());
 
     for case in &cases {

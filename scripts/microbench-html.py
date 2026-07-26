@@ -138,6 +138,9 @@ def render_scenes(names: list[str], tiers: list[str]) -> dict:
         subprocess.run([str(SIZE_HOST), "--dump-probe-scenes", str(SCENES)],
                        cwd=REPO, check=True, capture_output=True)
     SCENE_PNG.mkdir(parents=True, exist_ok=True)
+    # vy_image srcs resolve under $VYR_ASSETS; the committed checker lives here.
+    import os
+    env = {**os.environ, "VYR_ASSETS": str(REPO / "vyr-core" / "tests" / "assets")}
     out: dict = {}
     for name in names:
         sj = SCENES / f"{name}.json"
@@ -149,7 +152,7 @@ def render_scenes(names: list[str], tiers: list[str]) -> dict:
             cmd = [str(CLI), "render", str(sj), str(png)]
             if tier != "exact":
                 cmd.append(f"--{tier}")
-            r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+            r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, env=env)
             if r.returncode == 0 and png.is_file():
                 b64 = base64.b64encode(png.read_bytes()).decode()
                 entry["png"][tier] = f"data:image/png;base64,{b64}"
