@@ -588,14 +588,26 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
     # previous schema, precisely so it can delete what that schema got wrong.
     old = [json.loads(ln) for ln in HISTORY.read_text().splitlines() if ln.strip()] \
         if HISTORY.exists() else []
+    # The replay is the ONLY authority. Old-instrument (schema-2) rows are NOT
+    # carried forward: they were measured with tooling the four measurement
+    # errors discredited, some with a dirty worktree, and — having no `matrix` —
+    # they punch a vertical GAP through every instruction series at their run
+    # (a commit with no matrix data is a hole in every matrix line). A
+    # current-schema non-matrix row (a future board-silicon row measured with
+    # today's tools) would still be kept; there are none today.
     kept = []
+    dropped = 0
     for r in old:
         if r.get("kind") in ("schema-note", "skip"):
             continue
         if r.get("schema") == SCHEMA and r.get("matrix"):
             continue  # a matrix row is a replay product; the replay is authoritative
-        kept.append(migrate_schema2_row(r) if r.get("schema") != SCHEMA else r)
-    log(f"preserved {len(kept)} host-measured row(s) from the previous ledger")
+        if r.get("schema") != SCHEMA or r.get("migrated_from"):
+            dropped += 1  # old-instrument leftover — regenerate, do not preserve
+            continue
+        kept.append(r)
+    log(f"kept {len(kept)} current-instrument non-matrix row(s); "
+        f"dropped {dropped} old-instrument row(s) (regenerate, never preserve)")
 
     rows, skips = [], []
     for ln in replay_path.read_text().splitlines():
