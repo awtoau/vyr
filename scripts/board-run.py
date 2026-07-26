@@ -61,6 +61,7 @@ DEADLINE_S = 180
 # (`cargo run -p vyr-size --no-default-features --features run-qemu[,draft]`).
 REFERENCE_HASH = {
     "Exact": "0x24dcaff531c6eb01",
+    "Fast": "0x930d03610b07ea6f",
     "Draft": "0xf98cbbdddd6da1ba",
 }
 
@@ -76,7 +77,10 @@ def log(msg, logf):
     logf.flush()
 
 
-def build(draft, logf):
+TIER_FEATURE = {"exact": "board", "fast": "board,fast", "draft": "board,draft"}
+
+
+def build(tier, logf, verify=False):
     """Build the tier and SNAPSHOT the ELF to a private path.
 
     cargo writes every feature combination of this bin to the SAME path
@@ -88,8 +92,14 @@ def build(draft, logf):
     call that build uses. Copying to tmp/board-<tier>.elf makes every run in a
     batch flash provably the same bytes.
     """
-    tier = "draft" if draft else "exact"
-    feats = "board,draft" if draft else "board"
+    # #45: the PERF build (no `verify`) has no fold and gives DWT cycles but no
+    # frame hash; the VERIFY build folds and proves the hash but is UNTIMED. The
+    # board leg flashes both — cycles from perf, hash from verify.
+    feats = TIER_FEATURE[tier]
+    snap = tier
+    if verify:
+        feats += ",verify"
+        snap += "-verify"
     cmd = [
         "cargo", "build", "-p", "vyr-size",
         "--target", TARGET, "--profile", PROFILE,
@@ -102,7 +112,7 @@ def build(draft, logf):
     if r.returncode != 0:
         log("BUILD FAILED — see log", logf)
         return None
-    snapshot = os.path.join(TMP, f"board-{tier}.elf")
+    snapshot = os.path.join(TMP, f"board-{snap}.elf")
     shutil.copyfile(ELF, snapshot)
     with open(ELF, "rb") as f:
         digest = hashlib.sha256(f.read()).hexdigest()
@@ -203,9 +213,8 @@ def parse(text, logf):
     return res
 
 
-def one_tier(draft, repeat, logf):
-    tier = "draft" if draft else "exact"
-    built = build(draft, logf)
+def one_tier(tier, repeat, logf):
+    built = build(tier, logf)
     if not built:
         return None
     elf, elf_sha = built
@@ -235,8 +244,21 @@ def one_tier(draft, repeat, logf):
 
     good = [r for r in runs if r.get("ok") and r.get("cycles_per_frame")]
     cyc = [r["cycles_per_frame"] for r in good]
+
+    # #45: the frame hash is the VERIFY build's product — flash one verify image
+    # (untimed: it proves the pixels, it does not measure cycles). The cross-ISA
+    # gate below then compares THIS hash, not the perf build's (which has none).
+    verify_hash = None
+    vbuilt = build(tier, logf, verify=True)
+    if vbuilt:
+        vsemi = os.path.join(TMP, f"board-{tier}-verify.log")
+        vtext, _ = run_once(vbuilt[0], logf, vsemi)
+        if vtext:
+            verify_hash = parse(vtext, logf).get("frame_hash")
+        log(f"{tier} verify: frame hash {verify_hash} (from the --features verify image)",
+            logf)
     summary = {
-        "tier": "Draft" if draft else "Exact",
+        "tier": tier.capitalize(),
         "elf": elf,
         "elf_sha256": elf_sha,
         "runs": runs,
@@ -251,7 +273,9 @@ def one_tier(draft, repeat, logf):
             ),
             "all": cyc,
         },
-        "frame_hashes": sorted({r["frame_hash"] for r in good if r["frame_hash"]}),
+        # #45: the hash comes from the verify image, not the perf runs.
+        "frame_hashes": [verify_hash] if verify_hash else [],
+        "verify_frame_hash": verify_hash,
         "clock_ok_all": all(r.get("clock_ok") for r in good) and bool(good),
     }
     ref = REFERENCE_HASH[summary["tier"]]
@@ -290,8 +314,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--draft", action="store_true",
                     help="build/run the Draft quality tier (--features draft)")
+    ap.add_argument("--fast", action="store_true",
+                    help="build/run the Fast quality tier (#27, --features fast)")
     ap.add_argument("--both", action="store_true",
                     help="run Exact then Draft")
+    ap.add_argument("--all", action="store_true",
+                    help="run every tier: Exact, Fast, Draft")
     ap.add_argument("--repeat", type=int, default=1,
                     help="runs per tier (>=3 to see run-to-run spread)")
     ap.add_argument("--out", default=os.path.join(TMP, "board-result.json"))
@@ -301,7 +329,16 @@ def main():
     with open(os.path.join(TMP, "board-run.log"), "a") as logf:
         log("=" * 70, logf)
         log(f"board-run: {CHIP} via ST-LINK {PROBE}, repeat={args.repeat}", logf)
-        tiers = [False, True] if args.both else [args.draft]
+        if args.all:
+            tiers = ["exact", "fast", "draft"]
+        elif args.both:
+            tiers = ["exact", "draft"]
+        elif args.fast:
+            tiers = ["fast"]
+        elif args.draft:
+            tiers = ["draft"]
+        else:
+            tiers = ["exact"]
         out = {
             "when": now(),
             "board": "STM32F429I-DISC1 (STM32F429ZI, Cortex-M4F)",
@@ -311,8 +348,8 @@ def main():
             "tiers": {},
         }
         rc = 0
-        for draft in tiers:
-            s = one_tier(draft, args.repeat, logf)
+        for tier in tiers:
+            s = one_tier(tier, args.repeat, logf)
             if s is None:
                 rc = 2
                 continue
@@ -325,7 +362,7 @@ def main():
             log(f"RESULT {s['tier']}: frame hash(es) {s['frame_hashes']}", logf)
             if not s["clock_ok_all"]:
                 log(f"*** {s['tier']}: CLOCK NOT AS SPECIFIED (PLL/5WS/ART) — "
-                    f"these cycles are NOT the 180 MHz + ART configuration ***",
+                    f"these cycles are NOT the 192 MHz + ART configuration ***",
                     logf)
                 rc = 3
             if not s["hash_matches_reference"]:

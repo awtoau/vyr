@@ -156,7 +156,7 @@ PLATFORMS = {
         "profile": "release-mcu",
     },
     "board": {
-        "isa": "ARMv7E-M (STM32F429ZI, real silicon @180 MHz)",
+        "isa": "ARMv7E-M (STM32F429ZI, real silicon @192 MHz, overclocked)",
         "word_bits": 32,
         "float": "hardware f32 only (VFPv4-SP); every f64 op is SOFTWARE (compiler-rt)",
         "target": MCU_TARGET,
@@ -849,7 +849,7 @@ def measure_board(spec: Path, tiers: list[str], cap: dict) -> list[dict]:
             "insns_per_frame_total": "no instruction counter on silicon; the M4 has no PMU here",
             "harness_fold_insns": "no instruction counter on silicon",
             "insns_per_frame_render_only": "no instruction counter on silicon",
-            "ns_per_frame": "recorded as cycles; ms/frame is cycles/180 MHz",
+            "ns_per_frame": "recorded as cycles; ms/frame is cycles / the reported sysclk (192 MHz)",
             "ns_per_px": "recorded as cycles",
         }
     runner = (spec / "scripts" / "board-run.py")
