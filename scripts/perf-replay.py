@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -76,6 +77,82 @@ def git(*args: str) -> str:
                           check=False).stdout.strip()
 
 
+def fan_out(a, groups: list[dict]) -> int:
+    """Run N shards in parallel, then merge their records into one jsonl.
+
+    Each shard gets its own worktree + cargo target dir + scratch tmp, because
+    all three are shared mutable state: two shards checking out different
+    commits into one worktree would race, and qemu-insn's output name is derived
+    from a tag that repeats across specimens.
+
+    The LVGL anchor is measured ONCE here, before the fan-out, and handed to
+    every shard: it is built from the instrument's checkout so it cannot vary
+    with the vyr ref, and its runner writes a fixed tmp/lvgl-m4.elf that
+    concurrent builds would clobber.
+    """
+    n = a.workers
+    scratch = Path(os.environ.get("VYR_REPLAY_SCRATCH", "/mnt/2tb/git_debris/vyr-perf-shards"))
+    scratch.mkdir(parents=True, exist_ok=True)
+
+    lvgl_cell = TMP / "perf-lvgl-cell.json"
+    if a.lvgl and not lvgl_cell.exists():
+        log("measuring the LVGL anchor ONCE for the whole replay "
+            "(ref-independent: built from the instrument's checkout)")
+        H = harness()
+        cell = H.measure_lvgl(a.repeat, None)
+        lvgl_cell.write_text(json.dumps(cell))
+        log(f"  LVGL anchor: render_only={cell['metrics'].get('insns_per_frame_render_only')} "
+            f"total={cell['metrics'].get('insns_per_frame_total')} "
+            f"fold={cell['metrics'].get('harness_fold_insns')}")
+
+    procs, outs = [], []
+    for i in range(n):
+        out = TMP / f"perf-replay-shard{i}.jsonl"
+        out.unlink(missing_ok=True)
+        outs.append(out)
+        env = dict(os.environ)
+        env["VYR_SPEC_WORKTREE"] = str(scratch / f"w{i}")
+        env["VYR_SPEC_TARGET"] = str(scratch / f"t{i}")
+        env["VYR_PERF_TMP"] = str(scratch / f"tmp{i}")
+        env["VYR_LVGL_CELL"] = str(lvgl_cell)
+        # Cap per-worker cargo parallelism. Cargo defaults to one job per
+        # hardware thread, so N workers would ask for N x nproc threads and
+        # thrash. max(2, nproc // N) keeps the total near nproc; qemu runs are
+        # single-threaded and fill the gaps.
+        env["CARGO_BUILD_JOBS"] = str(max(2, (os.cpu_count() or 8) // n))
+        Path(env["VYR_PERF_TMP"]).mkdir(parents=True, exist_ok=True)
+        cmd = [sys.executable, __file__, "--from", a.first, "--to", a.last,
+               "--platforms", a.platforms, "--tiers", a.tiers,
+               "--opt-levels", a.opt_levels, "--repeat", str(a.repeat),
+               "--shard", f"{i}/{n}", "--out", str(out)]
+        if a.lvgl:
+            cmd.append("--lvgl")
+        if a.stack:
+            cmd.append("--stack")
+        if a.no_host_bench:
+            cmd.append("--no-host-bench")
+        log(f"shard {i}/{n} -> {out}")
+        procs.append(subprocess.Popen(cmd, cwd=REPO, env=env,
+                                      stdout=open(TMP / f"perf-replay-shard{i}.log", "w"),
+                                      stderr=subprocess.STDOUT))
+
+    rcs = [p.wait() for p in procs]
+    merged = []
+    for out in outs:
+        if out.exists():
+            merged += [ln for ln in out.read_text().splitlines() if ln.strip()]
+    # Sorted by the replay index each shard recorded, so the merged file is in
+    # history order rather than completion order.
+    merged.sort(key=lambda ln: json.loads(ln).get("replay", {}).get("index", 0))
+    OUT.write_text("\n".join(merged) + "\n")
+    log(f"merged {len(merged)} specimen record(s) from {n} shard(s) -> {OUT}")
+    bad = [i for i, rc in enumerate(rcs) if rc != 0]
+    if bad:
+        log(f"ERROR: shard(s) {bad} exited non-zero — see tmp/perf-replay-shard*.log")
+        return 1
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="first", default=FIRST_M4)
@@ -94,8 +171,22 @@ def main() -> int:
     ap.add_argument("--stack", action="store_true",
                     help="also measure the stack high-water (#33 stack-probe)")
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="shard the specimen list across N parallel workers, each with "
+                         "its OWN git worktree, cargo target dir and scratch namespace. "
+                         "Cargo already saturates cores WITHIN a build, but a replay's "
+                         "wall time is dominated by many SMALL builds plus single-"
+                         "threaded qemu runs, which leave most of the machine idle.")
+    ap.add_argument("--shard", default=None,
+                    help="internal: 'i/N' — run only groups where index %% N == i")
+    ap.add_argument("--out", default=None, help="output jsonl (default tmp/perf-replay.jsonl)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+
+    global OUT, LOG
+    if a.out:
+        OUT = Path(a.out)
+        LOG = OUT.with_suffix(".log")
 
     H = harness()
     TMP.mkdir(parents=True, exist_ok=True)
@@ -127,6 +218,20 @@ def main() -> int:
                 f"{g['subject'][:50]}")
         return 0
 
+    if a.workers > 1 and not a.shard:
+        return fan_out(a, groups)
+
+    # The GLOBAL position is stamped before any sharding: a shard's own
+    # enumerate() would number its groups 1..len(shard), and merging on that
+    # only lands in history order by accident of a round-robin split.
+    total_groups = len(groups)
+    for k, g in enumerate(groups, 1):
+        g["gindex"] = k
+    if a.shard:
+        i, n = (int(x) for x in a.shard.split("/"))
+        groups = [g for k, g in enumerate(groups) if k % n == i]
+        log(f"shard {i}/{n}: {len(groups)} specimen(s)")
+
     done: set[str] = set()
     if a.resume and OUT.exists():
         done = {json.loads(ln)["specimen"]["commit"]
@@ -140,19 +245,20 @@ def main() -> int:
     for i, g in enumerate(groups, 1):
         if g["commit"] in done:
             continue
-        log(f"[{i}/{len(groups)}] {g['commit']} {g['subject'][:56]}")
+        log(f"[{g['gindex']}/{total_groups}] {g['commit']} {g['subject'][:56]}")
         try:
             rec = H.run(g["commit"], platforms, tiers, opts, a.repeat, True, False,
                         not a.no_host_bench, cache, a.stack, a.lvgl)
             rec["replay"] = {"build_key": g["build_key"], "covers": g["covers"],
-                            "index": i, "of": len(groups)}
+                            "index": g["gindex"], "of": total_groups}
         except Exception as e:  # a specimen that cannot even be checked out/probed
             log(f"    SKIPPED: {type(e).__name__}: {e}")
             rec = {"specimen": {"commit": g["commit"], "date": g["date"],
                                 "subject": g["subject"]},
                    "status": "skipped",
                    "reason": f"{type(e).__name__}: {e}",
-                   "replay": {"build_key": g["build_key"], "covers": g["covers"]}}
+                   "replay": {"build_key": g["build_key"], "covers": g["covers"],
+                              "index": g["gindex"], "of": total_groups}}
         with OUT.open("a") as fh:
             fh.write(json.dumps(rec) + "\n")
         CACHE.write_text(json.dumps(cache))

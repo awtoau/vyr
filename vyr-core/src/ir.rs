@@ -158,6 +158,103 @@ pub struct Node {
     pub attrs: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     pub children: Vec<Node>,
+    /// #34: band-INDEPENDENT attributes resolved ONCE per `Request` (in
+    /// [`Request::parse`]), not re-parsed from strings on each of the 17 bands.
+    /// A node's geometry, its fill/ink colours and its corner radius do not
+    /// depend on which band is being painted, so resolving them per band was
+    /// pure repeated work (string-keyed BTreeMap lookups + parses). This is
+    /// byte-identical to resolving per band — same values, same pixels, no
+    /// re-bless — it just does it once. Filled by [`Node::prepare`]; the per-band
+    /// [`walk`] and the dirty-rect geometry read it. `#[serde(skip)]` so it
+    /// defaults on deserialize and prepare overwrites it (Node is only ever
+    /// built by serde, never by hand).
+    #[serde(skip)]
+    pub(crate) geom: Geom,
+    #[serde(skip)]
+    resolved: Resolved,
+}
+
+/// A node's own (parent-relative) geometry, resolved once (#34).
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Geom {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// A node's band-independent paint attributes, resolved once (#34). Everything
+/// the render path reads is resolved here at parse; `walk` and the draw
+/// functions touch NO strings. The `#34` regularity rule: every attribute is
+/// resolved once, not just the cheap ones.
+///
+/// The erroring resolves (`font`, `fit`, `chart`) store their `Result` — an
+/// unknown `fit`, a size-0 font or junk chart `points` is validated ONCE here
+/// and the draw path re-raises the cached error (`RenderError` is `Clone`),
+/// which keeps honest failure band-independent BY CONSTRUCTION: the same node
+/// yields the same error regardless of which band is (or isn't) painted.
+#[derive(Debug)]
+struct Resolved {
+    /// `color("background")` — the fill, resolved once.
+    bg: Option<Rgb>,
+    /// `color("color")` — the ink/inherited colour, resolved once.
+    fg: Option<Rgb>,
+    /// `border_color` → `style_border_color` → the fill, resolved once
+    /// (`paint_border`'s colour chain).
+    border_col: Option<Rgb>,
+    /// `radius()` (`radius` or `style_radius`), resolved once.
+    radius: u32,
+    /// `border_width` (or `style_border_width`), resolved once.
+    border_width: u32,
+    /// The fill alpha (`opacity` / 8-hex / `style_bg_opa` precedence), once.
+    fill_alpha: u8,
+    /// `value`/`min`/`max` → fraction 0..=1 (slider/progress/bar), once.
+    fraction: f32,
+    /// `value != 0` (toggle/switch), once.
+    value_on: bool,
+    /// `value` else `checked`, != 0 (radio/checkbox mark), once.
+    mark_on: bool,
+    /// `text`, resolved once.
+    text: Option<String>,
+    /// `src` (image source), resolved once.
+    src: Option<String>,
+    /// `name` (for honest-failure messages), resolved once.
+    name: Option<String>,
+    /// `align == "center"`, resolved once.
+    align_center: bool,
+    /// The font request `(family, size)` — or a size-0 `BadIr`, validated once.
+    font: Result<(String, u32), RenderError>,
+    /// The object-fit — or an unknown-value `BadIr`, validated once.
+    fit: Result<Fit, RenderError>,
+    /// `vy_chart` params (or junk-points `BadIr`), validated once — `None` for
+    /// non-chart nodes so a `Vec` is not allocated on every node.
+    chart: Option<Result<ChartParams, RenderError>>,
+}
+
+impl Default for Resolved {
+    /// The zero value on deserialize; [`Node::prepare`] overwrites every field
+    /// before any render. The erroring fields default to their success case —
+    /// never observed, since prepare always runs first.
+    fn default() -> Self {
+        Resolved {
+            bg: None,
+            fg: None,
+            border_col: None,
+            radius: 0,
+            border_width: 0,
+            fill_alpha: 0,
+            fraction: 0.0,
+            value_on: false,
+            mark_on: false,
+            text: None,
+            src: None,
+            name: None,
+            align_center: false,
+            font: Ok((String::new(), 0)),
+            fit: Ok(Fit::Contain),
+            chart: None,
+        }
+    }
 }
 
 /// IR schema versions vyr knows how to render. The machine contract with
@@ -179,7 +276,7 @@ pub struct Request {
 
 impl Request {
     pub fn parse(ir_json: &str) -> Result<Request, RenderError> {
-        let req: Request = serde_json::from_str(ir_json)
+        let mut req: Request = serde_json::from_str(ir_json)
             .map_err(|e| RenderError::BadIr(format!("request parse: {e}")))?;
         if let Some(v) = &req.schema_version
             && !ACCEPTED_SCHEMA_VERSIONS.contains(&v.as_str())
@@ -188,6 +285,9 @@ impl Request {
                 "schema_version {v:?} not accepted (vyr renders {ACCEPTED_SCHEMA_VERSIONS:?})"
             )));
         }
+        // #34: resolve band-independent geometry ONCE, so the per-band walk does
+        // not re-parse x/y/width/height from strings 17 times a frame.
+        req.root.prepare();
         Ok(req)
     }
 
@@ -363,6 +463,57 @@ const DEFAULT_FONT: &str = "roboto";
 const DEFAULT_FONT_SIZE: u32 = 14;
 
 impl Node {
+    /// #34: resolve this node's geometry once, then recurse. Called from
+    /// [`Request::parse`] on the whole tree before any band is walked. The
+    /// values are exactly what the per-band walk resolved before — same parse,
+    /// same defaults — just computed once instead of 17 times.
+    fn prepare(&mut self) {
+        self.geom = Geom {
+            x: self.i32_attr("x", 0),
+            y: self.i32_attr("y", 0),
+            w: self.u32_attr("width", 0),
+            h: self.u32_attr("height", 0),
+        };
+        let bg = self.color("background");
+        self.resolved = Resolved {
+            bg,
+            fg: self.color("color"),
+            // paint_border's colour chain: border_color → style_border_color →
+            // the fill, resolved once here.
+            border_col: self
+                .color("border_color")
+                .or_else(|| self.color("style_border_color"))
+                .or(bg),
+            radius: self.radius_resolve(),
+            border_width: self.u32_attr("border_width", self.u32_attr("style_border_width", 0)),
+            fill_alpha: self.fill_alpha_resolve(),
+            fraction: self.fraction_resolve(),
+            value_on: self.f32_attr("value", 0.0) != 0.0,
+            mark_on: self.f32_attr("value", self.f32_attr("checked", 0.0)) != 0.0,
+            text: self.str_attr("text"),
+            src: self.str_attr("src"),
+            name: self.str_attr("name"),
+            align_center: self.str_attr("align").as_deref() == Some("center"),
+            font: font_request_resolve(self),
+            fit: self.fit_resolve(),
+            // chart params only for chart nodes — no Vec on every node.
+            chart: if self.name == "vy_chart" {
+                Some(chart_params(self))
+            } else {
+                None
+            },
+        };
+        for child in &mut self.children {
+            child.prepare();
+        }
+    }
+
+    /// This node's parent-relative geometry, resolved once (#34). The dirty-rect
+    /// diff reads this too, so its geometry stays identical to the walk's.
+    pub(crate) fn geom(&self) -> Geom {
+        self.geom
+    }
+
     fn raw(&self, key: &str) -> Option<&serde_json::Value> {
         self.attrs.get(key)
     }
@@ -418,8 +569,24 @@ impl Node {
     }
 
     /// Corner radius: semantic `radius` or already-lowered `style_radius`.
+    /// Reads the resolved-once cache (#34); [`Node::radius_resolve`] does the
+    /// string work at prepare time.
     pub(crate) fn radius(&self) -> u32 {
+        self.resolved.radius
+    }
+
+    fn radius_resolve(&self) -> u32 {
         self.u32_attr("radius", self.u32_attr("style_radius", 0))
+    }
+
+    /// `color("background")`, resolved once (#34).
+    fn bg(&self) -> Option<Rgb> {
+        self.resolved.bg
+    }
+
+    /// `color("color")` — the ink/inherited colour, resolved once (#34).
+    fn fg(&self) -> Option<Rgb> {
+        self.resolved.fg
     }
 
     /// The FILL alpha (0..=255) for a node's `background`. The IR expresses
@@ -437,7 +604,23 @@ impl Node {
     /// the card fixtures carry `style_bg_opa: 255` (opaque) and the fade
     /// fixtures carry both `style_bg_opa: 255` AND `opacity: 128` — `opacity`
     /// wins, so the fade is honoured (the card stays opaque).
+    /// The fill alpha, resolved once (#34). [`Node::fill_alpha_resolve`] does the
+    /// string work at prepare time; the draw path reads this.
     fn fill_alpha(&self) -> u8 {
+        self.resolved.fill_alpha
+    }
+
+    /// `border_color` → `style_border_color` → fill, resolved once (#34).
+    fn border_col(&self) -> Option<Rgb> {
+        self.resolved.border_col
+    }
+
+    /// `border_width` (or `style_border_width`), resolved once (#34).
+    fn border_width(&self) -> u32 {
+        self.resolved.border_width
+    }
+
+    fn fill_alpha_resolve(&self) -> u8 {
         if let Some(s) = self.str_attr("opacity") {
             let t = s.trim();
             if let Ok(f) = t.parse::<f32>() {
@@ -478,14 +661,68 @@ impl Node {
     /// (the canonical spec default). An UNKNOWN value is a hard `BadIr` (I6 —
     /// never silently default to contain on junk).
     fn fit(&self) -> Result<Fit, RenderError> {
+        self.resolved.fit.clone()
+    }
+
+    fn fit_resolve(&self) -> Result<Fit, RenderError> {
         match self.str_attr("fit").or_else(|| self.str_attr("object_fit")) {
             Some(s) => Fit::parse(&s),
             None => Ok(Fit::Contain),
         }
     }
 
-    /// value/min/max → fraction of range, clamped 0..=1.
+    /// `text`, resolved once (#34).
+    fn text(&self) -> Option<&str> {
+        self.resolved.text.as_deref()
+    }
+
+    /// `src`, resolved once (#34).
+    fn src(&self) -> Option<&str> {
+        self.resolved.src.as_deref()
+    }
+
+    /// `name` (for error messages), resolved once (#34).
+    fn node_name(&self) -> Option<&str> {
+        self.resolved.name.as_deref()
+    }
+
+    /// `align == "center"`, resolved once (#34).
+    fn align_center(&self) -> bool {
+        self.resolved.align_center
+    }
+
+    /// The font request `(family, size)`, validated once (#34) — re-raises a
+    /// size-0 `BadIr` at draw exactly as `font_request` did.
+    fn font(&self) -> Result<(String, u32), RenderError> {
+        self.resolved.font.clone()
+    }
+
+    /// `vy_chart` params, validated once (#34). Only chart nodes carry them.
+    fn chart(&self) -> Result<ChartParams, RenderError> {
+        match &self.resolved.chart {
+            Some(r) => r.clone(),
+            // A non-chart node never reaches paint_chart; this is the honest
+            // shape if it somehow did.
+            None => chart_params(self),
+        }
+    }
+
+    /// value/min/max → fraction 0..=1, resolved once (#34).
     fn fraction(&self) -> f32 {
+        self.resolved.fraction
+    }
+
+    /// `value != 0` (toggle/switch), resolved once (#34).
+    fn value_on(&self) -> bool {
+        self.resolved.value_on
+    }
+
+    /// `value` else `checked`, != 0 (radio/checkbox), resolved once (#34).
+    fn mark_on(&self) -> bool {
+        self.resolved.mark_on
+    }
+
+    fn fraction_resolve(&self) -> f32 {
         let min = self.f32_attr("min", 0.0);
         let max = self.f32_attr("max", 100.0);
         let v = self.f32_attr("value", 0.0);
@@ -545,7 +782,7 @@ enum ChartDecimate {
     MinMax,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ChartParams {
     bar: bool,
     rmin: f32,
@@ -556,6 +793,13 @@ struct ChartParams {
     show_background: bool,
     show_grid: bool,
     show_frame: bool,
+    /// `line_color` → `color`, resolved once (#34); `ACCENT` if absent, at draw.
+    line_col: Option<Rgb>,
+    /// `line_width` (min 1), resolved once (#34).
+    line_width: u32,
+    /// `div_count_x` / `div_count_y` grid divisions, resolved once (#34).
+    div_count_x: u32,
+    div_count_y: u32,
 }
 
 /// Box-family names: plain containers/shapes — IR-authoritative chrome only.
@@ -743,10 +987,13 @@ fn walk(
     assets: &Assets,
     ink: Option<Rgb>,
 ) -> Result<(), RenderError> {
-    let x = parent.x + n.i32_attr("x", 0);
-    let y = parent.y + n.i32_attr("y", 0);
-    let w = n.u32_attr("width", 0);
-    let h = n.u32_attr("height", 0);
+    // #34: geometry was resolved once at parse (band-independent); read the
+    // cache instead of re-parsing x/y/width/height from strings per band.
+    let g = n.geom();
+    let x = parent.x + g.x;
+    let y = parent.y + g.y;
+    let w = g.w;
+    let h = g.h;
     let r = Rect { x, y, w, h };
     let name = n.name.as_str();
     let mut child_ink = ink;
@@ -771,19 +1018,19 @@ fn walk(
                 draw_text_prepare_only(n, ink, fonts)?;
             }
             "vy_button" => {
-                child_ink = n.color("color").or(ink);
+                child_ink = n.fg().or(ink);
             }
             "vy_image" | "vy_imagebutton" => {
-                let Some(src) = n.str_attr("src") else {
+                let Some(src) = n.src() else {
                     return Err(RenderError::BadIr(format!(
                         "{name} {:?} has no src attr (an image with nothing to show is junk IR)",
-                        n.str_attr("name").unwrap_or_default()
+                        n.node_name().unwrap_or_default()
                     )));
                 };
                 // Validation parity: an unknown `fit` must error in EVERY band,
                 // visible or culled (banded and full-frame agree on errors).
                 n.fit()?;
-                assets.get(&src)?;
+                assets.get(src)?;
             }
             "vy_video" | "vy_widget" | "vy_canvas" => {
                 return Err(RenderError::Unimplemented(
@@ -795,7 +1042,7 @@ fn walk(
             | "vy_toggle" | "vy_switch" | "vy_gauge" | "vy_arc" => {}
             // Parse parity: a junk points/chart_type/range errors in every band.
             "vy_chart" => {
-                chart_params(n)?;
+                n.chart()?;
             }
             other => {
                 return Err(RenderError::UnknownWidget(other.to_string()));
@@ -815,19 +1062,19 @@ fn walk(
             // declared); `color` is the button's TEXT colour, inherited by
             // its label children (see module docs).
             paint_box(n, r, c);
-            child_ink = n.color("color").or(ink);
+            child_ink = n.fg().or(ink);
         }
         "vy_circle" | "vy_ellipse" => {
             // Disc/stadium: max-radius box (the IR disc lowering). Fill from
             // `background`; nothing painted if the IR gave no fill (I5).
-            if let Some(fill) = n.color("background") {
+            if let Some(fill) = n.bg() {
                 let rad = h.min(w) / 2;
                 c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
             paint_border(n, r, h.min(w) / 2, c);
         }
         "vy_line" => {
-            if let Some(fill) = n.color("background") {
+            if let Some(fill) = n.bg() {
                 c.fill_rrect(r, 0, fill, n.fill_alpha());
             }
         }
@@ -848,7 +1095,7 @@ fn walk(
         }
         "vy_toggle" | "vy_switch" => {
             let rad = h / 2;
-            let on = n.f32_attr("value", 0.0) != 0.0;
+            let on = n.value_on();
             c.fill_rrect(r, rad, if on { ACCENT } else { TRACK }, 0xFF);
             let kr = rad.saturating_sub(2).max(2);
             let kx = if on {
@@ -870,7 +1117,7 @@ fn walk(
             // ring stroke ~ d/10, floored at 4 so small gauges stay visible.
             let stroke = (d / 10).max(4);
             let radius = d / 2 - stroke / 2;
-            let col = n.color("color").unwrap_or(TRACK);
+            let col = n.fg().unwrap_or(TRACK);
             c.ring(
                 x + w as i32 / 2,
                 y + h as i32 / 2,
@@ -888,18 +1135,18 @@ fn walk(
             // centre; LVGL native-size is theirs, #331). Declared fill under,
             // declared border over. No `src` = junk IR (I6): an image widget
             // with nothing to show is a BadIr, not an empty box.
-            let Some(src) = n.str_attr("src") else {
+            let Some(src) = n.src() else {
                 return Err(RenderError::BadIr(format!(
                     "{name} {:?} has no src attr (an image with nothing to show is junk IR)",
-                    n.str_attr("name").unwrap_or_default()
+                    n.node_name().unwrap_or_default()
                 )));
             };
             let rad = n.radius();
             let fit = n.fit()?;
-            if let Some(fill) = n.color("background") {
+            if let Some(fill) = n.bg() {
                 c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
-            let img = assets.get(&src)?;
+            let img = assets.get(src)?;
             let (dst, clip) = object_fit(fit, r, img.w(), img.h());
             // clip = r always; dst ⊆ r for contain/scale-down (letterbox), dst
             // may exceed r for cover / oversized-none (the blit trims to clip).
@@ -944,7 +1191,7 @@ fn walk(
 /// LVGL-lowered `style_text_font` `<family>_<size>` name, else the default
 /// roboto 14 (module docs). Family is matched case-insensitively by the
 /// registry. A zero size is junk IR — hard error, not an invisible run.
-fn font_request(n: &Node) -> Result<(String, u32), RenderError> {
+fn font_request_resolve(n: &Node) -> Result<(String, u32), RenderError> {
     let checked = |fam: String, size: u32| {
         if size == 0 {
             return Err(RenderError::BadIr(format!(
@@ -985,7 +1232,7 @@ fn draw_mark_widget(
     fonts: &mut Fonts,
 ) -> Result<(), RenderError> {
     let d = r.h.min(r.w);
-    let on = n.f32_attr("value", n.f32_attr("checked", 0.0)) != 0.0;
+    let on = n.mark_on();
     let (mx, my) = (r.x, r.y + (r.h as i32 - d as i32) / 2);
     if radio {
         // Outline ring at full mark size; painter strokes centred on the
@@ -1031,11 +1278,11 @@ fn draw_mark_widget(
     }
     // Label: `text` to the right of the mark, vertically centred via the
     // measurement API (gap = 6 px, the LVGL checkbox text gap).
-    if let Some(text) = n.str_attr("text")
+    if let Some(text) = n.text()
         && !text.is_empty()
     {
-        let color = n.color("color").or(ink).unwrap_or(INK);
-        let (family, size) = font_request(n)?;
+        let color = n.fg().or(ink).unwrap_or(INK);
+        let (family, size) = n.font()?;
         let m = fonts.prepare_run(&family, size, &text)?;
         let baseline = r.y + (r.h as i32 - m.height()) / 2 + m.ascent;
         let placed = fonts.placed_run(&family, size, &text, r.x + d as i32 + 6, baseline)?;
@@ -1053,13 +1300,13 @@ fn draw_text_prepare_only(
     _ink: Option<Rgb>,
     fonts: &mut Fonts,
 ) -> Result<(), RenderError> {
-    let Some(text) = n.str_attr("text") else {
+    let Some(text) = n.text() else {
         return Ok(());
     };
     if text.is_empty() {
         return Ok(());
     }
-    let (family, size) = font_request(n)?;
+    let (family, size) = n.font()?;
     fonts.prepare_run(&family, size, &text)?;
     Ok(())
 }
@@ -1077,16 +1324,16 @@ fn draw_text(
     c: &mut TinySkiaCanvas,
     fonts: &mut Fonts,
 ) -> Result<(), RenderError> {
-    let Some(text) = n.str_attr("text") else {
+    let Some(text) = n.text() else {
         return Ok(());
     };
     if text.is_empty() {
         return Ok(());
     }
-    let ink = n.color("color").or(ink).unwrap_or(INK);
-    let (family, size) = font_request(n)?;
+    let ink = n.fg().or(ink).unwrap_or(INK);
+    let (family, size) = n.font()?;
     let m = fonts.prepare_run(&family, size, &text)?;
-    let (origin_x, baseline_y) = if n.str_attr("align").as_deref() == Some("center") {
+    let (origin_x, baseline_y) = if n.align_center() {
         (
             parent.x + (parent.w as i32 - m.width) / 2,
             parent.y + (parent.h as i32 - m.height()) / 2 + m.ascent,
@@ -1107,7 +1354,7 @@ fn draw_text(
 /// default black). The I5 discipline, same as the TGX instrument.
 fn paint_box(n: &Node, r: Rect, c: &mut TinySkiaCanvas) {
     let rad = n.radius();
-    if let Some(fill) = n.color("background") {
+    if let Some(fill) = n.bg() {
         // The IR's fill opacity (F8 fade fix, awto-vyvanse#321): the walk used
         // to hardcode 0xFF and drop every partial alpha — the FADE-FLAT bug.
         // The painter's source-over already blends correctly (F6 proves the
@@ -1185,6 +1432,13 @@ fn chart_params(n: &Node) -> Result<ChartParams, RenderError> {
         show_background: n.bool_attr("show_background", !scope_mode)?,
         show_grid: n.bool_attr("show_grid", true)?,
         show_frame: n.bool_attr("show_frame", true)?,
+        // #34: the draw-time chart attrs, resolved once here too. `color` is the
+        // ink fallback for the line — read fresh (the fg cache is not yet built
+        // during prepare), same value.
+        line_col: n.color("line_color").or_else(|| n.color("color")),
+        line_width: n.u32_attr("line_width", 2).max(1),
+        div_count_x: n.u32_attr("div_count_x", 0),
+        div_count_y: n.u32_attr("div_count_y", 0),
     })
 }
 
@@ -1206,26 +1460,18 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
     if w == 0 || h == 0 {
         return Ok(());
     }
-    let params = chart_params(n)?;
+    let params = n.chart()?;
 
     // Plot background under everything (optional so a trace can overlay
     // a pre-rendered graticule image/card beneath this widget).
     if params.show_background {
-        c.fill_rrect(
-            r,
-            0,
-            n.color("background").unwrap_or(CHART_BG),
-            n.fill_alpha(),
-        );
+        c.fill_rrect(r, 0, n.bg().unwrap_or(CHART_BG), n.fill_alpha());
     }
 
     // Series stroke + marker radius; the interior is inset by the marker
     // radius (+1 to clear the 1 px frame) so points/strokes sit fully inside.
-    let col = n
-        .color("line_color")
-        .or_else(|| n.color("color"))
-        .unwrap_or(ACCENT);
-    let lw = n.u32_attr("line_width", 2).max(1);
+    let col = params.line_col.unwrap_or(ACCENT);
+    let lw = params.line_width;
     let mr = (lw + 1).max(2) as i32;
     let pad = mr + 1;
     let px0 = x + pad;
@@ -1235,7 +1481,7 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
 
     // Grid — evenly-spaced interior div-lines, crisp axis-aligned fill-rects.
     if params.show_grid {
-        let vdiv = n.u32_attr("div_count_x", 0);
+        let vdiv = params.div_count_x;
         for i in 1..=vdiv {
             let gx = px0 + (i as i32 * (pw - 1)) / (vdiv as i32 + 1);
             c.fill_rrect(
@@ -1250,7 +1496,7 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
                 0xFF,
             );
         }
-        let hdiv = n.u32_attr("div_count_y", 0);
+        let hdiv = params.div_count_y;
         for i in 1..=hdiv {
             let gy = py0 + (i as i32 * (ph - 1)) / (hdiv as i32 + 1);
             c.fill_rrect(
@@ -1399,15 +1645,12 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
 }
 
 fn paint_border(n: &Node, r: Rect, rad: u32, c: &mut TinySkiaCanvas) {
-    let bw = n.u32_attr("border_width", n.u32_attr("style_border_width", 0));
+    // #34: border width + colour resolved once at parse; read the cache.
+    let bw = n.border_width();
     if bw == 0 {
         return;
     }
-    let col = n
-        .color("border_color")
-        .or_else(|| n.color("style_border_color"))
-        .or_else(|| n.color("background"));
-    if let Some(col) = col {
+    if let Some(col) = n.border_col() {
         draw_inside_border(r, rad, bw, col, c);
     }
 }

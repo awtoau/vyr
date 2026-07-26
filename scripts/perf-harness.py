@@ -103,7 +103,8 @@ HARNESS_VERSION = "perf-harness/1.0"
 HARNESS_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 REPO = Path(__file__).resolve().parent.parent  # the INSTRUMENT's checkout
-TMP = REPO / "tmp"
+# See qemu-insn.py: per-worker scratch so parallel replay shards do not collide.
+TMP = Path(os.environ["VYR_PERF_TMP"]) if os.environ.get("VYR_PERF_TMP") else REPO / "tmp"
 LOG = TMP / "perf-harness.log"
 
 # Detached specimen worktree + a shared cargo target dir. dev.py resolves
@@ -155,7 +156,7 @@ PLATFORMS = {
         "profile": "release-mcu",
     },
     "board": {
-        "isa": "ARMv7E-M (STM32F429ZI, real silicon @180 MHz)",
+        "isa": "ARMv7E-M (STM32F429ZI, real silicon @192 MHz, overclocked)",
         "word_bits": 32,
         "float": "hardware f32 only (VFPv4-SP); every f64 op is SOFTWARE (compiler-rt)",
         "target": MCU_TARGET,
@@ -292,6 +293,12 @@ def capabilities(spec: Path) -> dict:
     cap["fold_in_timed_window"] = (
         False if "h_verify" in wl_text else (True if FOLD_NEEDLE in wl_text else None)
     )
+    # #45: verification became a BUILD TYPE. When the ref has a `verify` feature,
+    # the perf build compiles no fold at all (render_only is structural, one
+    # pass, no hash) and the hash + band equivalence come from a separate verify
+    # build. The harness then builds BOTH and a failed verify SUPPRESSES the
+    # cell's perf number.
+    cap["has_verify_feature"] = "verify" in feats
     cap["stack_probe"] = "stack-probe" in feats  # #33; absent before b93eec1
     if wl.exists():
         m = re.search(r"const TIMED_FRAMES: u32 = (\d+)", wl.read_text())
@@ -431,6 +438,19 @@ def flash_size(elf: Path) -> tuple[int | None, dict]:
     return int(m.group(1)) + int(m.group(2)), {}
 
 
+def boot_console(elf: Path) -> list[str]:
+    """Boot an ELF under qemu-m4 (no plugin) and return the semihosting console.
+    For #45 verify builds, which are UNTIMED — they emit no bkpt traps, so
+    count_insns (which needs a timed window) cannot be used on them."""
+    global QI
+    QI = QI or _qemu_insn_module()
+    args = [str(QI.QEMU), "-machine", QI.MACHINE, "-nographic",
+            "-semihosting-config", "enable=on,target=native",
+            "-icount", "shift=0,sleep=off", "-kernel", str(elf)]
+    r = sh(args, cwd=REPO, deadline=600)
+    return (r.stdout + r.stderr).splitlines()
+
+
 def count_insns(elf: Path, tag: str, repeat: int, cache: dict | None) -> dict:
     """Exact architectural instruction count for one ELF. Repeated; a
     disagreement is a FAILURE, never an average."""
@@ -568,8 +588,50 @@ def measure_qemu_m4(spec: Path, tier: str, opt: str, cap: dict, repeat: int,
         cell["provenance"]["total"] = {k: v for k, v in total.items() if k != "console"}
         cell["provenance"]["guest_console"] = total["console"]
 
-        # --- 2. the same firmware with the fold folding NOTHING ---
-        if total.get("timed_passes") == 2:
+        # --- 2. separate render-only from the benchmark's own fold ---
+        if cap.get("has_verify_feature"):
+            # #45: the perf build compiles NO fold. Its single timed window is
+            # render-only by construction — nothing to subtract, no second pass,
+            # no hash. The hash + band equivalence come from a SEPARATE verify
+            # build, and a verify failure suppresses this cell's perf number.
+            cell["metrics"]["insns_per_frame_render_only"] = total["insns_per_frame"]
+            cell["metrics"]["insns_per_frame_total"] = total["insns_per_frame"]
+            cell["metrics"]["harness_fold_insns"] = None
+            cell["fold_provenance"] = "absent-by-build (#45 verify feature)"
+            cell["build_type"] = "perf (no fold in the binary; hash proven by a " \
+                                 "separate verify build the harness runs beside it)"
+            cell["metric_notes"]["harness_fold_insns"] = (
+                "not a renderer metric under #45: the perf binary compiles no fold, "
+                "so there is nothing to price in the timed window"
+            )
+            vr = cargo_build(spec, mcu_build_args(tier, opt) + ["--features", "verify"])
+            if vr.returncode != 0:
+                cell["status"] = "failed"
+                cell["reason"] = "verify build failed: " + (vr.stderr[-400:] or vr.stdout[-400:])
+                return cell
+            velf = spec / "target" / MCU_TARGET / "release-mcu" / "vyr-size"
+            vconsole = boot_console(velf)
+            vfacts = _console_facts(vconsole)
+            vhash = vfacts.get("frame_hash")
+            cell["metrics"]["frame_hash"] = vhash
+            cell["provenance"]["verify"] = {
+                "frame_hash": vhash,
+                "console_tail": vconsole[-3:] if vconsole else [],
+            }
+            if not vhash:
+                cell["status"] = "failed"
+                cell["reason"] = "verify build produced no frame hash — cannot prove the " \
+                                 "perf build renders the right pixels; timing suppressed"
+                return cell
+            if reference_hash and vhash != reference_hash:
+                cell["status"] = "failed"
+                cell["reason"] = (
+                    f"verify frame hash {vhash} != the host leg's {reference_hash} at this "
+                    "tier — the build renders the wrong pixels, so its timing is "
+                    "suppressed rather than annotated (#45)"
+                )
+                return cell
+        elif total.get("timed_passes") == 2:
             # #44 two-pass firmware: render-only, with-fold and the difference
             # all come from ONE binary in ONE session. `insns_per_frame_total`
             # is the WITH-fold pass, so the `total` column keeps meaning what it
@@ -682,8 +744,14 @@ def measure_host(spec: Path, tier: str, cap: dict, bench: dict | None) -> dict:
     if not cap["tiers"].get(tier):
         cell["reason"] = f"tier `{tier}` does not exist at this ref"
         return cell
+    # #45: the frame hash is the verify build's product — the perf build compiles
+    # no fold. The host leg is the cross-ISA REFERENCE, so it builds verify when
+    # the ref has the feature, otherwise the plain build (which still folds).
+    hfeats = TIER_FEATURE[tier]
+    if cap.get("has_verify_feature"):
+        hfeats += ",verify"
     r = cargo_build(spec, ["--release", "-p", "vyr-size", "--no-default-features",
-                           "--features", TIER_FEATURE[tier]])
+                           "--features", hfeats])
     if r.returncode != 0:
         cell["status"] = "failed"
         cell["reason"] = "host build failed: " + (r.stderr[-600:] or r.stdout[-600:])
@@ -781,7 +849,7 @@ def measure_board(spec: Path, tiers: list[str], cap: dict) -> list[dict]:
             "insns_per_frame_total": "no instruction counter on silicon; the M4 has no PMU here",
             "harness_fold_insns": "no instruction counter on silicon",
             "insns_per_frame_render_only": "no instruction counter on silicon",
-            "ns_per_frame": "recorded as cycles; ms/frame is cycles/180 MHz",
+            "ns_per_frame": "recorded as cycles; ms/frame is cycles / the reported sysclk (192 MHz)",
             "ns_per_px": "recorded as cycles",
         }
     runner = (spec / "scripts" / "board-run.py")
@@ -850,6 +918,28 @@ LVGL_FOLD_PATCH = "for (uint32_t i = 0; i < 0; i++) { /* perf-harness fold diffe
 
 
 def measure_lvgl(repeat: int, cache: dict | None) -> dict:
+    # The anchor is REF-INDEPENDENT by construction: LVGL_RUNNER and LVGL_MAIN
+    # resolve against REPO (the instrument's checkout), never the specimen, so
+    # the same ELF is rebuilt and re-measured for every commit in a replay —
+    # 40+ identical builds saying the same thing. VYR_LVGL_CELL points at a
+    # cell measured once and reused, which is also what makes parallel shards
+    # safe: run.py writes a fixed tmp/lvgl-m4.elf that concurrent builds would
+    # otherwise clobber.
+    cached = os.environ.get("VYR_LVGL_CELL")
+    if cached and Path(cached).exists():
+        cell = json.loads(Path(cached).read_text())
+        # provenance, NOT metric_notes: that field explains why a metric is
+        # NULL, and every entry in it must surface on the page beside the null
+        # it accounts for. Nothing here is null.
+        cell.setdefault("provenance", {})["reused"] = (
+            "measured once per replay, not per specimen: the LVGL anchor is built "
+            "from the INSTRUMENT's checkout and cannot vary with the vyr ref"
+        )
+        return cell
+    return _measure_lvgl_uncached(repeat, cache)
+
+
+def _measure_lvgl_uncached(repeat: int, cache: dict | None) -> dict:
     """The LVGL anchor, measured by the SAME instrument and with its fold priced
     the SAME way (differential rebuild) as vyr's.
 
@@ -879,21 +969,37 @@ def measure_lvgl(repeat: int, cache: dict | None) -> dict:
         return cell
     elf = TMP / "lvgl-m4.elf"
     keep = TMP / "lvgl-m4-anchor.elf"
+    velf = TMP / "lvgl-m4-verify.elf"
+    # #45: the LVGL harness gained -DVERIFY too. The perf build (plain run.py)
+    # compiles no fold and reports render_only from one timed pass; the verify
+    # build (run.py --verify) folds and proves the hash. Build BOTH and take the
+    # timing from perf, the hash from verify — the same shape as the vyr cell.
+    cell["fold_provenance"] = "absent-by-build (#45 -DVERIFY)"
+    cell["build_type"] = ("perf (flush_cb compiles no fold; hash proven by a "
+                          "separate -DVERIFY build the harness runs beside it)")
     try:
+        # --- perf build: render_only, no hash ---
         r = sh([sys.executable, str(LVGL_RUNNER)], cwd=REPO, deadline=3600)
         if r.returncode != 0 or not elf.exists():
             cell["status"] = "failed"
             cell["reason"] = f"lvgl-m4-bench/run.py rc={r.returncode}: {(r.stdout + r.stderr)[-500:]}"
             return cell
         shutil.copy2(elf, keep)
-        total = count_insns(keep, "ph-lvgl-fold", repeat, cache)
+        total = count_insns(keep, "ph-lvgl-perf", repeat, cache)
+        if total.get("guest_failed"):
+            cell["status"] = "failed"
+            cell["reason"] = total["error"]
+            return cell
         if not total["deterministic"]:
             cell["status"] = "failed"
-            cell["reason"] = f"non-deterministic window {total['windows_seen']}"
+            cell["reason"] = f"non-deterministic window {total.get('windows_seen')}"
             return cell
+        cell["metrics"]["insns_per_frame_render_only"] = total["insns_per_frame"]
         cell["metrics"]["insns_per_frame_total"] = total["insns_per_frame"]
-        facts = _console_facts(total["console"])
-        cell["metrics"]["frame_hash"] = facts.get("frame_hash")
+        cell["metrics"]["harness_fold_insns"] = None
+        cell["metric_notes"]["harness_fold_insns"] = (
+            "not a renderer metric under #45: the perf binary compiles no fold"
+        )
         fsz, notes = flash_size(keep)
         cell["metrics"]["flash_text_data_b"] = fsz
         cell["metric_notes"].update(notes)
@@ -908,40 +1014,24 @@ def measure_lvgl(repeat: int, cache: dict | None) -> dict:
             if hp:
                 cell["metrics"]["heap_peak_b"] = hp
 
-        if total.get("timed_passes") == 2:
-            # #44 landed on the LVGL side too: the anchor measures its own split,
-            # so the fold-neutered rebuild below is not run at all.
-            cell["metrics"]["insns_per_frame_total"] = total["with_fold_per_frame"]
-            cell["metrics"]["insns_per_frame_render_only"] = total["render_only_per_frame"]
-            cell["metrics"]["harness_fold_insns"] = total["fold_per_frame"]
-            cell["fold_provenance"] = "measured-in-cell (#44 two-pass)"
-            cell["build_type"] = ("perf (flush_cb folds behind a flag; second timed "
-                                  "pass prices the fold; untimed verification first)")
-            cell["provenance"]["fold_share_of_total"] = (
-                round(total["fold_per_frame"] / total["with_fold_per_frame"], 4)
-                if total["with_fold_per_frame"] else None)
-
-        else:
-            # Pre-#44 anchor: the fold is inside the timed window, so render-only
-            # can only be had by rebuilding with it neutered and differencing.
-            LVGL_MAIN.write_text(original.replace(LVGL_FOLD_NEEDLE, LVGL_FOLD_PATCH))
-            r = sh([sys.executable, str(LVGL_RUNNER)], cwd=REPO, deadline=3600)
-            if r.returncode != 0:
-                cell["metric_notes"]["harness_fold_insns"] = "fold-neutered LVGL build failed"
-            else:
-                nofold = count_insns(elf, "ph-lvgl-nofold", repeat, cache)
-                if nofold["deterministic"]:
-                    ro = nofold["insns_per_frame"]
-                    cell["metrics"]["insns_per_frame_render_only"] = ro
-                    cell["metrics"]["harness_fold_insns"] = total["insns_per_frame"] - ro
-                    cell["fold_provenance"] = "measured-differential"
-                    cell["provenance"]["fold_share_of_total"] = round(
-                        (total["insns_per_frame"] - ro) / total["insns_per_frame"], 4)
-                    cell["provenance"]["render_only"] = {k: v for k, v in nofold.items()
-                                                         if k != "console"}
-                else:
-                    cell["metric_notes"]["harness_fold_insns"] = \
-                        f"fold-neutered run non-deterministic {nofold['windows_seen']}"
+        # --- verify build: the hash (its result JSON carries frame_hash) ---
+        rv = sh([sys.executable, str(LVGL_RUNNER), "--verify"], cwd=REPO, deadline=3600)
+        vres = TMP / "lvgl-m4-verify-result.json"
+        if rv.returncode != 0:
+            cell["status"] = "failed"
+            cell["reason"] = f"LVGL verify build rc={rv.returncode}: {(rv.stdout + rv.stderr)[-400:]}"
+            return cell
+        vhash = None
+        if velf.exists():
+            vhash = _console_facts(boot_console(velf)).get("frame_hash")
+        if not vhash and vres.exists():
+            vhash = json.loads(vres.read_text()).get("frame_hash")
+        cell["metrics"]["frame_hash"] = vhash
+        cell["provenance"]["verify"] = {"frame_hash": vhash}
+        if not vhash:
+            cell["status"] = "failed"
+            cell["reason"] = "LVGL verify build produced no frame hash; timing suppressed (#45)"
+            return cell
     finally:
         LVGL_MAIN.write_text(original)
         if keep.exists():

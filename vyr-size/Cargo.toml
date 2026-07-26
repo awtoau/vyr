@@ -29,6 +29,17 @@ image = []
 # fixtures). On hosts this feature runs the SAME workload under a counting
 # allocator and prints the same lines — the cross-ISA hash reference.
 run-qemu = ["dep:linked_list_allocator"]
+# #45: VERIFICATION as a build type, OFF by default. With it, the workload folds
+# every output byte into an FNV-1a hash, reports it, and (host) checks band
+# equivalence and (re-render) determinism — the cross-ISA claim made executable.
+# WITHOUT it (the perf build) NONE of that code is compiled: no FNV constants, no
+# fold call, no hash line, no timed second pass. The perf number therefore cannot
+# contain the benchmark's own hash by construction, not by anyone remembering to
+# keep it out of the window (#44 was procedural and failed three times). The
+# harness builds BOTH per cell — verify to prove correctness, perf to measure —
+# and a failed verify build suppresses the cell's perf number. Additive to
+# run-qemu; composes with every tier and platform.
+verify = ["run-qemu"]
 # F16 (#16): render the run-qemu workload at Quality::Draft (integer no-AA
 # fast path) instead of the default Quality::Exact. `./dev.py qemu-m4 --draft`
 # adds this feature; the M4 binary has no env, so the tier is a build-time
@@ -65,6 +76,17 @@ rig-full = ["rig"]
 # delta is now one frame), so it is consumed by scripts/rig-insns.py, which
 # reads all the deltas. Mean insns/frame from either is the same number.
 rig-perframe = ["rig"]
+# #37: replace the fixture workload with the PAINTER GEOMETRY PROBE — a sweep
+# of synthetic scenes (width, draw count, alpha, curvature) chosen so that
+# draws / 16-px pipeline chunks / painted pixels vary INDEPENDENTLY, each case
+# bracketed by a semihosting bkpt so libinsn prices it exactly. Consumed by
+# scripts/painter-probe.py, which fits cost = a·draws + b·chunks + c·px and so
+# separates per-draw setup, per-chunk pipeline cost (where the u16x16 spill
+# lives) and irreducible per-pixel work. Diagnostic only: it renders no
+# published fixture, gates nothing, and no headline number is ever taken from
+# a build with it enabled. Mutually exclusive with `rig` (both replace the
+# workload; probe wins, and the cfg says so rather than silently mixing).
+probe = []
 # #33: measure the STACK high-water mark of a real run. Paints the unused
 # CCM stack region with a known word at boot (before .bss is zeroed, so no
 # static is touched) and scans it back up after the workload, printing

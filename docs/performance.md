@@ -135,14 +135,23 @@ whole history into [`perf/history.jsonl`](perf/index.html).
 > more than an expensive one — it was 6.1 % of vyr Exact and **36.1 % of vyr
 > Draft, against 54.7 % of LVGL** — and a "total" comparison between a big
 > renderer and a small one is therefore substantially a comparison of two FNV
-> loops. Since **#44** — now on BOTH sides — the fold runs in an *untimed
-> verification pass* that must reproduce the reference hash before any timed
-> pass starts. vyr skips the fold behind a flag in its timed loop; LVGL's
-> `flush_cb` does the same. **Render-only is structural on both sides, with
-> nothing subtracted.** Each harness then runs a SECOND timed pass *with* the
-> fold, so `total` and `fold` are measured in the same cell rather than carried
-> over from another tier, optimisation level or compiler. Every ledger cell
-> still records `fold_provenance`, which now reads `structural` throughout.
+> loops.
+>
+> Since **#45 the perf numbers come from a build with no verification code in
+> it at all.** Verification is a build TYPE, not a field to subtract: a `verify`
+> feature on vyr-size (and `-DVERIFY` on the LVGL harness) folds every band into
+> the hash and proves it; the default (perf) build compiles none of that — no
+> FNV constants, no fold call, no hash line. The perf binary therefore *cannot*
+> contain the benchmark's own hash, by construction rather than by anyone
+> remembering to keep it out of the timed window. The harness builds BOTH per
+> cell — verify to prove the frame bytes (cross-ISA and band equivalence), perf
+> to measure — and a failed verify **suppresses** the cell's perf number.
+>
+> This supersedes #44's mechanism, which kept the fold out of the *window*
+> procedurally (a flag, then a second timed pass) and had failed three times.
+> `render_only` is now the whole timed cost, structurally; `fold` is no longer a
+> renderer metric at all, and every post-#45 ledger cell records
+> `fold_provenance: absent-by-build`.
 
 `insn/px` is **instructions per DELIVERED pixel** (`insns / 129,600`) on every
 row — the normaliser LVGL's row always used (`measurements/lvgl-gap.md` §0.2).
@@ -543,5 +552,5 @@ Notes that will cost time if forgotten:
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |
 | [#31](https://github.com/awtoau/vyr/issues/31)–[#36](https://github.com/awtoau/vyr/issues/36) | **fixed on both sides.** The `insn/px` normaliser mismatch is gone (every row is per *delivered* pixel) and #44 removed the fold from the timed window in vyr AND in the LVGL harness, so every §3 row is render-only by construction — no subtraction, no mixed provenance. Full attribution in [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) |
-| [#44](https://github.com/awtoau/vyr/issues/44) / [#45](https://github.com/awtoau/vyr/issues/45) | verification is a **build type**, not a field to subtract: #44 (closed) moved the fold to an untimed pass in both harnesses and added a second timed pass so `total`/`fold`/`render_only` are all measured per cell; #45 would remove the fold from the perf binary entirely. The ledger already carries `build_type` and `fold_provenance` per cell so the two eras stay comparable — and so a derived value can never be mistaken for a measured one. |
+| [#44](https://github.com/awtoau/vyr/issues/44) / [#45](https://github.com/awtoau/vyr/issues/45) | **both closed.** #44 moved the fold to an untimed pass and added a second timed pass so `total`/`fold`/`render_only` were measured per cell; #45 then removed the fold from the perf binary entirely — a `verify` feature (vyr) / `-DVERIFY` (LVGL), OFF by default, so the perf build compiles no fold at all and the hash comes from a separate verify build the harness runs beside it. `render_only` is now structural; post-#45 cells record `fold_provenance: absent-by-build`. The ledger keeps `build_type` and `fold_provenance` per cell so the eras stay comparable and a derived value can never be mistaken for a measured one. |
 | [#33](https://github.com/awtoau/vyr/issues/33) | **`opt-level` is a permanent matrix DIMENSION, not a settled default.** All four levels are measured and recorded every run — see [`measurements/lvgl-gap.md`](measurements/lvgl-gap.md) §0.3 for the numbers. `release-mcu` ships `"z"` as the value that fits the smallest part the plan contemplates, but that is a **starting point, not a verdict**: the right level is a per-application choice made from the matrix at deployment time, and `--config profile.release-mcu.opt-level=…` reproduces any column in ~12 s. Pixels, heap peak and stack depth are opt-level-invariant across all 24 builds, so the M4 gate holds at every level. |

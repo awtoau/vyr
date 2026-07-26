@@ -53,10 +53,14 @@ import re
 import subprocess
 import sys
 import time
+import pathlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TMP = REPO / "tmp"
+# VYR_PERF_TMP: a per-worker scratch namespace. The output name is derived from
+# a caller-supplied tag that REPEATS across specimens (ph-exact-z-fold), so two
+# parallel replay shards would otherwise write the same file.
+TMP = pathlib.Path(os.environ["VYR_PERF_TMP"]) if os.environ.get("VYR_PERF_TMP") else REPO / "tmp"
 LOG = TMP / "qemu-insn.log"
 
 QEMU_BUILD = Path(os.environ.get("VYR_QEMU_BUILD", "/mnt/2tb/git_debris/qemu-plugins-build"))
@@ -156,13 +160,22 @@ def one_run(elf: Path, plugin: Path, tag: str) -> dict:
     # #44. Every historical ref replayed by perf-harness.py has a single timed
     # pass, and assuming two would either pick an unrelated small delta as
     # "render_only" or trip the shape guard below on every old commit. So the
-    # pass count is DETECTED from the guest's own output, not assumed: post-#44
-    # firmware reports `render_only=` on its timed line (vyr) or
-    # `render_only_cs=` (the LVGL harness). No marker => one pass => the window
-    # is the largest delta and INCLUDES the fold, which is what those refs
-    # actually measured.
+    # pass count is DETECTED from the guest's own output, not assumed.
+    #
+    # A TWO-pass build (the #44 era) reports BOTH a render-only pass and a
+    # with-fold pass, and it says so with a `total=`/`total_cs=` token. The #45
+    # perf build renders render-only in ONE pass and marks it `fold=absent-by-
+    # build`: it still prints `render_only=`, but there is no `total=`, so keying
+    # on `render_only=` alone would wrongly expect two windows and trip the shape
+    # guard. Key on the `total` token, which is present ONLY when a second
+    # (with-fold) pass was actually run. No token => one pass => the largest
+    # delta is the whole timed window.
     ranked = sorted(hits, key=lambda h: int(h[2]), reverse=True)
-    two_pass = ("render_only=" in gout) or ("render_only_cs=" in gout)
+    # The #44 two-pass marker is a space-prefixed ` total=` (vyr) or `total_cs=`
+    # (LVGL). Match those exactly — a bare `total=` also occurs in LVGL's
+    # `lv_mem_total=` line, which has nothing to do with the timed passes and
+    # would falsely trip the two-window path on a #45 single-pass perf build.
+    two_pass = (" total=" in gout) or ("total_cs=" in gout)
 
     if two_pass and len(ranked) > 1:
         # The with-fold pass is necessarily the larger of the two.

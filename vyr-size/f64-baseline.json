@@ -1,0 +1,26 @@
+{
+  "features": "run-qemu",
+  "note": "f64 soft-float runtime helpers linked into the unstripped release-mcu build (#39). A helper NOT in this set is a regression \u2014 soft-f64 on the M4F's single-precision FPU. Deeper hot-path check: scripts/m4-attribute.py.",
+  "helpers": [
+    "___adddf3",
+    "___divdf3",
+    "___muldf3",
+    "__aeabi_d2f",
+    "__aeabi_d2iz",
+    "__aeabi_d2uiz",
+    "__aeabi_dadd",
+    "__aeabi_dcmpeq",
+    "__aeabi_dcmpge",
+    "__aeabi_dcmpgt",
+    "__aeabi_dcmple",
+    "__aeabi_dcmplt",
+    "__aeabi_dcmpun",
+    "__aeabi_ddiv",
+    "__aeabi_dmul",
+    "__aeabi_dsub",
+    "__aeabi_f2d",
+    "__aeabi_i2d",
+    "__aeabi_ui2d",
+    "__aeabi_ul2d"
+  ]
+}

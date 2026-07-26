@@ -48,6 +48,12 @@ extern crate alloc;
 mod m4;
 #[cfg(feature = "run-qemu")]
 mod workload;
+// #37: the painter geometry probe — a sweep of synthetic scenes whose
+// (draws, 16-px chunks, pixels) triple varies independently, so the cost of
+// tiny-skia's SIMD-shaped pipeline can be decomposed instead of guessed.
+// Strictly ADDITIVE to run-qemu and never part of a published fixture number.
+#[cfg(all(feature = "run-qemu", feature = "probe"))]
+mod probe;
 
 /// #28/#30: the STM32F429I-DISC1's own ILI9341 panel — SPI5 command channel,
 /// ST's init sequence, the 240x320 scene. Board-only (it pokes F429
@@ -348,6 +354,39 @@ mod host_runq {
 fn main() {
     let mut emit = |line: &str| println!("{line}");
     let heap = || host_runq::heap_now();
+    // #37: `--dump-probe-scenes <dir>` writes every probe case's IR and
+    // exits. ONE definition of the sweep (src/probe.rs) then prices on both
+    // ISAs: these files feed vyr-cli under callgrind on x86-64, while the
+    // same constants compiled into the M4 build feed plugin qemu. Without
+    // that, "the SIMD shape costs more without SIMD" would compare two
+    // different scenes and prove nothing.
+    #[cfg(feature = "probe")]
+    {
+        let mut args = std::env::args().skip(1);
+        if let Some(flag) = args.next()
+            && flag == "--dump-probe-scenes"
+        {
+            {
+                let dir = args.next().unwrap_or_else(|| {
+                    eprintln!("ERROR [vyr-size] --dump-probe-scenes needs a directory");
+                    std::process::exit(2);
+                });
+                match probe::dump_scenes(std::path::Path::new(&dir)) {
+                    Ok(()) => {
+                        println!(
+                            "INFO  [vyr-size] wrote {} probe scenes to {dir}",
+                            probe::CASES.len()
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("ERROR [vyr-size] probe scene dump failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+    }
     // Heap-allocated on the host (vyr-cli's shape); the M4 leg places it in
     // CCM instead — see workload::BAND_BYTES for why both are honest.
     let mut band_buf = alloc::vec![0u8; workload::BAND_BYTES];
@@ -384,7 +423,14 @@ fn main() {
     // Under `rig` the workload's return value is a CHAIN over many frames,
     // so the single-frame comparison is made against frame 0 explicitly —
     // never against the chain, which would be comparing a run to a frame.
-    #[cfg(feature = "rig")]
+    //
+    // #45: this is VERIFICATION and lives in the verify build ONLY. The perf
+    // build computes no hash (`banded` is a sentinel 0), so band equivalence —
+    // like the cross-ISA hash — is proven by the verify build the harness runs
+    // beside the perf one, never by the build that produces the timing number.
+    #[cfg(not(feature = "verify"))]
+    let _ = banded;
+    #[cfg(all(feature = "rig", feature = "verify"))]
     {
         match workload::rig_frame0_hashes(quality) {
             Ok((banded0, full0)) if banded0 == full0 => {
@@ -406,7 +452,7 @@ fn main() {
             }
         }
     }
-    #[cfg(not(feature = "rig"))]
+    #[cfg(all(not(feature = "rig"), feature = "verify"))]
     match workload::full_frame_hash(quality) {
         Ok(full) if full == banded => {
             println!("INFO  [vyr-size] full-frame fnv1a={full:#018x} == banded (band equivalence)");

@@ -126,6 +126,17 @@ LEDGER_DIR = REPO / "docs" / "perf"
 HISTORY = LEDGER_DIR / "history.jsonl"
 SCHEMA = 3
 
+
+def _suite_fingerprint() -> str:
+    """The #43 suite fingerprint, computed by scripts/perf-suite.py (imported so
+    there is one definition of what the suite is)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "perf_suite", REPO / "scripts" / "perf-suite.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.fingerprint()
+
 SCENE_PX = 480 * 270  # the 480x270 reference scene every M4 number is taken on
 
 # The three flat scalars the retired docs/metrics ledger carried. They are
@@ -315,6 +326,85 @@ def matrix_section(rec: dict) -> dict:
     }
 
 
+def board_history_cells() -> dict:
+    """tmp/board-history.jsonl (scripts/board-history.py) -> {commit: [board cell]}.
+
+    Real F429 silicon, cycles/frame per tier over history (#52). The board's
+    honest metric is DWT_CYCCNT — architectural, so it charts as the same clean
+    trend as the emulated instruction count, but it is what the code ACTUALLY
+    costs on metal, with flash wait states + the ART cache emulation cannot
+    model. `ms_per_frame` is derived per commit from that commit's own sysclk
+    (180 MHz before the df54c00 overclock, 192 after), so it is recorded as a
+    note, not charted — cycles/frame carries the discontinuity-free trend.
+    """
+    p = TMP / "board-history.jsonl"
+    if not p.exists():
+        return {}
+    by_commit: dict = {}
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        tiers = (r.get("board") or {}).get("tiers") or {}
+        cells = []
+        for name, tv in tiers.items():
+            cyc = (tv.get("cycles_per_frame") or {}).get("median") if tv else None
+            if cyc is None:
+                continue
+            ms = tv.get("ms_per_frame")
+            hz = ((tv.get("runs") or [{}])[0].get("sysclk_hz")) or "?"
+            # platform carries the TARGET (#52 acceptance): board-f429 · exact · z
+            # is a distinct series, so a future F769/H750 never collides with it.
+            cells.append({
+                "platform": "board-f429", "firmware": "vyr", "tier": name.lower(),
+                "opt_level": "z", "target": "f429", "profile": "release-mcu",
+                "isa": "ARMv7E-M (STM32F429ZI real silicon)", "word_bits": 32,
+                "float": "hardware f32 only (VFPv4-SP)",
+                "build_type": "board (real F429, DWT_CYCCNT; cycles-only history #52)",
+                "fold_provenance": "n/a — silicon runs no benchmark fold",
+                "status": "measured", "reason": None,
+                "metrics": {k: None for k in METRIC_FIELDS} | {"cycles_per_frame": cyc},
+                "metric_notes": {
+                    "insns_per_frame_render_only": "no instruction counter on silicon; "
+                    "DWT_CYCCNT counts real CPU cycles",
+                    "cycles_per_frame": f"{ms} ms/frame at this commit's {hz} Hz "
+                    "(cycles are clock-independent; ms is not, so cycles carry the trend)",
+                },
+            })
+        if cells:
+            by_commit[r["commit"]] = cells
+            for cov in r.get("covers", []):
+                by_commit.setdefault(cov, cells)
+    return by_commit
+
+
+def inject_board_cells(rows: list[dict]) -> int:
+    """Append the real-silicon board cells to each matrix row whose commit
+    matches a board-history record. Returns the number of rows touched."""
+    board = board_history_cells()
+    if not board:
+        return 0
+    touched = 0
+    for r in rows:
+        if not r.get("matrix"):
+            continue
+        cells = board.get(r.get("commit")) or board.get(r.get("commit_full", "")[:7])
+        if not cells:
+            continue
+        # never double-inject on a re-run of the rebuild
+        existing = r["matrix"]["cells"]
+        if any(str(c.get("platform", "")).startswith("board") for c in existing):
+            continue
+        existing.extend(cells)
+        pa = r["matrix"].get("platforms_available")
+        if isinstance(pa, dict):
+            pa.setdefault("board", "real F429 silicon (board-history.py #52)")
+        elif isinstance(pa, list) and "board" not in pa:
+            pa.append("board")
+        touched += 1
+    return touched
+
+
 def sec_matrix() -> dict | None:
     p = TMP / "perf-harness-HEAD.json"
     d = _read(p)
@@ -408,6 +498,26 @@ def derived(row: dict) -> dict:
         out["render_only_insn_px"] = ratio
     if foldshare:
         out["harness_fold_share"] = foldshare
+
+    # vs LVGL — the ratio the whole "why are we so slow" question is about. LVGL
+    # is a FIXED anchor (the same value every row, tracking upstream not the vyr
+    # commit), so on a self-indexed chart its own line is flat and says nothing;
+    # the RATIO moves as vyr optimises and IS the comparison. render-only on both
+    # sides (#44/#45), so it is renderer against renderer.
+    lvgl_ro = None
+    for c in (row.get("matrix") or {}).get("cells", []):
+        if c.get("firmware") == "lvgl" and c.get("status") == "measured":
+            lvgl_ro = c["metrics"].get("insns_per_frame_render_only")
+            break
+    if lvgl_ro:
+        vs = {}
+        for tier in ("exact", "fast", "draft"):
+            c = m4_cell(row, tier)
+            ro = c["metrics"].get("insns_per_frame_render_only") if c else None
+            if ro:
+                vs[tier] = round(ro / lvgl_ro, 2)
+        if vs:
+            out["render_only_vs_lvgl"] = vs
     return out
 
 
@@ -444,7 +554,36 @@ def build_row() -> dict:
     return row
 
 
+def _ledger_suite_fingerprint() -> str | None:
+    if not HISTORY.exists():
+        return None
+    for ln in HISTORY.read_text().splitlines():
+        if not ln.strip():
+            continue
+        r = json.loads(ln)
+        if r.get("kind") == "schema-note":
+            return r.get("suite_fingerprint")
+    return None
+
+
 def append_row() -> dict | None:
+    # #43: appending is only valid within ONE suite. If the tests changed WHAT
+    # is measured since this ledger was built, a new row would silently mix eras
+    # — refuse it and force a reprocess (the rebuild IS the migration).
+    led = _ledger_suite_fingerprint()
+    if led is not None:
+        try:
+            cur = _suite_fingerprint()
+        except Exception as e:
+            log(f"WARN: cannot compute the suite fingerprint ({e}); appending anyway")
+            cur = led
+        if cur != led:
+            log("ERROR: the perf SUITE changed since this ledger was built "
+                f"(ledger {led} != current {cur}). Appending would mix two "
+                "definitions of what is measured. REPROCESS the whole ledger "
+                "instead:\n    python3 scripts/perf-replay.py  &&  "
+                "python3 scripts/ledger.py --rebuild-from-replay tmp/perf-replay.jsonl")
+            return None
     row = build_row()
     sections = [k for k in row if k not in ("schema", "ts", "commit", "dirty", "host", "cpu", "arch")]
     if not sections:
@@ -588,14 +727,26 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
     # previous schema, precisely so it can delete what that schema got wrong.
     old = [json.loads(ln) for ln in HISTORY.read_text().splitlines() if ln.strip()] \
         if HISTORY.exists() else []
+    # The replay is the ONLY authority. Old-instrument (schema-2) rows are NOT
+    # carried forward: they were measured with tooling the four measurement
+    # errors discredited, some with a dirty worktree, and — having no `matrix` —
+    # they punch a vertical GAP through every instruction series at their run
+    # (a commit with no matrix data is a hole in every matrix line). A
+    # current-schema non-matrix row (a future board-silicon row measured with
+    # today's tools) would still be kept; there are none today.
     kept = []
+    dropped = 0
     for r in old:
         if r.get("kind") in ("schema-note", "skip"):
             continue
         if r.get("schema") == SCHEMA and r.get("matrix"):
             continue  # a matrix row is a replay product; the replay is authoritative
-        kept.append(migrate_schema2_row(r) if r.get("schema") != SCHEMA else r)
-    log(f"preserved {len(kept)} host-measured row(s) from the previous ledger")
+        if r.get("schema") != SCHEMA or r.get("migrated_from"):
+            dropped += 1  # old-instrument leftover — regenerate, do not preserve
+            continue
+        kept.append(r)
+    log(f"kept {len(kept)} current-instrument non-matrix row(s); "
+        f"dropped {dropped} old-instrument row(s) (regenerate, never preserve)")
 
     rows, skips = [], []
     for ln in replay_path.read_text().splitlines():
@@ -616,6 +767,13 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
         rows.append(replay_row(rec))
     log(f"{len(rows)} replayed matrix row(s), {len(skips)} recorded skip(s)")
 
+    # #52: fold the real-silicon board history (cycles/frame per tier) into the
+    # matching matrix rows, so `board·<tier>·cycles_per_frame` is a series
+    # alongside the emulated instruction counts.
+    touched = inject_board_cells(rows)
+    if touched:
+        log(f"injected real-silicon board cells into {touched} matrix row(s)")
+
     allrows = kept + rows
     allrows.sort(key=lambda r: (_commit_order(r.get("commit_full") or r["commit"]),
                                 r.get("ts", "")))
@@ -623,6 +781,15 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
     note["written"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     note["rows"] = {"preserved_host_rows": len(kept), "replayed_matrix_rows": len(rows),
                     "recorded_skips": len(skips)}
+    # #43: stamp the suite fingerprint this whole reprocess was built under. The
+    # ledger is single-suite by construction (a full reprocess, never an append
+    # that mixes eras); `./dev.py track` refuses to append when the current
+    # suite no longer matches this stamp, forcing a reprocess instead.
+    try:
+        note["suite_fingerprint"] = _suite_fingerprint()
+    except Exception as e:  # never let a fingerprint hiccup block a rebuild
+        note["suite_fingerprint"] = None
+        log(f"WARN: suite fingerprint unavailable ({e})")
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
     with open(HISTORY, "w", encoding="utf-8") as f:
         f.write(json.dumps(note, separators=(",", ":")) + "\n")
@@ -1004,8 +1171,22 @@ RUN_COLS = [
 # Deliberately NOT here: verdicts. The chart plots recorded values. It does not
 # decide whether a rise is bad.
 
-CHART_METRICS = tuple(k for k in METRIC_FIELDS if k != "frame_hash")
-CHART_PROV = ("fold_share_of_total", "fastpath_coverage_pct")
+# The chart is for CODE performance change. The hash FOLD is the benchmark's own
+# verification overhead — a fixed cost of the measurement apparatus, not of the
+# renderer — so `harness_fold_insns` and every fold-share ratio are NOT plotted:
+# they are noise on a performance-trend view (and, being fixed while render
+# shrinks, they were the 400-580 outliers that flattened everything else). They
+# remain in full in the tables below, for audit. `insns_per_frame_total` (render
+# + fold) is likewise excluded — `render_only` is the clean signal; total is kept
+# in the tables so the with-fold history stays visible.
+CHART_METRICS = tuple(
+    k for k in METRIC_FIELDS
+    if k not in ("frame_hash", "harness_fold_insns", "insns_per_frame_total")
+)
+CHART_PROV = ("fastpath_coverage_pct",)
+# Derived series whose name matches any of these are tooling overhead, not a
+# renderer quantity, and are kept out of the chart (they stay in the tables).
+CHART_EXCLUDE_SUBSTR = ("fold_share", "harness_fold", "fold_insns")
 
 # The figures this project is actually steered by, at the shipped opt-level.
 # These three get the first three categorical slots of the palette; EVERY OTHER
@@ -1063,6 +1244,10 @@ def chart_data(allrows: list[dict]) -> dict:
             if key in IDENT_KEYS or key == "matrix":
                 continue
             for path, v in _flatten(val, key):
+                # Fold-overhead derived series (e.g. derived.harness_fold_share.*)
+                # are the benchmark's own cost, not the renderer's — tables only.
+                if any(s in path for s in CHART_EXCLUDE_SUBSTR):
+                    continue
                 if _numeric(v):
                     put(path, i, v)
 
@@ -1221,6 +1406,43 @@ PAGE_CSS_BODY = """
     font-size:12.5px;color:var(--ink-soft)}
   .legendrow .li{display:inline-flex;gap:7px;align-items:center}
   .legendrow .li-flat .lk{height:1px}
+  /* #chart-grid: the per-series show/hide grid below the chart. A dense,
+     scrollable list of one-line toggles — outliers first — that drive
+     u.setSeries(). Styled with the same tokens as the tables so it reads as
+     part of the same page. */
+  .tbar-grid{margin-top:14px}
+  /* #chart-grid: series grouped by WHAT THEY MEASURE. Each group is a card with
+     a header toggle (show/hide the whole group) and a collapsible list of the
+     individual tier/opt-level lines inside it. */
+  .seriesgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+    gap:10px;align-items:start}
+  .sgroup{border:1px solid var(--line);border-radius:8px;background:var(--surface);
+    overflow:hidden}
+  .sgroup .sgh{display:flex;gap:8px;align-items:center;padding:8px 10px;cursor:pointer;
+    font-size:13px;font-weight:600;color:var(--ink);user-select:none}
+  .sgroup .sgh:hover{background:var(--line)}
+  .sgroup .sgh input{margin:0;flex:none;cursor:pointer}
+  .sgroup .sgh .sgh-name{flex:1 1 auto;min-width:0}
+  .sgroup .sgh .sgh-desc{font-weight:400;color:var(--ink-mut);font-size:11.5px}
+  .sgroup .sgh .sgh-n{flex:none;color:var(--ink-mut);font-size:11px;
+    font-variant-numeric:tabular-nums}
+  .sgroup .sgh .sgh-caret{flex:none;color:var(--ink-mut);transition:transform .12s;
+    font-size:10px}
+  .sgroup[data-open="1"] .sgh-caret{transform:rotate(90deg)}
+  .sgroup .sgbody{display:none;padding:2px 6px 6px;border-top:1px solid var(--line);
+    max-height:220px;overflow:auto}
+  .sgroup[data-open="1"] .sgbody{display:block}
+  .sgroup .sg{display:flex;gap:8px;align-items:center;padding:3px 4px;
+    font-size:12px;line-height:1.3;cursor:pointer;border-radius:5px;min-width:0}
+  .sgroup .sg:hover{background:var(--line)}
+  .sgroup .sg input{margin:0;flex:none;cursor:pointer}
+  .sgroup .sg .lk{flex:none}
+  .sgroup .sg .sgk{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-soft);flex:1 1 auto}
+  .sgroup .sg .sgr{flex:none;color:var(--ink-mut);font-size:11px;
+    font-variant-numeric:tabular-nums}
+  .sgroup .sg[data-off="1"]{opacity:.4}
+  .sgroup .sg[data-off="1"] .sgk{text-decoration:line-through}
   .charttip{position:absolute;pointer-events:none;z-index:5;max-width:min(360px,72vw);
     background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);
     border-radius:8px;box-shadow:var(--shadow);padding:7px 10px;font-size:12.5px;
@@ -1455,6 +1677,122 @@ TABLE_JS = r"""
     return;
   }
   D.tables.forEach(build);
+})();
+"""
+
+
+VSLVGL_JS = r"""
+(function(){
+  var host = document.getElementById('t-vslvgl');
+  if (!host) { return; }
+  var D = JSON.parse(document.getElementById('ledger-data').textContent);
+  var V = D.vslvgl;
+  function dead(m){ host.textContent = m; host.setAttribute('data-dead','1'); }
+  if (!V || !V.runs || V.runs.length < 2 || typeof uPlot === 'undefined') {
+    dead('The vyr-vs-LVGL ratio needs the LVGL anchor and two runs; see the '
+       + 'tables (derived.render_only_vs_lvgl).'); return;
+  }
+  var RUNS = V.runs, N = RUNS.length;
+  var TOK = ['--s1','--s2','--s3','--line','--line-strong','--ink','--ink-soft',
+             '--ink-mut','--surface'];
+  var PAL = {};
+  function pal(){ var cs = getComputedStyle(host); TOK.forEach(function(t){ PAL[t]=cs.getPropertyValue(t).trim(); }); }
+  pal();
+
+  /* x = run index; one flat LVGL baseline at 1x, then the three tier multiples. */
+  var xs = []; for (var i=0;i<N;i++){ xs.push(i); }
+  var base = xs.map(function(){ return 1; });
+  var data = [xs, base, V.exact, V.fast, V.draft];
+  /* label, colour token, whether it is the flat LVGL reference */
+  var SER = [
+    {n:'LVGL', c:'--ink-mut', ref:true},
+    {n:'Exact', c:'--s1'},
+    {n:'Fast', c:'--s2'},
+    {n:'Draft', c:'--s3'}
+  ];
+  function num(v,d){ return v==null?'':v.toLocaleString('en-AU',{maximumFractionDigits:d==null?2:d}); }
+  function font(px){ return px+'px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif'; }
+
+  var tip = document.createElement('div'); tip.className='charttip';
+  var tv=document.createElement('div'); tv.className='tv';
+  var tk=document.createElement('div'); tk.className='tk';
+  var tm=document.createElement('div'); tm.className='tm';
+  tip.appendChild(tv); tip.appendChild(tk); tip.appendChild(tm);
+  var focused=null;
+  function hideTip(){ tip.setAttribute('data-on','0'); }
+  function showTip(u){
+    var si=focused, idx=u.cursor.idx;
+    if(si==null||si<1||idx==null){ hideTip(); return; }
+    var val=u.data[si][idx]; if(val==null){ hideTip(); return; }
+    tv.textContent = num(val)+'× LVGL';
+    tk.textContent = SER[si-1].n;
+    var r=RUNS[idx]; tm.textContent = (r?r.c:'')+(r&&r.s?' — '+r.s:'');
+    var L=u.valToPos(idx,'x'), T=u.valToPos(val,'y'), w=200;
+    var lft=L+14; if(lft+w>u.bbox.width/uPlot.pxRatio) lft=L-w-14;
+    tip.style.transform='translate('+lft+'px,'+(T-10)+'px)'; tip.setAttribute('data-on','1');
+  }
+
+  /* direct end labels: the final multiple for each tier, so the colours never
+     have to carry identity. */
+  function ends(u){
+    var ctx=u.ctx, pr=uPlot.pxRatio, out=[];
+    for(var si=1; si<data.length; si++){
+      var ys=u.data[si], last=-1;
+      for(var j=N-1;j>=0;j--){ if(ys[j]!=null){ last=j; break; } }
+      if(last<0) continue;
+      out.push({si:si, x:u.valToPos(last,'x',true), y:u.valToPos(ys[last],'y',true),
+                t: SER[si-1].n+' '+num(ys[last],1)+'×'});
+    }
+    out.sort(function(a,b){ return a.y-b.y; });
+    var gap=15*pr, prev=-1e9;
+    ctx.save(); ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.font='600 '+font(11.5*pr); ctx.lineJoin='round';
+    out.forEach(function(e){
+      var ty=Math.max(e.y, prev+gap); prev=ty;
+      ctx.beginPath(); ctx.arc(e.x,e.y,3.5*pr,0,6.2832); ctx.fillStyle=PAL[SER[e.si-1].c]; ctx.fill();
+      ctx.lineWidth=4*pr; ctx.strokeStyle=PAL['--surface']; ctx.strokeText(e.t,e.x+8*pr,ty);
+      ctx.fillStyle=PAL['--ink-soft']; ctx.fillText(e.t,e.x+8*pr,ty);
+    });
+    ctx.restore();
+  }
+
+  var series=[{}].concat(SER.map(function(s,n){
+    var si=n+1;
+    return { label:s.n, stroke:function(){ return PAL[s.c]; },
+             width: s.ref?1:2, dash: s.ref?[4,4]:[],
+             points:{show:false} };
+  }));
+  var opts={
+    width: Math.max(320, host.clientWidth||900), height: 340,
+    padding:[14,86,0,6], legend:{show:false}, focus:{alpha:.15},
+    cursor:{x:true,y:false,points:{show:false},focus:{prox:30}},
+    scales:{x:{time:false}, y:{range:function(u,mn,mx){ return [0, Math.ceil(mx*1.05)]; }}},
+    axes:[
+      {stroke:function(){return PAL['--ink-mut'];}, font:font(11),
+       grid:{show:true,stroke:function(){return PAL['--line'];},width:1},
+       ticks:{show:true,stroke:function(){return PAL['--line'];},width:1,size:4},
+       rotate:-45, size:70,
+       values:function(u,sp){ return sp.map(function(v){ var r=RUNS[v]; return r?r.c:''; }); },
+       label:'run — in commit order', labelFont:font(11.5), labelSize:22},
+      {stroke:function(){return PAL['--ink-mut'];}, font:font(11),
+       grid:{show:true,stroke:function(){return PAL['--line'];},width:1}, size:52,
+       values:function(u,sp){ return sp.map(function(v){ return v+'×'; }); },
+       label:'× vs LVGL (render-only)', labelFont:font(11.5), labelSize:20}
+    ],
+    series:series,
+    hooks:{
+      init:[function(u){ u.over.appendChild(tip); }],
+      draw:[ends],
+      setSeries:[function(u,si){ focused=si; showTip(u); }],
+      setCursor:[function(u){ showTip(u); }]
+    }
+  };
+  var u=new uPlot(opts, data, host);
+  host.addEventListener('mouseleave', hideTip);
+  if(window.ResizeObserver){ new ResizeObserver(function(){ var w=Math.max(320,host.clientWidth); if(w!==u.width) u.setSize({width:w,height:u.height}); }).observe(host); }
+  function repaint(){ pal(); u.redraw(false,true); }
+  new MutationObserver(repaint).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+  if(window.matchMedia){ var mq=window.matchMedia('(prefers-color-scheme: dark)'); (mq.addEventListener?mq.addEventListener.bind(mq,'change'):mq.addListener.bind(mq))(repaint); }
 })();
 """
 
@@ -1749,6 +2087,198 @@ CHART_JS = r"""
       u.setData(data, true);
     });
   }
+
+  /* --- the grouped show/hide grid ----------------------------------------- */
+  /* The series are 7 KINDS of measurement repeated across tier x opt-level, so
+     they group cleanly by WHAT THEY MEASURE — one unit and one meaning each. A
+     group header toggles every line in the group at once (that is what rescales
+     the plot, since uPlot's y auto-range ignores hidden series); the group can
+     be expanded to reach the individual tier/opt-level lines. */
+  (function(){
+    var grid = document.getElementById('t-chart-grid');
+    if (!grid) { return; }
+
+    /* Ordered category table: [test, id, name, one-line description]. First
+       match wins, so put specific patterns before general ones. */
+    var CATS = [
+      [function(k){ return /insns_per_frame_render_only/.test(k); },
+       'insns', 'Instructions / frame', 'CPU work per frame, render only (emulated M4)'],
+      [function(k){ return /cycles_per_frame/.test(k); },
+       'cycles', 'Cycles / frame (real silicon)', 'DWT_CYCCNT on the actual F429 — real hardware cost'],
+      [function(k){ return /render_only_vs_lvgl/.test(k); },
+       'vslvgl', 'vs LVGL (× instructions)', 'each vyr tier / the LVGL anchor — the comparison that moves as vyr optimises'],
+      [function(k){ return /render_only_insn_px/.test(k); },
+       'insnpx', 'Instructions / pixel', 'the same, divided by 129,600 delivered pixels'],
+      [function(k){ return /heap_peak_b/.test(k); },
+       'heap', 'Heap peak (RAM)', 'high-water mark of the allocator, bytes'],
+      [function(k){ return /flash_text_data_b/.test(k); },
+       'flash', 'Flash (code size)', 'linked .text + .rodata, bytes'],
+      [function(k){ return /stack_high_water_b/.test(k); },
+       'stack', 'Stack high-water', 'deepest stack use measured, bytes'],
+      [function(k){ return /ns_per_frame|ns_per_px/.test(k); },
+       'nstime', 'Host time (x86-64)', 'wall time per frame / per pixel on the host'],
+      [function(k){ return /fastpath_coverage_pct/.test(k); },
+       'cov', 'Fast-path coverage', '% of pixels drawn by the integer no-AA path'],
+      [function(k){ return true; },
+       'other', 'Other', 'everything not otherwise categorised'],
+    ];
+    function catOf(key){
+      for (var i = 0; i < CATS.length; i++) { if (CATS[i][0](key)) { return CATS[i]; } }
+      return CATS[CATS.length - 1];
+    }
+
+    function mkMark(si){
+      var m = document.createElement('span');
+      m.className = 'lk';
+      m.style.setProperty('--k', colorOf(si));
+      if (META[si].flat) { m.style.height = '1px'; }
+      return m;
+    }
+
+    /* Collect the plotted series into groups, preserving CATS order. */
+    var groups = {};                       // id -> {cat, rows:[]}
+    CATS.forEach(function(c){ groups[c[1]] = {cat: c, rows: []}; });
+    for (var si = 1; si < META.length; si++) {
+      var ys = u.data[si], lo = Infinity, hi = -Infinity, seen = false;
+      for (var j = 0; j < N; j++) {
+        var v = ys[j];
+        if (v == null) { continue; }
+        seen = true;
+        if (v < lo) { lo = v; } if (v > hi) { hi = v; }
+      }
+      if (!seen) { continue; }
+      var c = catOf(META[si].key);
+      groups[c[1]].rows.push({si: si, key: META[si].key, lo: lo, hi: hi});
+    }
+
+    var allRows = [];   // flat list for search + counts
+    var count = document.getElementById('t-chart-gcount');
+    function updateCount(){
+      var on = 0;
+      allRows.forEach(function(r){ if (r.cb.checked) { on++; } });
+      if (count) { count.textContent = on + ' of ' + allRows.length + ' lines shown'; }
+    }
+
+    function setRow(r, show, batch){
+      if (r.cb.checked !== show) {
+        r.cb.checked = show;
+        r.el.setAttribute('data-off', show ? '0' : '1');
+        u.setSeries(r.si, {show: show}, false);
+      }
+      if (!batch) { u.redraw(); updateCount(); }
+    }
+
+    CATS.forEach(function(cat){
+      var g = groups[cat[1]];
+      if (!g.rows.length) { return; }
+      g.rows.sort(function(a, b){ return a.key < b.key ? -1 : 1; });
+
+      var card = document.createElement('div');
+      card.className = 'sgroup';
+      card.setAttribute('data-open', '0');
+
+      var head = document.createElement('div');
+      head.className = 'sgh';
+      var gcb = document.createElement('input');
+      gcb.type = 'checkbox'; gcb.checked = true;
+      var caret = document.createElement('span');
+      caret.className = 'sgh-caret'; caret.textContent = '▶';
+      var name = document.createElement('span');
+      name.className = 'sgh-name';
+      name.innerHTML = '';
+      name.appendChild(document.createTextNode(cat[2] + ' '));
+      var desc = document.createElement('span');
+      desc.className = 'sgh-desc'; desc.textContent = '— ' + cat[3];
+      name.appendChild(desc);
+      var n = document.createElement('span');
+      n.className = 'sgh-n'; n.textContent = g.rows.length;
+      head.appendChild(gcb); head.appendChild(caret);
+      head.appendChild(name); head.appendChild(n);
+      card.appendChild(head);
+
+      var body = document.createElement('div');
+      body.className = 'sgbody';
+      card.appendChild(body);
+      grid.appendChild(card);
+
+      /* header: the checkbox toggles the group; a click elsewhere expands it */
+      gcb.addEventListener('click', function(e){ e.stopPropagation(); });
+      gcb.addEventListener('change', function(){
+        g.rows.forEach(function(r){ setRow(r, gcb.checked, true); });
+        u.redraw(); updateCount();
+      });
+      head.addEventListener('click', function(){
+        card.setAttribute('data-open', card.getAttribute('data-open') === '1' ? '0' : '1');
+      });
+
+      function refreshGroupBox(){
+        var on = 0;
+        g.rows.forEach(function(r){ if (r.cb.checked) { on++; } });
+        gcb.checked = on > 0;
+        gcb.indeterminate = on > 0 && on < g.rows.length;
+      }
+
+      g.rows.forEach(function(r){
+        var lab = document.createElement('label');
+        lab.className = 'sg'; lab.setAttribute('data-off', '0');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        var key = document.createElement('span');
+        key.className = 'sgk';
+        /* drop the metric suffix in the row label — the group already names it */
+        key.textContent = r.key.replace(/ · [a-z_]+$/, '').replace(/^derived\./, '');
+        key.title = r.key;
+        var rng = document.createElement('span');
+        rng.className = 'sgr'; rng.textContent = Math.round(r.lo) + '–' + Math.round(r.hi);
+        lab.appendChild(cb); lab.appendChild(mkMark(r.si));
+        lab.appendChild(key); lab.appendChild(rng);
+        body.appendChild(lab);
+        r.el = lab; r.cb = cb; allRows.push(r);
+        cb.addEventListener('change', function(){
+          /* the browser has already flipped cb.checked, so apply it directly —
+             routing through setRow (which diffs against cb.checked) would be a
+             no-op here. setRow is for the programmatic group/all paths. */
+          r.el.setAttribute('data-off', cb.checked ? '0' : '1');
+          u.setSeries(r.si, {show: cb.checked});
+          updateCount();
+          refreshGroupBox();
+        });
+      });
+      g.refreshBox = refreshGroupBox;
+    });
+
+    function setAll(show){
+      allRows.forEach(function(r){ setRow(r, show, true); });
+      u.redraw();
+      CATS.forEach(function(c){ if (groups[c[1]].refreshBox) { groups[c[1]].refreshBox(); } });
+      updateCount();
+    }
+    var bAll = document.getElementById('t-chart-gall');
+    var bNone = document.getElementById('t-chart-gnone');
+    if (bAll) { bAll.addEventListener('click', function(){ setAll(true); }); }
+    if (bNone) { bNone.addEventListener('click', function(){ setAll(false); }); }
+
+    var gsearch = document.getElementById('t-chart-gsearch');
+    if (gsearch) {
+      gsearch.addEventListener('input', function(){
+        var q = gsearch.value.toLowerCase();
+        /* filter the individual rows, and open any group with a match */
+        CATS.forEach(function(cat){
+          var g = groups[cat[1]]; if (!g.rows.length) { return; }
+          var any = false;
+          g.rows.forEach(function(r){
+            var hit = !q || r.key.toLowerCase().indexOf(q) >= 0;
+            r.el.style.display = hit ? '' : 'none';
+            any = any || hit;
+          });
+          var card = g.rows[0].el.closest('.sgroup');
+          card.style.display = any ? '' : 'none';
+          if (q && any) { card.setAttribute('data-open', '1'); }
+        });
+      });
+    }
+    updateCount();
+  })();
 })();
 """
 
@@ -1775,6 +2305,46 @@ def _table_block(tid: str, heading: str, sub: str) -> str:
             f'Numeric columns sort numerically. Drag a header to reorder, and use its '
             f'⋮ menu to hide columns. A dotted-underlined value carries the reason '
             f'the ledger recorded for it — hover to read it.</p></section>')
+
+
+def vslvgl_data(allrows: list[dict]) -> dict:
+    """The ABSOLUTE vyr-vs-LVGL multiple per run — not indexed. LVGL is the 1x
+    baseline; each vyr tier is its render-only / LVGL's. This is the comparison
+    itself, on its own dimensionless axis (a multiple), so it reads directly
+    ('Exact is 15x LVGL, closing') without the double-normalisation that made the
+    indexed ratio look like it hit zero."""
+    runs, ex, fa, dr = [], [], [], []
+    for r in allrows:
+        if r.get("kind", "measurement") != "measurement":
+            continue
+        d = (r.get("derived") or {}).get("render_only_vs_lvgl")
+        if not d:
+            continue
+        runs.append({"c": r.get("commit", "?"), "s": (r.get("subject") or "")[:60]})
+        ex.append(d.get("exact"))
+        fa.append(d.get("fast"))
+        dr.append(d.get("draft"))
+    return {"runs": runs, "exact": ex, "fast": fa, "draft": dr}
+
+
+def _vslvgl_block() -> str:
+    return (
+        '<section class="chunk"><h2>vyr vs LVGL — instructions per frame, '
+        '&times; the LVGL anchor</h2>'
+        '<p class="lede">The comparison the project exists to answer, on its own '
+        'axis — a <b>multiple</b>, not an index. <b>LVGL is the 1&times; baseline</b> '
+        '(the flat line); each vyr tier sits above it at its actual multiple and '
+        'descends toward it as vyr is optimised. Render-only on both sides '
+        '(#44/#45), so it is renderer against renderer. 1&times; would mean '
+        '“as cheap as LVGL”; below 1&times; would mean cheaper.</p>'
+        '<div class="chartcard"><div id="t-vslvgl"></div></div>'
+        '<p class="hint">Hover a line for the exact multiple at that commit. The '
+        'same numbers are in the tables below under '
+        '<code>derived.render_only_vs_lvgl</code>. This chart shows the ABSOLUTE '
+        'ratio; the big chart below indexes every series to its own first '
+        'observation, which is right for a trend but double-normalises a ratio '
+        '(a falling line there means the gap shrank, not that vyr passed LVGL).'
+        '</p></section>')
 
 
 def _chart_block(chart: dict) -> str:
@@ -1835,7 +2405,25 @@ def _chart_block(chart: dict) -> str:
         'observation with no neighbour is drawn as a single point. Series that '
         'never moved sit exactly on the 100 rule; they are drawn faintly because '
         'stability is evidence but it should not drown the lines that moved. Every '
-        'value plotted here is also a row in the tables below.</p></section>')
+        'value plotted here is also a row in the tables below.</p>'
+        # #chart-grid: one row per plotted series, each a show/hide toggle for the
+        # chart. The y-axis auto-rescales to the SHOWN series, so hiding the few
+        # outliers that dominate the range lets the rest resolve. The grid is
+        # sorted by how far each series travels from 100, so the outliers are at
+        # the top where they are easy to switch off.
+        '<div class="tbar tbar-grid">'
+        '<input id="t-chart-gsearch" type="search" placeholder="filter series…" '
+        'aria-label="filter chart series">'
+        '<button id="t-chart-gall" type="button">Show all</button>'
+        '<button id="t-chart-gnone" type="button">Hide all</button>'
+        '<span class="count" id="t-chart-gcount"></span></div>'
+        '<div class="seriesgrid" id="t-chart-grid" role="group" '
+        'aria-label="show or hide chart series by group"></div>'
+        '<p class="hint">The series are grouped by <b>what they measure</b> — one '
+        'unit and one meaning per group. Tick a <b>group</b> to show or hide all '
+        'of its lines at once (that is what rescales the chart); expand a group '
+        'to reach the individual tier / opt-level lines inside it. This changes '
+        'only the chart; the tables below always hold every value.</p></section>')
 
 
 def page_html(history: list[dict]) -> str:
@@ -1851,6 +2439,7 @@ def page_html(history: list[dict]) -> str:
     payload = {
         "notes": notes.list,
         "chart": chart,
+        "vslvgl": vslvgl_data(allrows),
         "tables": [
             {"id": "t-cells", "cols": MATRIX_COLS, "rows": mrows, "height": "640px"},
             {"id": "t-values", "cols": OTHER_COLS, "rows": orows, "height": "560px"},
@@ -1914,6 +2503,8 @@ latest <code>{_esc(latest['commit'])}</code> {_esc(latest.get('subject', ''))} �
 how each number is produced:
 <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 
+{_vslvgl_block()}
+
 {_chart_block(chart)}
 
 {_table_block("t-cells", "Matrix cells",
@@ -1948,6 +2539,7 @@ fetches nothing when it is opened.</p>
 <script src="vendor/{UPLOT_JS}"></script>
 <script id="ledger-data" type="application/json">{blob}</script>
 <script>{TABLE_JS}</script>
+<script>{VSLVGL_JS}</script>
 <script>{CHART_JS}</script>
 <script>{THEME_JS}</script>
 </body>

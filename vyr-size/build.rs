@@ -22,6 +22,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=VYR_MADCTL");
     println!("cargo:rerun-if-env-changed=VYR_RB_SWAP");
     println!("cargo:rerun-if-env-changed=VYR_SPI_BR");
+    // #37: the band-height sweep (`src/workload.rs` BAND_H). A stale binary
+    // here would report a band size it did not render at.
+    println!("cargo:rerun-if-env-changed=VYR_BAND_H");
     // TARGET is the triple cargo is building FOR (host builds see the host
     // triple here): gate every link arg on the MCU target.
     let target = std::env::var("TARGET").unwrap_or_default();
