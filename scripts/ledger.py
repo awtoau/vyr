@@ -498,6 +498,26 @@ def derived(row: dict) -> dict:
         out["render_only_insn_px"] = ratio
     if foldshare:
         out["harness_fold_share"] = foldshare
+
+    # vs LVGL — the ratio the whole "why are we so slow" question is about. LVGL
+    # is a FIXED anchor (the same value every row, tracking upstream not the vyr
+    # commit), so on a self-indexed chart its own line is flat and says nothing;
+    # the RATIO moves as vyr optimises and IS the comparison. render-only on both
+    # sides (#44/#45), so it is renderer against renderer.
+    lvgl_ro = None
+    for c in (row.get("matrix") or {}).get("cells", []):
+        if c.get("firmware") == "lvgl" and c.get("status") == "measured":
+            lvgl_ro = c["metrics"].get("insns_per_frame_render_only")
+            break
+    if lvgl_ro:
+        vs = {}
+        for tier in ("exact", "fast", "draft"):
+            c = m4_cell(row, tier)
+            ro = c["metrics"].get("insns_per_frame_render_only") if c else None
+            if ro:
+                vs[tier] = round(ro / lvgl_ro, 2)
+        if vs:
+            out["render_only_vs_lvgl"] = vs
     return out
 
 
@@ -1969,6 +1989,8 @@ CHART_JS = r"""
        'insns', 'Instructions / frame', 'CPU work per frame, render only (emulated M4)'],
       [function(k){ return /cycles_per_frame/.test(k); },
        'cycles', 'Cycles / frame (real silicon)', 'DWT_CYCCNT on the actual F429 — real hardware cost'],
+      [function(k){ return /render_only_vs_lvgl/.test(k); },
+       'vslvgl', 'vs LVGL (× instructions)', 'each vyr tier / the LVGL anchor — the comparison that moves as vyr optimises'],
       [function(k){ return /render_only_insn_px/.test(k); },
        'insnpx', 'Instructions / pixel', 'the same, divided by 129,600 delivered pixels'],
       [function(k){ return /heap_peak_b/.test(k); },
