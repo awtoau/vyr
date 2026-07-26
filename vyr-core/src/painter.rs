@@ -1233,6 +1233,74 @@ impl TinySkiaCanvas {
         true
     }
 
+    /// #37 pixmap-direct flat fast path for Exact (feature `exact-flat-fast`):
+    /// a radius-0 axis-aligned rect written as an integer `d255` premul
+    /// source-over straight into the EXISTING pixmap, skipping tiny-skia's
+    /// u16x16 pipeline. Byte-identical to Exact's tiny-skia fill — the dst is
+    /// opaque (the backdrop fills it first), so this is the same `d255` blend
+    /// `tests/blend_golden.rs` proved == tiny-skia, and the demul-at-finish
+    /// inverts the alpha-255 store. ZERO extra heap: reuses the pixmap Exact
+    /// already allocates (no rgb surface — unlike the rejected Fast-model
+    /// experiment that OOM'd the arena). Returns `false` (→ tiny-skia) only on
+    /// a rounded-clip overlap (`ClipFate::Masked`), keeping the clip exact.
+    #[cfg(feature = "exact-flat-fast")]
+    fn fill_rrect_exact_flat(&mut self, r: Rect, color: Rgb, alpha: u8) -> bool {
+        match self.op_clip(r) {
+            ClipFate::Skip => return true,
+            ClipFate::Masked => return false,
+            ClipFate::Unclipped | ClipFate::RectSpans(_) => {}
+        }
+        let Some((wx0, wy0, wx1, wy1)) = self.draft_world_clamp(r) else {
+            return true;
+        };
+        let g = self.gutter as i32;
+        let (rx, ry) = (self.area.x, self.area.y);
+        let pm_w = (self.area.w + 2 * self.gutter) as usize;
+        let a = alpha as u32;
+        let ia = 255 - a;
+        let (lo, hi) = ((wx0 - rx + g) as usize, (wx1 - rx + g) as usize);
+        let drawn = (wy1 - wy0) as u64 * (wx1 - wx0) as u64;
+        {
+            let px = self.pixmap_mut().pixels_mut();
+            if alpha == 0xFF {
+                // Opaque: a plain premultiplied store (premul == straight at
+                // alpha 255), whole rows at once — the pixmap analogue of
+                // draft_span's fill_rgb_triple, and the point of the fast path:
+                // no per-pixel blend, no tiny-skia u16x16 pipeline.
+                let p = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, 0xFF)
+                    .expect("opaque premul color is always valid");
+                for wy in wy0..wy1 {
+                    let prow = (wy - ry + g) as usize * pm_w;
+                    px[prow + lo..prow + hi].fill(p);
+                }
+            } else {
+                // Translucent: integer d255 source-over per pixel over the
+                // (opaque) dst — the same blend the glyph/image blits write into
+                // the pixmap, byte-identical to tiny-skia (blend_golden).
+                for wy in wy0..wy1 {
+                    let prow = (wy - ry + g) as usize * pm_w;
+                    for slot in px[prow + lo..prow + hi].iter_mut() {
+                        let dst = *slot;
+                        let na = d255(255 * a + dst.alpha() as u32 * ia);
+                        let nr = d255(color.r as u32 * a + dst.red() as u32 * ia);
+                        let ng = d255(color.g as u32 * a + dst.green() as u32 * ia);
+                        let nb = d255(color.b as u32 * a + dst.blue() as u32 * ia);
+                        if let Some(pp) = PremultipliedColorU8::from_rgba(
+                            nr.min(na) as u8,
+                            ng.min(na) as u8,
+                            nb.min(na) as u8,
+                            na as u8,
+                        ) {
+                            *slot = pp;
+                        }
+                    }
+                }
+            }
+        }
+        self.draft_tally(Self::class_for(alpha), drawn);
+        true
+    }
+
     /// Draft fast path for a ROUNDED [`Canvas::stroke_rrect`]: an integer
     /// rounded-rect OUTLINE. Same CENTRED-stroke contract as the Exact path —
     /// the stroke straddles the contour of `r` (corner radius `rad`): the OUTER
@@ -2013,6 +2081,18 @@ impl Canvas for TinySkiaCanvas {
             if handled {
                 return;
             }
+        }
+        // #37: Exact's pixmap-direct flat fast path (feature `exact-flat-fast`).
+        // A radius-0 axis-aligned rect goes straight into the pixmap as an
+        // integer d255 premul store, skipping tiny-skia's u16x16 pipeline —
+        // byte-identical (opaque dst) at zero extra heap. Declines on a
+        // rounded-clip overlap so the clip stays exact (falls to tiny-skia).
+        #[cfg(feature = "exact-flat-fast")]
+        if matches!(self.quality, Quality::Exact)
+            && radius == 0
+            && self.fill_rrect_exact_flat(r, color, alpha)
+        {
+            return;
         }
         let pts = self.rrect_pts(r.x as f32, r.y as f32, r.w as f32, r.h as f32, rad);
         self.fill(&[&pts], color, alpha, r);
