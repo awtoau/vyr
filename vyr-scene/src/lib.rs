@@ -835,7 +835,11 @@ pub fn scene_tree(w: u32, h: u32, detail: Detail) -> (Request, Handles) {
 }
 
 /// The `name` of the node at `path` (for the [`scene_tree`] structural guard).
-#[cfg(debug_assertions)]
+/// Always compiled — `debug_assert_eq!` still type-checks its arguments in
+/// release (where `debug_assertions` is off, e.g. `release-mcu`), so a
+/// `#[cfg(debug_assertions)]` definition would leave the call sites undefined.
+/// `allow(dead_code)` because the asserts that call it are compiled out there.
+#[allow(dead_code)]
 fn name_at<'a>(req: &'a Request, path: &[usize]) -> Option<&'a str> {
     let mut node = &req.root;
     for &i in path {
