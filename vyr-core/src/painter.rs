@@ -1233,7 +1233,7 @@ impl TinySkiaCanvas {
         true
     }
 
-    /// #37 pixmap-direct flat fast path for Exact (feature `exact-flat-fast`):
+    /// #37 pixmap-direct flat fast path for Exact:
     /// a radius-0 axis-aligned rect written as an integer `d255` premul
     /// source-over straight into the EXISTING pixmap, skipping tiny-skia's
     /// u16x16 pipeline. Byte-identical to Exact's tiny-skia fill — the dst is
@@ -1243,7 +1243,6 @@ impl TinySkiaCanvas {
     /// already allocates (no rgb surface — unlike the rejected Fast-model
     /// experiment that OOM'd the arena). Returns `false` (→ tiny-skia) only on
     /// a rounded-clip overlap (`ClipFate::Masked`), keeping the clip exact.
-    #[cfg(feature = "exact-flat-fast")]
     fn fill_rrect_exact_flat(&mut self, r: Rect, color: Rgb, alpha: u8) -> bool {
         match self.op_clip(r) {
             ClipFate::Skip => return true,
@@ -2082,12 +2081,12 @@ impl Canvas for TinySkiaCanvas {
                 return;
             }
         }
-        // #37: Exact's pixmap-direct flat fast path (feature `exact-flat-fast`).
-        // A radius-0 axis-aligned rect goes straight into the pixmap as an
-        // integer d255 premul store, skipping tiny-skia's u16x16 pipeline —
-        // byte-identical (opaque dst) at zero extra heap. Declines on a
-        // rounded-clip overlap so the clip stays exact (falls to tiny-skia).
-        #[cfg(feature = "exact-flat-fast")]
+        // #37: Exact's pixmap-direct flat fast path. A radius-0 axis-aligned
+        // rect goes straight into the pixmap as an integer d255 premul store,
+        // skipping tiny-skia's u16x16 pipeline — byte-identical (opaque dst) at
+        // zero extra heap. Declines on a rounded-clip overlap so the clip stays
+        // exact (falls to tiny-skia). Exact only: Draft/Fast already took the
+        // integer_spans path above.
         if matches!(self.quality, Quality::Exact)
             && radius == 0
             && self.fill_rrect_exact_flat(r, color, alpha)

@@ -51,9 +51,6 @@ draft = []
 # Mutually exclusive with `draft` (draft wins if both are somehow enabled,
 # and the cfg below says so explicitly rather than silently).
 fast = []
-# #37: forward vyr-core's exact-flat-fast (Exact's pixmap-direct integer fast
-# path for flat fills) so it can be built for the qemu-m4 / board legs.
-exact-flat-fast = ["vyr-core/exact-flat-fast"]
 # The long ANIMATED workload (vyr-scene) instead of the single static
 # fixture: `run-qemu` renders one frame N times, which prices a still frame
 # and says nothing about a UI that changes. `rig` re-generates the IR every

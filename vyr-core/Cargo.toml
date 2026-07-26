@@ -23,15 +23,6 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 # (invariant I7). Bake-off outcome recorded on issue #5.
 skrifa = { version = "0.43", default-features = false, features = ["libm"] }
 
-[features]
-# #37 (painter SIMD tax): give Quality::Exact an integer d255 premul fast path
-# for FLAT axis-aligned fills, written straight into the pixmap it already has
-# (no rgb surface, zero extra heap). Byte-identical to Exact's tiny-skia output
-# (opaque dst ⇒ the same d255 blend `blend_golden` proved == tiny-skia), so it
-# is the same oracle, faster on the SIMD-less M4 (skips tiny-skia's u16x16
-# pipeline). OFF by default — the reference Exact is untouched unless enabled.
-exact-flat-fast = []
-
 [dev-dependencies]
 # Tests are std (separate crates); png is for optional VYR_TEST_DUMP output.
 png = "0.17"

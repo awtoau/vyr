@@ -235,16 +235,15 @@ fn draft_fastpath_coverage() {
     // through the integer fast path, and Exact must route NONE.
     let (_, draft) = render_full(Quality::Draft);
     let (_, exact) = render_full(Quality::Exact);
-    // Exact uses no integer fast path — UNLESS #37's exact-flat-fast is on, which
-    // gives Exact the pixmap-direct flat path (byte-identically; the golden-hash
-    // tests still pass). Feature-gate the "none" assertion accordingly.
-    #[cfg(not(feature = "exact-flat-fast"))]
-    assert_eq!(
-        exact.fastpath_pixels, 0,
-        "Exact must never use the Draft fast path"
+    // Exact now fast-paths FLAT axis-aligned fills too (#37 pixmap-direct path,
+    // byte-identically — the golden hashes are unchanged), so its count is
+    // non-zero (the backdrop alone is a radius-0 fill). Curves, lines and the AA
+    // edges still go through tiny-skia, so Exact's coverage stays far below
+    // Draft's (which fast-paths the whole frame).
+    assert!(
+        exact.fastpath_pixels > 0,
+        "Exact should fast-path DEMO_IR's flat fills (#37)"
     );
-    #[cfg(feature = "exact-flat-fast")]
-    let _ = exact.fastpath_pixels;
     assert!(
         draft.fastpath_pixels > 0,
         "Draft drew zero fast-path pixels — the demo scene's opaque rects must hit it"
