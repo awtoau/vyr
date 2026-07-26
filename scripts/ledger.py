@@ -1016,8 +1016,22 @@ RUN_COLS = [
 # Deliberately NOT here: verdicts. The chart plots recorded values. It does not
 # decide whether a rise is bad.
 
-CHART_METRICS = tuple(k for k in METRIC_FIELDS if k != "frame_hash")
-CHART_PROV = ("fold_share_of_total", "fastpath_coverage_pct")
+# The chart is for CODE performance change. The hash FOLD is the benchmark's own
+# verification overhead — a fixed cost of the measurement apparatus, not of the
+# renderer — so `harness_fold_insns` and every fold-share ratio are NOT plotted:
+# they are noise on a performance-trend view (and, being fixed while render
+# shrinks, they were the 400-580 outliers that flattened everything else). They
+# remain in full in the tables below, for audit. `insns_per_frame_total` (render
+# + fold) is likewise excluded — `render_only` is the clean signal; total is kept
+# in the tables so the with-fold history stays visible.
+CHART_METRICS = tuple(
+    k for k in METRIC_FIELDS
+    if k not in ("frame_hash", "harness_fold_insns", "insns_per_frame_total")
+)
+CHART_PROV = ("fastpath_coverage_pct",)
+# Derived series whose name matches any of these are tooling overhead, not a
+# renderer quantity, and are kept out of the chart (they stay in the tables).
+CHART_EXCLUDE_SUBSTR = ("fold_share", "harness_fold", "fold_insns")
 
 # The figures this project is actually steered by, at the shipped opt-level.
 # These three get the first three categorical slots of the palette; EVERY OTHER
@@ -1075,6 +1089,10 @@ def chart_data(allrows: list[dict]) -> dict:
             if key in IDENT_KEYS or key == "matrix":
                 continue
             for path, v in _flatten(val, key):
+                # Fold-overhead derived series (e.g. derived.harness_fold_share.*)
+                # are the benchmark's own cost, not the renderer's — tables only.
+                if any(s in path for s in CHART_EXCLUDE_SUBSTR):
+                    continue
                 if _numeric(v):
                     put(path, i, v)
 
