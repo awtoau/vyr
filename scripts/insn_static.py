@@ -202,6 +202,21 @@ BUCKETS: list[tuple[str, tuple[str, ...]]] = [
     ("vyr:harness", ("vyr_size", "workload", "probe")),
     ("memcpy/memset", ("memcpy", "memset", "memmove", "memclr", "__aeabi_mem")),
     ("outlined (-Oz stubs)", ("OUTLINED_FUNCTION",)),
+    # #63: the DETERMINISM TAX, isolated. The M4F FPU is single-precision, so
+    # every f64 op is these soft-float builtins (integer-implemented — their
+    # instructions classify as alu/load/store, NOT fp, so this bucket and the
+    # hardware-f32 CLASS share below never double-count). This bucket's share
+    # of a point IS its "self-inflicted determinism gap": f64 is used for
+    # bit-identical rounding vs x86-64, not for the image. Kept BEFORE the
+    # generic builtins bucket, whose `__aeabi`/`__add`/`__mul`/`__div` needles
+    # would otherwise swallow the double routines. See docs/design/painter-
+    # simd-tax.md §4 and #64.
+    ("soft-float-f64 (determinism tax)",
+     ("df3", "df2", "dfsi", "sidf", "dfdi", "didf", "__aeabi_d", "__muldf", "__adddf",
+      "__subdf", "__divdf", "__extenddf", "__truncdf", "__floatdidf", "__fixdf")),
+    # Should be ~empty on a hard-float target (f32 is hardware) — a non-trivial
+    # share here means a soft-f32 path slipped in, itself worth a look.
+    ("soft-float-f32", ("sf3", "__aeabi_f", "__addsf", "__mulsf", "__divsf", "__subsf")),
     ("compiler-builtins/libm", ("compiler_builtins", "libm", "__aeabi", "__mul", "__add", "__div")),
     ("alloc", ("linked_list_allocator", "__rust_alloc", "alloc..")),
     ("core", ("core..", "core::")),
@@ -214,3 +229,51 @@ def bucket(name: str) -> str:
             if n in name:
                 return label
     return "other"
+
+
+SOFT_F64_BUCKET = "soft-float-f64 (determinism tax)"
+SOFT_F32_BUCKET = "soft-float-f32"
+FP_CLASSES = ("fp-alu", "fp-load", "fp-store")
+
+
+def float_weighting(image: "Image", blks: list[tuple[int, int, int]]) -> dict:
+    """The #63/#64 headline: split a run into {int, mem, hardware-f32, soft-f64}.
+
+    soft-f64 is measured by SYMBOL (the builtins are integer-implemented, so
+    their instructions are not `v*`); hardware-f32 is measured by CLASS (the
+    `v*.f32` VFP ops in ordinary code). The two never overlap. `f64_share` is
+    the determinism tax — the part of this point's cost that exists only to
+    round bit-identically to x86-64, and that a hardware-f32 or fixed-point
+    flattening would not pay.
+    """
+    total = 0
+    soft_f64 = 0
+    soft_f32 = 0
+    hw_fp = 0
+    mem = 0
+    for pc, ic, ec in blks:
+        sym = image.symbol_at(pc)
+        b = bucket(sym)  # symbol name, not demangled — needles match either
+        for _addr, mn in image.walk(pc, ic):
+            total += ec
+            cls = classify(mn)
+            if cls in FP_CLASSES:
+                hw_fp += ec
+            elif cls in ("load", "store"):
+                mem += ec
+        if b == SOFT_F64_BUCKET:
+            soft_f64 += ic * ec
+        elif b == SOFT_F32_BUCKET:
+            soft_f32 += ic * ec
+    if not total:
+        return {"total": 0}
+    return {
+        "total": total,
+        "soft_f64_insns": soft_f64,
+        "soft_f32_insns": soft_f32,
+        "hw_f32_insns": hw_fp,
+        "mem_insns": mem,
+        "f64_share": soft_f64 / total,
+        "f32_hw_share": hw_fp / total,
+        "mem_share": mem / total,
+    }
