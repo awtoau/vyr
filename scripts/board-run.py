@@ -40,14 +40,55 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 TMP = os.path.join(REPO, "tmp")
 
-CHIP = "STM32F429ZI"
-# THIS probe only. A second F42x board (STLINK-V3 005600343431511837393330) is
-# attached to the same workstation and must never be driven from this repo.
-PROBE = "0483:3752:0671FF484971754867174427"
-
 TARGET = "thumbv7em-none-eabihf"
 PROFILE = "release-mcu"
 ELF = os.path.join(REPO, "target", TARGET, PROFILE, "vyr-size")
+
+# --- the silicon target registry (#52) --------------------------------------
+# One runner drives every board; only the map, clock, probe and clock-validity
+# rule differ. `clock_ok(res)` takes the parsed boot registers and returns
+# whether the part came up in the configuration the numbers claim. `ported` is
+# False until a board has its own linker script + clock init — the runner then
+# refuses it loudly (never a silent wrong flash) and points at its issue.
+TARGETS = {
+    "f429": {
+        "board": "STM32F429I-DISC1 (STM32F429ZI, Cortex-M4F)",
+        "chip": "STM32F429ZI",
+        "probe": "0483:3752:0671FF484971754867174427",
+        "core": "Cortex-M4F",
+        "sysclk_hz": 192_000_000,
+        "ported": True,
+        # F4: PLL on, 5 flash wait states, ART prefetch + I-cache + D-cache.
+        "clock_ok": lambda r: bool(
+            r["on_pll"] and r["latency"] == 5
+            and r["prften"] == 1 and r["icen"] == 1 and r["dcen"] == 1),
+    },
+    "f769": {
+        "board": "STM32F769I-DISCO (STM32F769NI, Cortex-M7 @ 216 MHz)",
+        "chip": "STM32F769NIHx",
+        "probe": None,  # a second V2-1; fill the serial when connected
+        "core": "Cortex-M7",
+        "sysclk_hz": 216_000_000,
+        "ported": False, "issue": 53,
+        # M7: PLL on + L1 I/D cache enabled (icen/dcen) + its own flash latency.
+        "clock_ok": lambda r: bool(r["on_pll"] and r["icen"] == 1 and r["dcen"] == 1),
+    },
+    "h750": {
+        "board": "STM32H750B-DK (STM32H750XB, Cortex-M7 @ 480 MHz)",
+        "chip": "STM32H750XBHx",
+        "probe": "0483:374e:005600343431511837393330",
+        "core": "Cortex-M7",
+        "sysclk_hz": 480_000_000,
+        "ported": False, "issue": 54,
+        "clock_ok": lambda r: bool(r["on_pll"] and r["icen"] == 1 and r["dcen"] == 1),
+    },
+}
+
+# Set from --target in main(); the module-level defaults keep the F429 the
+# out-of-the-box board so `board-run.py` with no args behaves as it always did.
+CHIP = TARGETS["f429"]["chip"]
+PROBE = TARGETS["f429"]["probe"]
+_CLOCK_OK = TARGETS["f429"]["clock_ok"]
 
 # Wall-clock guard (Python-side deadline + kill, never a shell timeout). Flash
 # of the ~200 KB image takes ~20 s over ST-LINK/V2-1 and the workload itself is
@@ -204,12 +245,10 @@ def parse(text, logf):
     res["cycles_per_frame"] = (
         res["timed_cycles"] // n if res["timed_cycles"] and n else None
     )
-    # ART + wait states + PLL are the whole point of the board leg; a run
-    # without them is not the configuration being reported.
-    res["clock_ok"] = bool(
-        res["on_pll"] and res["latency"] == 5
-        and res["prften"] == 1 and res["icen"] == 1 and res["dcen"] == 1
-    )
+    # The clock-validity rule is the selected target's (#52): the F4 checks ART
+    # + 5 wait states + PLL; an M7 checks its L1 cache-enable + PLL. A run in the
+    # wrong configuration is not the configuration being reported.
+    res["clock_ok"] = _CLOCK_OK(res)
     return res
 
 
@@ -312,6 +351,9 @@ def one_tier(tier, repeat, logf):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--target", default="f429", choices=sorted(TARGETS),
+                    help="which silicon board (registry #52). Default f429; an "
+                         "unported target refuses with its bring-up issue.")
     ap.add_argument("--draft", action="store_true",
                     help="build/run the Draft quality tier (--features draft)")
     ap.add_argument("--fast", action="store_true",
@@ -325,10 +367,24 @@ def main():
     ap.add_argument("--out", default=os.path.join(TMP, "board-result.json"))
     args = ap.parse_args()
 
+    global CHIP, PROBE, _CLOCK_OK
+    tgt = TARGETS[args.target]
+    if not tgt["ported"]:
+        print(f"board-run: target '{args.target}' ({tgt['board']}) is not yet "
+              f"ported — needs its linker script + clock init. See issue "
+              f"#{tgt.get('issue')}. Refusing rather than flash a wrong image.")
+        return 5
+    if not tgt["probe"]:
+        print(f"board-run: target '{args.target}' has no probe serial registered "
+              f"— connect the board and add it to TARGETS. Refusing.")
+        return 5
+    CHIP, PROBE, _CLOCK_OK = tgt["chip"], tgt["probe"], tgt["clock_ok"]
+
     os.makedirs(TMP, exist_ok=True)
     with open(os.path.join(TMP, "board-run.log"), "a") as logf:
         log("=" * 70, logf)
-        log(f"board-run: {CHIP} via ST-LINK {PROBE}, repeat={args.repeat}", logf)
+        log(f"board-run: target={args.target} {tgt['board']} via ST-LINK {PROBE}, "
+            f"repeat={args.repeat}", logf)
         if args.all:
             tiers = ["exact", "fast", "draft"]
         elif args.both:
@@ -341,7 +397,10 @@ def main():
             tiers = ["exact"]
         out = {
             "when": now(),
-            "board": "STM32F429I-DISC1 (STM32F429ZI, Cortex-M4F)",
+            "target": args.target,
+            "board": tgt["board"],
+            "core": tgt["core"],
+            "nominal_sysclk_hz": tgt["sysclk_hz"],
             "probe": PROBE,
             "chip": CHIP,
             "timer": "DWT_CYCCNT (real CPU cycles)",
