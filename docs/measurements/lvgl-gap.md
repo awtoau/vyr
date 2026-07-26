@@ -552,8 +552,18 @@ the prize for fixing the reason the overscan exists.
 
 Stated plainly, because a precise "we do not know" beats a confident story:
 
-- The top-80 symbols cover **95 %** of Exact's frame; the remaining ~3.1 M is a
-  tail of sub-0.3 % symbols that has not been broken down.
+- The top-80 symbols cover **95.2 %** of Exact's frame; the remaining **4.8 %
+  (~3.07 M/frame)** is a tail of sub-0.3 % symbols, now broken down with
+  `./dev.py insn-mix` (block census × static disassembly, reconstructed to
+  **100.0000 %** of the plugin's own count — no top-N cutoff). By bucket the
+  tail is **42 % LLVM machine-outliner stubs** (`OUTLINED_FUNCTION_*` — see the
+  next bullet), **11 % core**, **10 % still-unclassified glue**, **16 % tiny-skia
+  pipeline/path/edge** combined, **7 % libm + compiler-builtins**, **7 % vyr
+  text/skrifa**, and the last few % across the painter, the IR walk and
+  `memcpy`. By instruction class
+  it is **27 % move + 18 % branch + 8 % store** — register shuffling and control
+  flow, not compute — so the tail is glue, not a hidden hot path. Only **~0.7 %**
+  (symbols past the top 200) stays individually unlisted.
 - `OUTLINED_FUNCTION_*` (5.3 M, 8.2 %) is attributed to LLVM's machine outliner
   but **not** to the code it was outlined *from* — outlined stubs have no source
   identity. Part of it is certainly tiny-skia's pipeline; the split is unknown.
