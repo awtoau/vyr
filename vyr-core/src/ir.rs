@@ -158,15 +158,20 @@ pub struct Node {
     pub attrs: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     pub children: Vec<Node>,
-    /// #34: geometry resolved ONCE per `Request` (in [`Request::parse`]), not
-    /// re-parsed from strings on each of the 17 bands. `x`/`y`/`width`/`height`
-    /// are band-independent, so this is byte-identical to resolving per band —
-    /// same values, same pixels, no re-bless — it just does it once. Filled by
-    /// [`Node::prepare`]; the per-band [`walk`] and the dirty-rect geometry read
-    /// it. `#[serde(skip)]` so it defaults to zero on deserialize and prepare
-    /// overwrites it (Node is only ever built by serde, never by hand).
+    /// #34: band-INDEPENDENT attributes resolved ONCE per `Request` (in
+    /// [`Request::parse`]), not re-parsed from strings on each of the 17 bands.
+    /// A node's geometry, its fill/ink colours and its corner radius do not
+    /// depend on which band is being painted, so resolving them per band was
+    /// pure repeated work (string-keyed BTreeMap lookups + parses). This is
+    /// byte-identical to resolving per band — same values, same pixels, no
+    /// re-bless — it just does it once. Filled by [`Node::prepare`]; the per-band
+    /// [`walk`] and the dirty-rect geometry read it. `#[serde(skip)]` so it
+    /// defaults on deserialize and prepare overwrites it (Node is only ever
+    /// built by serde, never by hand).
     #[serde(skip)]
     pub(crate) geom: Geom,
+    #[serde(skip)]
+    resolved: Resolved,
 }
 
 /// A node's own (parent-relative) geometry, resolved once (#34).
@@ -176,6 +181,17 @@ pub(crate) struct Geom {
     pub y: i32,
     pub w: u32,
     pub h: u32,
+}
+
+/// A node's band-independent paint attributes, resolved once (#34).
+#[derive(Debug, Default, Clone, Copy)]
+struct Resolved {
+    /// `color("background")` — the fill, resolved once.
+    bg: Option<Rgb>,
+    /// `color("color")` — the ink/inherited colour, resolved once.
+    fg: Option<Rgb>,
+    /// `radius()` (`radius` or `style_radius`), resolved once.
+    radius: u32,
 }
 
 /// IR schema versions vyr knows how to render. The machine contract with
@@ -395,6 +411,11 @@ impl Node {
             w: self.u32_attr("width", 0),
             h: self.u32_attr("height", 0),
         };
+        self.resolved = Resolved {
+            bg: self.color("background"),
+            fg: self.color("color"),
+            radius: self.radius_resolve(),
+        };
         for child in &mut self.children {
             child.prepare();
         }
@@ -461,8 +482,24 @@ impl Node {
     }
 
     /// Corner radius: semantic `radius` or already-lowered `style_radius`.
+    /// Reads the resolved-once cache (#34); [`Node::radius_resolve`] does the
+    /// string work at prepare time.
     pub(crate) fn radius(&self) -> u32 {
+        self.resolved.radius
+    }
+
+    fn radius_resolve(&self) -> u32 {
         self.u32_attr("radius", self.u32_attr("style_radius", 0))
+    }
+
+    /// `color("background")`, resolved once (#34).
+    fn bg(&self) -> Option<Rgb> {
+        self.resolved.bg
+    }
+
+    /// `color("color")` — the ink/inherited colour, resolved once (#34).
+    fn fg(&self) -> Option<Rgb> {
+        self.resolved.fg
     }
 
     /// The FILL alpha (0..=255) for a node's `background`. The IR expresses
@@ -817,7 +854,7 @@ fn walk(
                 draw_text_prepare_only(n, ink, fonts)?;
             }
             "vy_button" => {
-                child_ink = n.color("color").or(ink);
+                child_ink = n.fg().or(ink);
             }
             "vy_image" | "vy_imagebutton" => {
                 let Some(src) = n.str_attr("src") else {
@@ -861,19 +898,19 @@ fn walk(
             // declared); `color` is the button's TEXT colour, inherited by
             // its label children (see module docs).
             paint_box(n, r, c);
-            child_ink = n.color("color").or(ink);
+            child_ink = n.fg().or(ink);
         }
         "vy_circle" | "vy_ellipse" => {
             // Disc/stadium: max-radius box (the IR disc lowering). Fill from
             // `background`; nothing painted if the IR gave no fill (I5).
-            if let Some(fill) = n.color("background") {
+            if let Some(fill) = n.bg() {
                 let rad = h.min(w) / 2;
                 c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
             paint_border(n, r, h.min(w) / 2, c);
         }
         "vy_line" => {
-            if let Some(fill) = n.color("background") {
+            if let Some(fill) = n.bg() {
                 c.fill_rrect(r, 0, fill, n.fill_alpha());
             }
         }
@@ -916,7 +953,7 @@ fn walk(
             // ring stroke ~ d/10, floored at 4 so small gauges stay visible.
             let stroke = (d / 10).max(4);
             let radius = d / 2 - stroke / 2;
-            let col = n.color("color").unwrap_or(TRACK);
+            let col = n.fg().unwrap_or(TRACK);
             c.ring(
                 x + w as i32 / 2,
                 y + h as i32 / 2,
@@ -942,7 +979,7 @@ fn walk(
             };
             let rad = n.radius();
             let fit = n.fit()?;
-            if let Some(fill) = n.color("background") {
+            if let Some(fill) = n.bg() {
                 c.fill_rrect(r, rad, fill, n.fill_alpha());
             }
             let img = assets.get(&src)?;
@@ -1080,7 +1117,7 @@ fn draw_mark_widget(
     if let Some(text) = n.str_attr("text")
         && !text.is_empty()
     {
-        let color = n.color("color").or(ink).unwrap_or(INK);
+        let color = n.fg().or(ink).unwrap_or(INK);
         let (family, size) = font_request(n)?;
         let m = fonts.prepare_run(&family, size, &text)?;
         let baseline = r.y + (r.h as i32 - m.height()) / 2 + m.ascent;
@@ -1129,7 +1166,7 @@ fn draw_text(
     if text.is_empty() {
         return Ok(());
     }
-    let ink = n.color("color").or(ink).unwrap_or(INK);
+    let ink = n.fg().or(ink).unwrap_or(INK);
     let (family, size) = font_request(n)?;
     let m = fonts.prepare_run(&family, size, &text)?;
     let (origin_x, baseline_y) = if n.str_attr("align").as_deref() == Some("center") {
@@ -1153,7 +1190,7 @@ fn draw_text(
 /// default black). The I5 discipline, same as the TGX instrument.
 fn paint_box(n: &Node, r: Rect, c: &mut TinySkiaCanvas) {
     let rad = n.radius();
-    if let Some(fill) = n.color("background") {
+    if let Some(fill) = n.bg() {
         // The IR's fill opacity (F8 fade fix, awto-vyvanse#321): the walk used
         // to hardcode 0xFF and drop every partial alpha — the FADE-FLAT bug.
         // The painter's source-over already blends correctly (F6 proves the
@@ -1257,20 +1294,12 @@ fn paint_chart(n: &Node, r: Rect, c: &mut TinySkiaCanvas) -> Result<(), RenderEr
     // Plot background under everything (optional so a trace can overlay
     // a pre-rendered graticule image/card beneath this widget).
     if params.show_background {
-        c.fill_rrect(
-            r,
-            0,
-            n.color("background").unwrap_or(CHART_BG),
-            n.fill_alpha(),
-        );
+        c.fill_rrect(r, 0, n.bg().unwrap_or(CHART_BG), n.fill_alpha());
     }
 
     // Series stroke + marker radius; the interior is inset by the marker
     // radius (+1 to clear the 1 px frame) so points/strokes sit fully inside.
-    let col = n
-        .color("line_color")
-        .or_else(|| n.color("color"))
-        .unwrap_or(ACCENT);
+    let col = n.color("line_color").or_else(|| n.fg()).unwrap_or(ACCENT);
     let lw = n.u32_attr("line_width", 2).max(1);
     let mr = (lw + 1).max(2) as i32;
     let pad = mr + 1;
@@ -1452,7 +1481,7 @@ fn paint_border(n: &Node, r: Rect, rad: u32, c: &mut TinySkiaCanvas) {
     let col = n
         .color("border_color")
         .or_else(|| n.color("style_border_color"))
-        .or_else(|| n.color("background"));
+        .or_else(|| n.bg());
     if let Some(col) = col {
         draw_inside_border(r, rad, bw, col, c);
     }
