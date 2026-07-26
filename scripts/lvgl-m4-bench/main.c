@@ -208,6 +208,10 @@ static lv_obj_t *mk_label(lv_obj_t *parent, int x, int y, const char *txt,
     return l;
 }
 
+/* SUITE:lvgl_scene:start — the region hashed into the perf suite fingerprint
+ * (#43). Editing the scene here changes WHAT is measured, so the fingerprint
+ * moves and the ledger must be reprocessed. Harness/timing edits OUTSIDE these
+ * markers do not. */
 static void build_scene(void)
 {
     lv_obj_t *scr = lv_screen_active();
@@ -304,6 +308,7 @@ static void build_scene(void)
     mk_label(scr, 16, 246, "awto / vyr on emulated M4", 0x7A869A,
              &lv_font_montserrat_12);
 }
+/* SUITE:lvgl_scene:end */
 
 /* Monotonic ms for LVGL, derived from SYS_CLOCK (centiseconds of virtual
  * time). The scene is static so the exact value never affects the render;

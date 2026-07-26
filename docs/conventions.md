@@ -82,6 +82,14 @@ from it and is a pure derived artifact. There is no second ledger
 - **The ledger has one format.** `ledger.py` refuses a row of any other schema
   rather than growing a read-old-format path; a schema change is a one-shot
   rewrite of the file, reviewed as a diff.
+- **One suite per ledger; a test change is a REPROCESS, never an append (#43).**
+  The ledger records one `suite_fingerprint` — a hash of *what is measured* (the
+  vyr fixture, band height, frame counts, tiers, the LVGL scene + config +
+  upstream commit; `./dev.py perf-suite`). Changing the tests changes that
+  fingerprint, so `./dev.py track` **refuses to append** and you replay the
+  whole history under the new suite instead (the rebuild IS the migration).
+  Same reflex as an instrument change; there is never a mix of suites to
+  reason about.
 
 ## Goldens & perf baselines
 

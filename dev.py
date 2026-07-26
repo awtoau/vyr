@@ -21,6 +21,7 @@ COMMANDS = {
     "test": "cargo test --workspace (--bless prints new golden hashes; --dump writes PNGs to ./tmp/)",
     "check": "cargo check --workspace",
     "check-mcu": "cargo check -p vyr-core -p vyr-scene --target thumbv7em-none-eabihf (the no_std gate, invariant I7)",
+    "perf-suite": "#43: print the fingerprint of WHAT the perf ledger measures (vyr fixture + band height + frame counts + tiers + the LVGL scene/config/commit). --compare exits 1 if it differs from the ledger stamp — the tests changed, REPROCESS the ledger (never append across a suite change).",
     "check-f64": "#39: gate the unstripped release-mcu build against soft-f64 creep — the M4F FPU is single-precision, so a stray f64 is thousands of insns/call (#32). Compares the linked double-precision runtime helpers against vyr-size/f64-baseline.json; a new one fails. --bless re-records. Deeper hot-path check: scripts/m4-attribute.py.",
     "clippy": "cargo clippy --workspace --all-targets",
     "fmt-check": "cargo fmt --check",
@@ -107,6 +108,14 @@ def cmd_check_f64(rest: list[str]) -> int:
     # crate COMPILES; this proves it did not pull in a new double-precision
     # runtime helper vs vyr-size/f64-baseline.json. --bless re-records.
     return _run([sys.executable, str(REPO / "scripts" / "check-f64.py"), *rest])
+
+
+def cmd_perf_suite(rest: list[str]) -> int:
+    # #43: print the fingerprint of WHAT the perf ledger measures (the vyr
+    # fixture, band height, frame counts, tiers, the LVGL scene + config +
+    # upstream commit). --compare exits 1 if it differs from the ledger's stamp
+    # — the tests changed, so the ledger must be REPROCESSED, not appended to.
+    return _run([sys.executable, str(REPO / "scripts" / "perf-suite.py"), *rest])
 
 
 def cmd_clippy(rest: list[str]) -> int:
@@ -932,6 +941,7 @@ HANDLERS = {
     "check": cmd_check,
     "check-mcu": cmd_check_mcu,
     "check-f64": cmd_check_f64,
+    "perf-suite": cmd_perf_suite,
     "clippy": cmd_clippy,
     "fmt-check": cmd_fmt_check,
     "selftest": cmd_selftest,

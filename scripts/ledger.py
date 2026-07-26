@@ -126,6 +126,17 @@ LEDGER_DIR = REPO / "docs" / "perf"
 HISTORY = LEDGER_DIR / "history.jsonl"
 SCHEMA = 3
 
+
+def _suite_fingerprint() -> str:
+    """The #43 suite fingerprint, computed by scripts/perf-suite.py (imported so
+    there is one definition of what the suite is)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "perf_suite", REPO / "scripts" / "perf-suite.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.fingerprint()
+
 SCENE_PX = 480 * 270  # the 480x270 reference scene every M4 number is taken on
 
 # The three flat scalars the retired docs/metrics ledger carried. They are
@@ -523,7 +534,36 @@ def build_row() -> dict:
     return row
 
 
+def _ledger_suite_fingerprint() -> str | None:
+    if not HISTORY.exists():
+        return None
+    for ln in HISTORY.read_text().splitlines():
+        if not ln.strip():
+            continue
+        r = json.loads(ln)
+        if r.get("kind") == "schema-note":
+            return r.get("suite_fingerprint")
+    return None
+
+
 def append_row() -> dict | None:
+    # #43: appending is only valid within ONE suite. If the tests changed WHAT
+    # is measured since this ledger was built, a new row would silently mix eras
+    # — refuse it and force a reprocess (the rebuild IS the migration).
+    led = _ledger_suite_fingerprint()
+    if led is not None:
+        try:
+            cur = _suite_fingerprint()
+        except Exception as e:
+            log(f"WARN: cannot compute the suite fingerprint ({e}); appending anyway")
+            cur = led
+        if cur != led:
+            log("ERROR: the perf SUITE changed since this ledger was built "
+                f"(ledger {led} != current {cur}). Appending would mix two "
+                "definitions of what is measured. REPROCESS the whole ledger "
+                "instead:\n    python3 scripts/perf-replay.py  &&  "
+                "python3 scripts/ledger.py --rebuild-from-replay tmp/perf-replay.jsonl")
+            return None
     row = build_row()
     sections = [k for k in row if k not in ("schema", "ts", "commit", "dirty", "host", "cpu", "arch")]
     if not sections:
@@ -721,6 +761,15 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
     note["written"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     note["rows"] = {"preserved_host_rows": len(kept), "replayed_matrix_rows": len(rows),
                     "recorded_skips": len(skips)}
+    # #43: stamp the suite fingerprint this whole reprocess was built under. The
+    # ledger is single-suite by construction (a full reprocess, never an append
+    # that mixes eras); `./dev.py track` refuses to append when the current
+    # suite no longer matches this stamp, forcing a reprocess instead.
+    try:
+        note["suite_fingerprint"] = _suite_fingerprint()
+    except Exception as e:  # never let a fingerprint hiccup block a rebuild
+        note["suite_fingerprint"] = None
+        log(f"WARN: suite fingerprint unavailable ({e})")
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
     with open(HISTORY, "w", encoding="utf-8") as f:
         f.write(json.dumps(note, separators=(",", ":")) + "\n")
