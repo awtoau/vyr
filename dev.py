@@ -21,6 +21,7 @@ COMMANDS = {
     "test": "cargo test --workspace (--bless prints new golden hashes; --dump writes PNGs to ./tmp/)",
     "check": "cargo check --workspace",
     "check-mcu": "cargo check -p vyr-core -p vyr-scene --target thumbv7em-none-eabihf (the no_std gate, invariant I7)",
+    "check-f64": "#39: gate the unstripped release-mcu build against soft-f64 creep — the M4F FPU is single-precision, so a stray f64 is thousands of insns/call (#32). Compares the linked double-precision runtime helpers against vyr-size/f64-baseline.json; a new one fails. --bless re-records. Deeper hot-path check: scripts/m4-attribute.py.",
     "clippy": "cargo clippy --workspace --all-targets",
     "fmt-check": "cargo fmt --check",
     "selftest": "render the demo scene to ./tmp/selftest.png via vyr-cli (logs ns/px + counters)",
@@ -98,6 +99,14 @@ def cmd_check_mcu(rest: list[str]) -> int:
         if rc != 0:
             return rc
     return 0
+
+
+def cmd_check_f64(rest: list[str]) -> int:
+    # #39: the M4F FPU is single-precision, so any f64 op is a soft-float call
+    # (#32: 11.4 M insns/frame, invisible on the host). check-mcu proves the
+    # crate COMPILES; this proves it did not pull in a new double-precision
+    # runtime helper vs vyr-size/f64-baseline.json. --bless re-records.
+    return _run([sys.executable, str(REPO / "scripts" / "check-f64.py"), *rest])
 
 
 def cmd_clippy(rest: list[str]) -> int:
@@ -843,7 +852,9 @@ def cmd_track(rest: list[str]) -> int:
 
 
 def cmd_gate(_rest: list[str]) -> int:
-    for step in (cmd_fmt_check, cmd_clippy, cmd_test, cmd_check_mcu):
+    # check-f64 (#39) sits beside check-mcu: check-mcu proves the MCU build
+    # COMPILES; check-f64 proves it did not pull in a new soft-f64 helper.
+    for step in (cmd_fmt_check, cmd_clippy, cmd_test, cmd_check_mcu, cmd_check_f64):
         rc = step([])
         if rc != 0:
             _log(f"gate FAILED at {step.__name__}")
@@ -920,6 +931,7 @@ HANDLERS = {
     "test": cmd_test,
     "check": cmd_check,
     "check-mcu": cmd_check_mcu,
+    "check-f64": cmd_check_f64,
     "clippy": cmd_clippy,
     "fmt-check": cmd_fmt_check,
     "selftest": cmd_selftest,
