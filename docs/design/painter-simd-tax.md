@@ -242,19 +242,39 @@ against the host leg; `scripts/board-run.py` adds silicon). Any candidate
 change is required to run all three legs and show agreement **before** its
 performance number is quoted.
 
-## 6. Next steps, in order
+## 6. Next steps, in order — each is a tracked issue
 
 1. **Replicate §3** — re-run the probe on a clean tree, all tiers, `--opt z`
    and `--opt 3`, `--band-h 8,16,32`, and record it properly. One run is not
-   a measurement.
-2. **A curve/alpha probe family.** §3 prices flat rects; the fixture's 21 M
-   lives in anti-aliased curves and blends. Until that family exists, #37's
-   central number has not been decomposed — only bounded.
-3. **The board rung** on the same probe cases: cycles, not instructions, and
-   therefore the first honest word on locality.
+   a measurement. (Part of #37; also gated by the band sweep, #58.)
+2. **A curve/alpha probe family — #61.** §3 prices flat rects; the fixture's
+   21 M lives in anti-aliased curves and blends. Until that family exists,
+   #37's central number has not been decomposed — only bounded.
+3. **The board rung — #62.** The same probe cases on F429 silicon: cycles,
+   not instructions, and therefore the first honest word on locality.
 4. **Then** write the position document #37 asks for, with the option table
    scored against measurements rather than expectations, and file scoped
    implementation issues from it.
 
 Until step 4, the correct summary of #37 remains: *the cost is real, the
 mechanism is not yet established, and the leading hypothesis has changed.*
+
+## 7. Gaps this branch opened as tracked issues
+
+The attribution gaps `docs/measurements/lvgl-gap.md` §8 lists, and the new
+findings §3 surfaced, are now issues rather than prose — all tagged
+`performance`:
+
+| gap | issue | status |
+|---|---|---|
+| `OUTLINED_FUNCTION_*` had "no source identity" (§8) | — | **resolved here** — called from the `u16x16` operators, 71 % loads/stores; see §3 |
+| memcpy attributed by callee not caller, "an inference not a measurement" (§8) | — | **resolved here** — 57 % edge-sort, 16 % `RasterPipelineBuilder::compile`; the §8 inference was wrong; see §3 |
+| band-count sensitivity never run (§8) | **#58** | `VYR_BAND_H` unblocks it; the 1/2/17-band diff is unrun |
+| the ~3.1 M unattributed tail (§8) | **#59** | `insn-mix` reconstructs to 100.0000 %; the tail just needs reporting |
+| partial alpha falls back to the Exact pipeline in Draft/Fast (§3) | **#60** | +356–892 % for a flat translucent rect |
+| curve/alpha/gradient probe family — decompose the real 21 M (§3, §6.2) | **#61** | the flat sweep bounds but does not decompose it |
+| cycles on silicon, not emulator instructions (§4, §6.3) | **#62** | no cache/wait-state claim is falsifiable without it |
+
+The two resolved rows should be folded back into `lvgl-gap.md` §8 when §3's
+readings are replicated — deliberately not done yet, because one run is not a
+measurement.
