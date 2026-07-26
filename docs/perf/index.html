@@ -120,20 +120,38 @@
      u.setSeries(). Styled with the same tokens as the tables so it reads as
      part of the same page. */
   .tbar-grid{margin-top:14px}
-  .seriesgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
-    gap:1px 14px;max-height:280px;overflow:auto;border:1px solid var(--line);
-    border-radius:8px;padding:6px 8px;background:var(--surface)}
-  .seriesgrid .sg{display:flex;gap:8px;align-items:center;padding:3px 4px;
-    font-size:12px;line-height:1.3;cursor:pointer;border-radius:5px;min-width:0}
-  .seriesgrid .sg:hover{background:var(--line)}
-  .seriesgrid .sg input{margin:0;flex:none;cursor:pointer}
-  .seriesgrid .sg .lk{flex:none}
-  .seriesgrid .sg .sgk{font-family:ui-monospace,"SF Mono",Menlo,monospace;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-soft);flex:1 1 auto}
-  .seriesgrid .sg .sgr{flex:none;color:var(--ink-mut);font-size:11px;
+  /* #chart-grid: series grouped by WHAT THEY MEASURE. Each group is a card with
+     a header toggle (show/hide the whole group) and a collapsible list of the
+     individual tier/opt-level lines inside it. */
+  .seriesgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+    gap:10px;align-items:start}
+  .sgroup{border:1px solid var(--line);border-radius:8px;background:var(--surface);
+    overflow:hidden}
+  .sgroup .sgh{display:flex;gap:8px;align-items:center;padding:8px 10px;cursor:pointer;
+    font-size:13px;font-weight:600;color:var(--ink);user-select:none}
+  .sgroup .sgh:hover{background:var(--line)}
+  .sgroup .sgh input{margin:0;flex:none;cursor:pointer}
+  .sgroup .sgh .sgh-name{flex:1 1 auto;min-width:0}
+  .sgroup .sgh .sgh-desc{font-weight:400;color:var(--ink-mut);font-size:11.5px}
+  .sgroup .sgh .sgh-n{flex:none;color:var(--ink-mut);font-size:11px;
     font-variant-numeric:tabular-nums}
-  .seriesgrid .sg[data-off="1"]{opacity:.4}
-  .seriesgrid .sg[data-off="1"] .sgk{text-decoration:line-through}
+  .sgroup .sgh .sgh-caret{flex:none;color:var(--ink-mut);transition:transform .12s;
+    font-size:10px}
+  .sgroup[data-open="1"] .sgh-caret{transform:rotate(90deg)}
+  .sgroup .sgbody{display:none;padding:2px 6px 6px;border-top:1px solid var(--line);
+    max-height:220px;overflow:auto}
+  .sgroup[data-open="1"] .sgbody{display:block}
+  .sgroup .sg{display:flex;gap:8px;align-items:center;padding:3px 4px;
+    font-size:12px;line-height:1.3;cursor:pointer;border-radius:5px;min-width:0}
+  .sgroup .sg:hover{background:var(--line)}
+  .sgroup .sg input{margin:0;flex:none;cursor:pointer}
+  .sgroup .sg .lk{flex:none}
+  .sgroup .sg .sgk{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-soft);flex:1 1 auto}
+  .sgroup .sg .sgr{flex:none;color:var(--ink-mut);font-size:11px;
+    font-variant-numeric:tabular-nums}
+  .sgroup .sg[data-off="1"]{opacity:.4}
+  .sgroup .sg[data-off="1"] .sgk{text-decoration:line-through}
   .charttip{position:absolute;pointer-events:none;z-index:5;max-width:min(360px,72vw);
     background:var(--surface);color:var(--ink);border:1px solid var(--line-strong);
     border-radius:8px;box-shadow:var(--shadow);padding:7px 10px;font-size:12.5px;
@@ -226,7 +244,7 @@ latest <code>ab0ea3e</code> feat(size,bench): verification is a build type, not 
 how each number is produced:
 <a href="https://github.com/awtoau/vyr/blob/main/docs/performance.md">docs/performance.md</a>.</p>
 
-<section class="chunk"><h2>Every numeric series, indexed to its own first observation</h2><p class="lede">The tables carry levels; this carries change. The series share no unit — instructions per frame are tens of millions, heap is hundreds of thousands of bytes, ns per frame is hundreds, fold share is a fraction — so raw values on one axis would be meaningless, and a second y-axis would invent a correlation the data does not contain. Instead <b>every series is divided by its own first recorded value and multiplied by 100</b>. The axis is therefore dimensionless: <b>100 is that series’ own first observation</b>, not a share of anything, and 50 means “half what it first was” for every line alike.</p><p class="meta"><b>61</b> series on <b>43</b> runs. A series needs two observations to be a trend, so the <b>0</b> recorded only once are not drawn here — the tables have them. A further <b>4</b> cannot be indexed at all, because a first observation of <code>0</code> has no ratio to it (<code>qemu-m4 · exact · 2 · fastpath_coverage_pct, qemu-m4 · exact · 3 · fastpath_coverage_pct, qemu-m4 · exact · s · fastpath_coverage_pct, qemu-m4 · exact · z · fastpath_coverage_pct</code>) — also in the tables.</p><div class="legendrow"><span class="li" title="qemu-m4 · exact · z · insns_per_frame_render_only"><span class="lk" style="--k:var(--s1)"></span>Exact — instructions/frame, render only, qemu-M4 at opt-level <code>z</code></span><span class="li" title="qemu-m4 · fast · z · insns_per_frame_render_only"><span class="lk" style="--k:var(--s2)"></span>Fast — instructions/frame, render only, qemu-M4 at opt-level <code>z</code></span><span class="li" title="qemu-m4 · draft · z · insns_per_frame_render_only"><span class="lk" style="--k:var(--s3)"></span>Draft — instructions/frame, render only, qemu-M4 at opt-level <code>z</code></span><span class="li"><span class="lk" style="--k:var(--s-other)"></span>every other recorded series (50)</span><span class="li li-flat"><span class="lk" style="--k:var(--s-flat)"></span>never changed across the runs it appears in (8)</span></div><div class="tbar"><button id="t-chart-reset" type="button">Reset zoom</button><span class="count">drag on the plot to zoom · double-click to reset</span></div><div class="chartcard"><div id="t-chart"></div></div><p class="hint">Hover a line to name it: the nearest series lifts, the rest fade, and the readout gives its key, the value the ledger recorded at that run, and its index. <b>A gap is a gap</b> — where a series has no observation at a run the line breaks rather than interpolating, and an observation with no neighbour is drawn as a single point. Series that never moved sit exactly on the 100 rule; they are drawn faintly because stability is evidence but it should not drown the lines that moved. Every value plotted here is also a row in the tables below.</p><div class="tbar tbar-grid"><input id="t-chart-gsearch" type="search" placeholder="filter series…" aria-label="filter chart series"><button id="t-chart-gall" type="button">Show all</button><button id="t-chart-gnone" type="button">Hide all</button><button id="t-chart-gout" type="button" title="hide every series whose indexed value leaves the 40–200 band">Hide outliers</button><span class="count" id="t-chart-gcount"></span></div><div class="seriesgrid" id="t-chart-grid" role="group" aria-label="show or hide chart series"></div><p class="hint">Each row is one plotted series; the box shows it on the chart. Rows are ordered by <b>swing</b> — how far the indexed value travels from 100 — so the outliers that flatten everything else sit at the top. Hiding them rescales the y-axis to what is left. This changes only the chart; the tables below always hold every value.</p></section>
+<section class="chunk"><h2>Every numeric series, indexed to its own first observation</h2><p class="lede">The tables carry levels; this carries change. The series share no unit — instructions per frame are tens of millions, heap is hundreds of thousands of bytes, ns per frame is hundreds, fold share is a fraction — so raw values on one axis would be meaningless, and a second y-axis would invent a correlation the data does not contain. Instead <b>every series is divided by its own first recorded value and multiplied by 100</b>. The axis is therefore dimensionless: <b>100 is that series’ own first observation</b>, not a share of anything, and 50 means “half what it first was” for every line alike.</p><p class="meta"><b>61</b> series on <b>43</b> runs. A series needs two observations to be a trend, so the <b>0</b> recorded only once are not drawn here — the tables have them. A further <b>4</b> cannot be indexed at all, because a first observation of <code>0</code> has no ratio to it (<code>qemu-m4 · exact · 2 · fastpath_coverage_pct, qemu-m4 · exact · 3 · fastpath_coverage_pct, qemu-m4 · exact · s · fastpath_coverage_pct, qemu-m4 · exact · z · fastpath_coverage_pct</code>) — also in the tables.</p><div class="legendrow"><span class="li" title="qemu-m4 · exact · z · insns_per_frame_render_only"><span class="lk" style="--k:var(--s1)"></span>Exact — instructions/frame, render only, qemu-M4 at opt-level <code>z</code></span><span class="li" title="qemu-m4 · fast · z · insns_per_frame_render_only"><span class="lk" style="--k:var(--s2)"></span>Fast — instructions/frame, render only, qemu-M4 at opt-level <code>z</code></span><span class="li" title="qemu-m4 · draft · z · insns_per_frame_render_only"><span class="lk" style="--k:var(--s3)"></span>Draft — instructions/frame, render only, qemu-M4 at opt-level <code>z</code></span><span class="li"><span class="lk" style="--k:var(--s-other)"></span>every other recorded series (50)</span><span class="li li-flat"><span class="lk" style="--k:var(--s-flat)"></span>never changed across the runs it appears in (8)</span></div><div class="tbar"><button id="t-chart-reset" type="button">Reset zoom</button><span class="count">drag on the plot to zoom · double-click to reset</span></div><div class="chartcard"><div id="t-chart"></div></div><p class="hint">Hover a line to name it: the nearest series lifts, the rest fade, and the readout gives its key, the value the ledger recorded at that run, and its index. <b>A gap is a gap</b> — where a series has no observation at a run the line breaks rather than interpolating, and an observation with no neighbour is drawn as a single point. Series that never moved sit exactly on the 100 rule; they are drawn faintly because stability is evidence but it should not drown the lines that moved. Every value plotted here is also a row in the tables below.</p><div class="tbar tbar-grid"><input id="t-chart-gsearch" type="search" placeholder="filter series…" aria-label="filter chart series"><button id="t-chart-gall" type="button">Show all</button><button id="t-chart-gnone" type="button">Hide all</button><span class="count" id="t-chart-gcount"></span></div><div class="seriesgrid" id="t-chart-grid" role="group" aria-label="show or hide chart series by group"></div><p class="hint">The series are grouped by <b>what they measure</b> — one unit and one meaning per group. Tick a <b>group</b> to show or hide all of its lines at once (that is what rescales the chart); expand a group to reach the individual tier / opt-level lines inside it. This changes only the chart; the tables below always hold every value.</p></section>
 
 <section class="chunk"><h2>Matrix cells</h2><p class="lede">One row per measurement cell — platform × tier × opt-level × run — with every field the ledger carries for it, including the provenance of each figure and the written reason behind every null.</p><div class="tbar"><input id="t-cells-search" type="search" placeholder="search every column…" aria-label="search Matrix cells"><button id="t-cells-csv" type="button">Download CSV</button><span class="count" id="t-cells-count"></span></div><div class="tablecard"><div id="t-cells"></div></div><p class="hint">Click a column header to sort it; click again to reverse. Numeric columns sort numerically. Drag a header to reorder, and use its ⋮ menu to hide columns. A dotted-underlined value carries the reason the ledger recorded for it — hover to read it.</p></section>
 
@@ -693,30 +711,40 @@ fetches nothing when it is opened.</p>
     });
   }
 
-  /* --- the per-series show/hide grid -------------------------------------- */
-  /* One toggle per plotted series. uPlot's y auto-range ignores series with
-     show:false, so hiding the outliers rescales the plot to what remains. Rows
-     are ordered by SWING — the largest |indexed - 100| a series reaches — so
-     the lines that flatten the axis are at the top, easy to switch off. */
+  /* --- the grouped show/hide grid ----------------------------------------- */
+  /* The series are 7 KINDS of measurement repeated across tier x opt-level, so
+     they group cleanly by WHAT THEY MEASURE — one unit and one meaning each. A
+     group header toggles every line in the group at once (that is what rescales
+     the plot, since uPlot's y auto-range ignores hidden series); the group can
+     be expanded to reach the individual tier/opt-level lines. */
   (function(){
     var grid = document.getElementById('t-chart-grid');
     if (!grid) { return; }
-    var rows = [];   // {si, el, key, swing, lo, hi}
-    for (var si = 1; si < META.length; si++) {
-      var ys = u.data[si], lo = Infinity, hi = -Infinity, seen = false;
-      for (var j = 0; j < N; j++) {
-        var v = ys[j];
-        if (v == null) { continue; }
-        seen = true;
-        if (v < lo) { lo = v; }
-        if (v > hi) { hi = v; }
-      }
-      if (!seen) { continue; }
-      var swing = Math.max(Math.abs(hi - 100), Math.abs(lo - 100));
-      rows.push({si: si, key: META[si].key, swing: swing, lo: lo, hi: hi});
+
+    /* Ordered category table: [test, id, name, one-line description]. First
+       match wins, so put specific patterns before general ones. */
+    var CATS = [
+      [function(k){ return /insns_per_frame_render_only/.test(k); },
+       'insns', 'Instructions / frame', 'CPU work per frame, render only (emulated M4)'],
+      [function(k){ return /render_only_insn_px/.test(k); },
+       'insnpx', 'Instructions / pixel', 'the same, divided by 129,600 delivered pixels'],
+      [function(k){ return /heap_peak_b/.test(k); },
+       'heap', 'Heap peak (RAM)', 'high-water mark of the allocator, bytes'],
+      [function(k){ return /flash_text_data_b/.test(k); },
+       'flash', 'Flash (code size)', 'linked .text + .rodata, bytes'],
+      [function(k){ return /stack_high_water_b/.test(k); },
+       'stack', 'Stack high-water', 'deepest stack use measured, bytes'],
+      [function(k){ return /ns_per_frame|ns_per_px/.test(k); },
+       'nstime', 'Host time (x86-64)', 'wall time per frame / per pixel on the host'],
+      [function(k){ return /fastpath_coverage_pct/.test(k); },
+       'cov', 'Fast-path coverage', '% of pixels drawn by the integer no-AA path'],
+      [function(k){ return true; },
+       'other', 'Other', 'everything not otherwise categorised'],
+    ];
+    function catOf(key){
+      for (var i = 0; i < CATS.length; i++) { if (CATS[i][0](key)) { return CATS[i]; } }
+      return CATS[CATS.length - 1];
     }
-    /* biggest swing first; a stable key tiebreak so the order is deterministic */
-    rows.sort(function(a, b){ return (b.swing - a.swing) || (a.key < b.key ? -1 : 1); });
 
     function mkMark(si){
       var m = document.createElement('span');
@@ -725,74 +753,146 @@ fetches nothing when it is opened.</p>
       if (META[si].flat) { m.style.height = '1px'; }
       return m;
     }
-    rows.forEach(function(r){
-      var lab = document.createElement('label');
-      lab.className = 'sg';
-      lab.setAttribute('data-off', '0');
-      var cb = document.createElement('input');
-      cb.type = 'checkbox'; cb.checked = true;
-      var key = document.createElement('span');
-      key.className = 'sgk'; key.textContent = r.key; key.title = r.key;
-      var rng = document.createElement('span');
-      rng.className = 'sgr';
-      rng.textContent = Math.round(r.lo) + '–' + Math.round(r.hi);
-      lab.appendChild(cb);
-      lab.appendChild(mkMark(r.si));
-      lab.appendChild(key);
-      lab.appendChild(rng);
-      grid.appendChild(lab);
-      r.el = lab; r.cb = cb;
-      cb.addEventListener('change', function(){
-        lab.setAttribute('data-off', cb.checked ? '0' : '1');
-        u.setSeries(r.si, {show: cb.checked});
-        updateCount();
-      });
-    });
 
+    /* Collect the plotted series into groups, preserving CATS order. */
+    var groups = {};                       // id -> {cat, rows:[]}
+    CATS.forEach(function(c){ groups[c[1]] = {cat: c, rows: []}; });
+    for (var si = 1; si < META.length; si++) {
+      var ys = u.data[si], lo = Infinity, hi = -Infinity, seen = false;
+      for (var j = 0; j < N; j++) {
+        var v = ys[j];
+        if (v == null) { continue; }
+        seen = true;
+        if (v < lo) { lo = v; } if (v > hi) { hi = v; }
+      }
+      if (!seen) { continue; }
+      var c = catOf(META[si].key);
+      groups[c[1]].rows.push({si: si, key: META[si].key, lo: lo, hi: hi});
+    }
+
+    var allRows = [];   // flat list for search + counts
     var count = document.getElementById('t-chart-gcount');
     function updateCount(){
       var on = 0;
-      rows.forEach(function(r){ if (r.cb.checked) { on++; } });
-      if (count) { count.textContent = on + ' of ' + rows.length + ' series shown'; }
+      allRows.forEach(function(r){ if (r.cb.checked) { on++; } });
+      if (count) { count.textContent = on + ' of ' + allRows.length + ' lines shown'; }
     }
-    function setAll(show){
-      rows.forEach(function(r){
-        if (r.cb.checked !== show) {
-          r.cb.checked = show;
-          r.el.setAttribute('data-off', show ? '0' : '1');
-          u.setSeries(r.si, {show: show}, false);
-        }
+
+    function setRow(r, show, batch){
+      if (r.cb.checked !== show) {
+        r.cb.checked = show;
+        r.el.setAttribute('data-off', show ? '0' : '1');
+        u.setSeries(r.si, {show: show}, false);
+      }
+      if (!batch) { u.redraw(); updateCount(); }
+    }
+
+    CATS.forEach(function(cat){
+      var g = groups[cat[1]];
+      if (!g.rows.length) { return; }
+      g.rows.sort(function(a, b){ return a.key < b.key ? -1 : 1; });
+
+      var card = document.createElement('div');
+      card.className = 'sgroup';
+      card.setAttribute('data-open', '0');
+
+      var head = document.createElement('div');
+      head.className = 'sgh';
+      var gcb = document.createElement('input');
+      gcb.type = 'checkbox'; gcb.checked = true;
+      var caret = document.createElement('span');
+      caret.className = 'sgh-caret'; caret.textContent = '▶';
+      var name = document.createElement('span');
+      name.className = 'sgh-name';
+      name.innerHTML = '';
+      name.appendChild(document.createTextNode(cat[2] + ' '));
+      var desc = document.createElement('span');
+      desc.className = 'sgh-desc'; desc.textContent = '— ' + cat[3];
+      name.appendChild(desc);
+      var n = document.createElement('span');
+      n.className = 'sgh-n'; n.textContent = g.rows.length;
+      head.appendChild(gcb); head.appendChild(caret);
+      head.appendChild(name); head.appendChild(n);
+      card.appendChild(head);
+
+      var body = document.createElement('div');
+      body.className = 'sgbody';
+      card.appendChild(body);
+      grid.appendChild(card);
+
+      /* header: the checkbox toggles the group; a click elsewhere expands it */
+      gcb.addEventListener('click', function(e){ e.stopPropagation(); });
+      gcb.addEventListener('change', function(){
+        g.rows.forEach(function(r){ setRow(r, gcb.checked, true); });
+        u.redraw(); updateCount();
       });
-      u.redraw();       // one rescale after the batch, not one per series
+      head.addEventListener('click', function(){
+        card.setAttribute('data-open', card.getAttribute('data-open') === '1' ? '0' : '1');
+      });
+
+      function refreshGroupBox(){
+        var on = 0;
+        g.rows.forEach(function(r){ if (r.cb.checked) { on++; } });
+        gcb.checked = on > 0;
+        gcb.indeterminate = on > 0 && on < g.rows.length;
+      }
+
+      g.rows.forEach(function(r){
+        var lab = document.createElement('label');
+        lab.className = 'sg'; lab.setAttribute('data-off', '0');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        var key = document.createElement('span');
+        key.className = 'sgk';
+        /* drop the metric suffix in the row label — the group already names it */
+        key.textContent = r.key.replace(/ · [a-z_]+$/, '').replace(/^derived\./, '');
+        key.title = r.key;
+        var rng = document.createElement('span');
+        rng.className = 'sgr'; rng.textContent = Math.round(r.lo) + '–' + Math.round(r.hi);
+        lab.appendChild(cb); lab.appendChild(mkMark(r.si));
+        lab.appendChild(key); lab.appendChild(rng);
+        body.appendChild(lab);
+        r.el = lab; r.cb = cb; allRows.push(r);
+        cb.addEventListener('change', function(){
+          /* the browser has already flipped cb.checked, so apply it directly —
+             routing through setRow (which diffs against cb.checked) would be a
+             no-op here. setRow is for the programmatic group/all paths. */
+          r.el.setAttribute('data-off', cb.checked ? '0' : '1');
+          u.setSeries(r.si, {show: cb.checked});
+          updateCount();
+          refreshGroupBox();
+        });
+      });
+      g.refreshBox = refreshGroupBox;
+    });
+
+    function setAll(show){
+      allRows.forEach(function(r){ setRow(r, show, true); });
+      u.redraw();
+      CATS.forEach(function(c){ if (groups[c[1]].refreshBox) { groups[c[1]].refreshBox(); } });
       updateCount();
     }
     var bAll = document.getElementById('t-chart-gall');
     var bNone = document.getElementById('t-chart-gnone');
-    var bOut = document.getElementById('t-chart-gout');
     if (bAll) { bAll.addEventListener('click', function(){ setAll(true); }); }
     if (bNone) { bNone.addEventListener('click', function(){ setAll(false); }); }
-    if (bOut) {
-      bOut.addEventListener('click', function(){
-        /* an outlier is any series that leaves the 40–200 index band */
-        rows.forEach(function(r){
-          var out = r.hi > 200 || r.lo < 40;
-          var show = !out;
-          if (r.cb.checked !== show) {
-            r.cb.checked = show;
-            r.el.setAttribute('data-off', show ? '0' : '1');
-            u.setSeries(r.si, {show: show}, false);
-          }
-        });
-        u.redraw();
-        updateCount();
-      });
-    }
+
     var gsearch = document.getElementById('t-chart-gsearch');
     if (gsearch) {
       gsearch.addEventListener('input', function(){
         var q = gsearch.value.toLowerCase();
-        rows.forEach(function(r){
-          r.el.style.display = (!q || r.key.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+        /* filter the individual rows, and open any group with a match */
+        CATS.forEach(function(cat){
+          var g = groups[cat[1]]; if (!g.rows.length) { return; }
+          var any = false;
+          g.rows.forEach(function(r){
+            var hit = !q || r.key.toLowerCase().indexOf(q) >= 0;
+            r.el.style.display = hit ? '' : 'none';
+            any = any || hit;
+          });
+          var card = g.rows[0].el.closest('.sgroup');
+          card.style.display = any ? '' : 'none';
+          if (q && any) { card.setAttribute('data-open', '1'); }
         });
       });
     }

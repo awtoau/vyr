@@ -49,31 +49,36 @@ def main():
         pg = b.new_page(viewport={"width": 1400, "height": 1600})
         pg.goto(PAGE)
         pg.wait_for_function("() => window.vyrLedgerChart != null", timeout=15000)
-        pg.wait_for_selector("#t-chart-grid .sg", timeout=15000)
+        pg.wait_for_selector("#t-chart-grid .sgroup", timeout=15000)
 
+        n_groups = pg.eval_on_selector_all("#t-chart-grid .sgroup", "els => els.length")
         n_rows = pg.eval_on_selector_all("#t-chart-grid .sg", "els => els.length")
         r0 = yrange(pg)
         on0 = shown(pg)
-        log(f"grid rows: {n_rows}   series shown: {on0}   y-range: "
-            f"[{r0[0]:.1f}, {r0[1]:.1f}]")
+        log(f"groups: {n_groups}   individual lines: {n_rows}   series shown: {on0}   "
+            f"y-range: [{r0[0]:.1f}, {r0[1]:.1f}]")
+        if n_groups < 3:
+            fails.append(f"grid has {n_groups} groups, expected the metric categories")
         if n_rows < 2:
-            fails.append(f"grid has {n_rows} rows")
+            fails.append(f"grid has {n_rows} individual rows")
 
-        # 1. Hide outliers -> fewer shown, and the y-range must contract.
-        pg.click("#t-chart-gout")
+        # 1. Untick ONE group header -> that group's lines vanish and the count
+        #    drops by exactly the group's size.
+        gsize = pg.eval_on_selector(
+            "#t-chart-grid .sgroup",
+            "el => el.querySelectorAll('.sgbody .sg').length")
+        pg.eval_on_selector("#t-chart-grid .sgroup .sgh input", "el => el.click()")
         pg.wait_for_timeout(200)
-        r1 = yrange(pg)
         on1 = shown(pg)
-        span0, span1 = r0[1] - r0[0], r1[1] - r1[0]
-        log(f"after Hide outliers: shown {on1}, y-range [{r1[0]:.1f}, {r1[1]:.1f}] "
-            f"(span {span0:.0f} -> {span1:.0f})")
-        if on1 >= on0:
-            fails.append(f"Hide outliers did not hide anything ({on0} -> {on1})")
-        if span1 >= span0:
-            fails.append(f"y-range did not contract ({span0:.0f} -> {span1:.0f}) "
-                         "— the toggle is not driving the chart")
+        log(f"after unticking one group (size {gsize}): shown {on0} -> {on1}")
+        if on1 != on0 - gsize:
+            fails.append(f"group toggle hid {on0 - on1} lines, expected {gsize}")
 
-        # 2. Show all -> back to the original count and range.
+        # 2. Hide all -> nothing; then Show all -> back to the original count/range.
+        pg.click("#t-chart-gnone")
+        pg.wait_for_timeout(150)
+        if shown(pg) != 0:
+            fails.append(f"Hide all left {shown(pg)} shown")
         pg.click("#t-chart-gall")
         pg.wait_for_timeout(200)
         on2 = shown(pg)
@@ -90,16 +95,24 @@ def main():
         if on3 != 0:
             fails.append(f"Hide all left {on3} series shown")
 
-        # 4. A single checkbox toggles exactly one series.
+        # 4. Expand a group, then a single line's checkbox toggles exactly one.
         pg.click("#t-chart-gall")
         pg.wait_for_timeout(150)
         base = shown(pg)
-        pg.eval_on_selector("#t-chart-grid .sg input", "el => el.click()")
+        pg.eval_on_selector("#t-chart-grid .sgroup .sgh .sgh-name",
+                            "el => el.click()")   # expand the first group
+        pg.wait_for_timeout(100)
+        opened = pg.eval_on_selector("#t-chart-grid .sgroup",
+                                     "el => el.getAttribute('data-open')")
+        if opened != "1":
+            fails.append("clicking a group header did not expand it")
+        pg.eval_on_selector("#t-chart-grid .sgroup[data-open='1'] .sgbody .sg input",
+                            "el => el.click()")
         pg.wait_for_timeout(150)
         one = shown(pg)
-        log(f"single toggle: {base} -> {one}")
+        log(f"expand + single line toggle: {base} -> {one}")
         if one != base - 1:
-            fails.append(f"one checkbox changed {base - one} series, expected 1")
+            fails.append(f"one line checkbox changed {base - one} series, expected 1")
 
         # 5. Filter box narrows the visible rows.
         pg.fill("#t-chart-gsearch", "draft")
