@@ -218,6 +218,51 @@ static void build_scene(void)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x22262B), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
+#ifdef LV_PROBE
+    /* #37 per-primitive comparison: render ONE primitive whose geometry
+     * matches a count-1 vyr micro-benchmark showcase case (vyr-size
+     * src/probe.rs), so scripts/lvgl-microbench.py can price the SAME shape
+     * on both renderers and report a per-primitive vyr/LVGL ratio. 0 = the
+     * background-only null (the floor both sides subtract). Content matching
+     * is imperfect by construction (see the gauge note below); the ratios are
+     * indicative, not exact — that is why they are labelled as such. */
+#if LV_PROBE == 1  /* border  <-> vyr `border`: 400x180 @40,40 r12 + 3px border */
+    lv_obj_t *o = lv_obj_create(scr);
+    lv_obj_set_pos(o, 40, 40); lv_obj_set_size(o, 400, 180);
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x2E3440), 0);
+    lv_obj_set_style_radius(o, 12, 0);
+    lv_obj_set_style_border_width(o, 3, 0);
+    lv_obj_set_style_border_color(o, lv_color_hex(0x88C0D0), 0);
+    lv_obj_set_style_pad_all(o, 0, 0);
+#elif LV_PROBE == 2  /* ring  <-> vyr `gauge`: full arc @170,45 170x170 */
+    lv_obj_t *arc = lv_arc_create(scr);
+    lv_obj_set_pos(arc, 170, 45); lv_obj_set_size(arc, 170, 170);
+    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_arc_set_bg_angles(arc, 0, 360);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0x88C0D0), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 17, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(arc, 0, LV_PART_KNOB);
+#elif LV_PROBE == 3  /* line  <-> vyr `line_h`: 20,133 -> 460,133 width 3 */
+    static lv_point_precise_t lp[2];
+    lp[0].x = 20; lp[0].y = 133; lp[1].x = 460; lp[1].y = 133;
+    lv_obj_t *ln = lv_line_create(scr);
+    lv_line_set_points(ln, lp, 2);
+    lv_obj_set_style_line_color(ln, lv_color_hex(0x4C566A), 0);
+    lv_obj_set_style_line_width(ln, 3, 0);
+#elif LV_PROBE == 4  /* rrect  <-> a rounded fill, no border: 400x180 @40,40 r12 */
+    lv_obj_t *rr = lv_obj_create(scr);
+    lv_obj_set_pos(rr, 40, 40); lv_obj_set_size(rr, 400, 180);
+    lv_obj_set_style_bg_color(rr, lv_color_hex(0x7FA8C8), 0);
+    lv_obj_set_style_radius(rr, 12, 0);
+    lv_obj_set_style_border_width(rr, 0, 0);
+    lv_obj_set_style_pad_all(rr, 0, 0);
+#endif
+    /* LV_PROBE == 0 draws nothing extra — the background-only null. */
+    return;
+#endif /* LV_PROBE */
+
     /* Header panel (vy_frame) */
     lv_obj_t *panel = lv_obj_create(scr);
     lv_obj_set_pos(panel, 12, 10);

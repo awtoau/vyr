@@ -877,6 +877,12 @@ def cmd_ledger_db(rest: list[str]) -> int:
     return _run(["python3", "scripts/ledger-sqlite.py", *rest])
 
 
+def cmd_lvgl_microbench(rest: list[str]) -> int:
+    # #37: per-primitive vyr-vs-LVGL ratio (plugin-exact, above null) into the
+    # microbench DB, for the primitives with a clean LVGL equivalent.
+    return _run(["python3", "scripts/lvgl-microbench.py", *rest])
+
+
 def cmd_gate(_rest: list[str]) -> int:
     # check-f64 (#39) sits beside check-mcu: check-mcu proves the MCU build
     # COMPILES; check-f64 proves it did not pull in a new soft-f64 helper.
@@ -973,6 +979,7 @@ HANDLERS = {
     "microbench": cmd_microbench,
     "track": cmd_track,
     "ledger-db": cmd_ledger_db,
+    "lvgl-microbench": cmd_lvgl_microbench,
     "gate": cmd_gate,
 }
 
