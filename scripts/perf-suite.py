@@ -96,15 +96,11 @@ def fingerprint(inputs: dict | None = None) -> str:
 
 
 def ledger_fingerprint() -> str | None:
-    if not LEDGER.exists():
-        return None
-    for line in LEDGER.read_text().splitlines():
-        if not line.strip():
-            continue
-        r = json.loads(line)
-        if r.get("kind") == "schema-note":
-            return r.get("suite_fingerprint")
-    return None
+    # Canonical store is SQLite now (scripts/ledger_store).
+    sys.path.insert(0, str(REPO / "scripts"))
+    import ledger_store as STORE
+    note = STORE.schema_note()
+    return note.get("suite_fingerprint") if note else None
 
 
 def main() -> int:

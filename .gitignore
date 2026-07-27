@@ -6,6 +6,3 @@ __pycache__/
 .claude/worktrees/
 scripts/lvgl-m4-bench/checker-24.inc
 
-# Derived SQLite mirrors/stores — regenerable from history.jsonl / measurement runs
-docs/perf/ledger.db
-docs/perf/*.db

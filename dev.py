@@ -33,7 +33,7 @@ COMMANDS = {
     "anim": "F18 rig acceptance: 600-frame run @480 — per-frame incremental==full + committed hash chain + PNG seq + ffmpeg lossless video (--bless re-bless; --arm qemu cross-ISA rung; --size/--frames override; --no-video)",
     "ci": "THE single comprehensive gate (run after every change): gate + M4 insn-count gate + bench + size-mcu + anim(+ARM) + ladder + track, run-all-collect-all, one summary. --quick (~1-2 min): Draft-only M4, 60 anim frames, no video/ARM. Full run = nightly unit.",
     "ladder": "F18 resolution ladder 120→4K: ns/px full+incremental, 60fps headroom, dirty %; gates vs vyr-rig/baseline.json when present (--record re-records — commit separately)",
-    "track": "THE measurement ledger (#25, schema 3): append one row for the current commit to docs/perf/history.jsonl from whatever measurement artifacts are in ./tmp (the perf-harness MATRIX, ladder/anim/arm, size, qemu-m4, board silicon cycles) + committed bench medians, then regenerate docs/perf/index.html (flat sortable tables of every recorded value). Measures nothing itself; sections absent from ./tmp are simply not recorded. Instruction counts come ONLY from tmp/perf-harness-HEAD.json (scripts/perf-harness.py), which records render-only, the benchmark's own hash fold and the total as separate fields. --regen-only rebuilds the page without appending; --rebuild-from-replay <jsonl> rebuilds the whole file from a history replay.",
+    "track": "THE measurement ledger (#25, schema 3): append one row for the current commit to the SQLite store docs/perf/ledger.db from whatever measurement artifacts are in ./tmp (the perf-harness MATRIX, ladder/anim/arm, size, qemu-m4, board silicon cycles) + committed bench medians, then regenerate docs/perf/index.html (flat sortable tables of every recorded value). Measures nothing itself; sections absent from ./tmp are simply not recorded. Instruction counts come ONLY from tmp/perf-harness-HEAD.json (scripts/perf-harness.py), which records render-only, the benchmark's own hash fold and the total as separate fields. --regen-only rebuilds the page without appending; --rebuild-from-replay <jsonl> rebuilds the whole store from a history replay.",
     "probe": "#37 painter geometry probe (DIAGNOSTIC, gates nothing): build vyr-size --features probe and price a sweep of synthetic scenes on the emulated M4 in which draws / 16-px pipeline chunks / painted pixels vary INDEPENDENTLY, then fit cost = a·draws + b·chunks + c·px. Separates per-fill_path setup from pipeline structure from irreducible per-pixel work — the decomposition no whole-frame number can produce. --tiers exact,fast,draft; --opt z|s|3; --band-h 8,16,32 (the working-set axis); --attribute (per-symbol + memory-traffic share); --host (same cases on x86-64 under callgrind). See docs/design/painter-simd-tax.md.",
     "insn-mix": "#37 exact instruction-CLASS x symbol attribution (hotblocks blocks x static disassembly, self-checking to 100.0000%): how much of each symbol is load/store (spill) vs arithmetic, plus an exact call census attributing memcpy and OUTLINED_FUNCTION_* to their CALLERS. Consumes the logs scripts/m4-attribute.py leaves in tmp/m4-attribute — no qemu time of its own.",
     "microbench": "#37/#63 the ~200-point painter micro-benchmark LANDSCAPE -> SQLite (tmp/microbench.db, queryable). Builds the parametric probe sweep (primitive x size x alpha x radius, x3 tiers) and prices every point on the emulated M4 (libinsn, exact). --deep adds the per-point {int,mem,hardware-f32,soft-f64} class split; soft-f64 share is the headline = the determinism tax (#63). --deep-full does every point (slow); default is a curated subset. DIAGNOSTIC, gates nothing. See docs/design/painter-simd-tax.md.",
@@ -865,16 +865,7 @@ def cmd_microbench(rest: list[str]) -> int:
 
 def cmd_track(rest: list[str]) -> int:
     # ONE writer, ONE ledger (#25): docs/perf/history.jsonl + docs/perf/index.html.
-    rc = _run(["python3", "scripts/ledger.py", *rest])
-    # Refresh the derived SQLite mirror too (best-effort; never fails track).
-    _run(["python3", "scripts/ledger-sqlite.py"])
-    return rc
-
-
-def cmd_ledger_db(rest: list[str]) -> int:
-    # A queryable SQLite MIRROR of the canonical history.jsonl (derived,
-    # regenerable — never replaces the jsonl). See scripts/ledger-sqlite.py.
-    return _run(["python3", "scripts/ledger-sqlite.py", *rest])
+    return _run(["python3", "scripts/ledger.py", *rest])
 
 
 def cmd_lvgl_microbench(rest: list[str]) -> int:
@@ -978,7 +969,6 @@ HANDLERS = {
     "insn-mix": cmd_insn_mix,
     "microbench": cmd_microbench,
     "track": cmd_track,
-    "ledger-db": cmd_ledger_db,
     "lvgl-microbench": cmd_lvgl_microbench,
     "gate": cmd_gate,
 }
