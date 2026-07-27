@@ -865,7 +865,16 @@ def cmd_microbench(rest: list[str]) -> int:
 
 def cmd_track(rest: list[str]) -> int:
     # ONE writer, ONE ledger (#25): docs/perf/history.jsonl + docs/perf/index.html.
-    return _run(["python3", "scripts/ledger.py", *rest])
+    rc = _run(["python3", "scripts/ledger.py", *rest])
+    # Refresh the derived SQLite mirror too (best-effort; never fails track).
+    _run(["python3", "scripts/ledger-sqlite.py"])
+    return rc
+
+
+def cmd_ledger_db(rest: list[str]) -> int:
+    # A queryable SQLite MIRROR of the canonical history.jsonl (derived,
+    # regenerable — never replaces the jsonl). See scripts/ledger-sqlite.py.
+    return _run(["python3", "scripts/ledger-sqlite.py", *rest])
 
 
 def cmd_gate(_rest: list[str]) -> int:
@@ -963,6 +972,7 @@ HANDLERS = {
     "insn-mix": cmd_insn_mix,
     "microbench": cmd_microbench,
     "track": cmd_track,
+    "ledger-db": cmd_ledger_db,
     "gate": cmd_gate,
 }
 
