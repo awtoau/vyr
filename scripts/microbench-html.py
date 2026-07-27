@@ -488,7 +488,7 @@ document.querySelectorAll('th').forEach(th => th.onclick = () => {{
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(REPO / "tmp" / "microbench.db"))
+    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "microbench.db"))
     ap.add_argument("--run", type=int, default=None)
     ap.add_argument("--standalone", default=None,
                     help="also write a SELF-CONTAINED page (inlined uPlot, vanilla "

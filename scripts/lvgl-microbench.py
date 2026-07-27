@@ -151,7 +151,7 @@ def vyr_above_null(name: str, tier: str) -> int | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(TMP / "microbench.db"))
+    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "microbench.db"))
     ap.add_argument("--frames", type=int, default=40)
     ap.add_argument("--tier", default="exact")
     a = ap.parse_args()

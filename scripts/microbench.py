@@ -337,7 +337,7 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=0,
                     help="parallel workers (each gets its own CARGO_TARGET_DIR); "
                          "0 = auto (min(12, cpu//2))")
-    ap.add_argument("--db", default=str(TMP / "microbench.db"))
+    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "microbench.db"))
     ap.add_argument("--note", default="")
     ap.add_argument("--keep-elf", action="store_true")
     a = ap.parse_args()
