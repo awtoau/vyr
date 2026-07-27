@@ -286,3 +286,78 @@ findings §3 surfaced, are now issues rather than prose — all tagged
 The two resolved rows should be folded back into `lvgl-gap.md` §8 when §3's
 readings are replicated — deliberately not done yet, because one run is not a
 measurement.
+
+## 8. The micro-benchmark landscape, and where vyr actually stands vs LVGL
+
+The §3 flat-rect sweep grew into a ~225-point matrix — every primitive the IR
+can express (rect, rounded rect, disc, the `vy_chart` **diagonal** AA polyline,
+`vy_line`, `vy_gauge` ring, bordered frame, glyph runs, image blit, and the
+composite widgets) × size × alpha × radius × the three tiers — priced on the
+emulated M4 (`./dev.py microbench`, `vyr-size/src/probe.rs`,
+`scripts/microbench.py`), stored in SQLite and viewable as a grid + graphs
+(`docs/perf/microbench.html`). Gradients are the one primitive absent — the IR
+cannot express one (**#67**).
+
+### 8.1 The gap is anti-aliased curves, and nothing else
+
+A common read of the LVGL numbers is "vyr is ~19× behind LVGL." The matrix
+shows that is true of **one tier on one class of content**, and false
+everywhere else. Per-primitive, plugin-exact, insns above the background-only
+null (`scripts/lvgl-microbench.py` — LVGL's own `main.c` compiled to render one
+matching primitive via `-DLV_PROBE`, both sides measured with libinsn, never
+SYS_CLOCK; the script refuses to store a figure above the whole-scene anchor —
+the #5-error guard, since `lvgl-gap.md` records four past errors all flattering
+vyr):
+
+| primitive | vyr **Exact** / LVGL | vyr **Draft** / LVGL |
+|---|--:|--:|
+| border (rounded + border) | 27.1× | **0.73× — vyr faster** |
+| gauge (ring) | 17.3× | **0.21× — vyr ~5× faster** |
+
+On the tier that actually ships to an MCU (**Draft**), vyr **beats** LVGL on
+both. The 17–27× is the **Exact** (oracle) tier — the byte-exact AA reference,
+routed through tiny-skia by design.
+
+**The caveat is the finding.** Draft has no anti-aliasing; LVGL's arc and
+border are anti-aliased, so part of Draft's win is a quality trade. The
+quality-matched tier is **Fast** (integer spans + AA curves through the SAME
+tiny-skia pipeline as Exact), and it sits ≈ Exact for curves:
+
+| primitive | Draft (no AA) | Fast (AA curves) | Exact (AA oracle) | insns/px |
+|---|--:|--:|--:|---|
+| gauge | 28 | **592** | 632 | Fast ≈ Exact — both pay tiny-skia's AA blitter |
+| border | 6 | 91 | 125 | |
+
+So the gap is precisely: **anti-aliased curves and strokes, through tiny-skia's
+SIMD-shaped blitter on a SIMD-less core (#37).** Its class split is 35–37 %
+memory traffic, ~1 % f64 — spill, not arithmetic (§3). LVGL hand-writes a
+scalar AA blitter; vyr borrows Skia's vectorised one — free on desktop, ~17×
+on M4. Turn AA off and vyr is faster; flat fills are already ahead
+(`exact-flat-fast` made Exact rects **30 insns/px, below Draft's 47**).
+
+### 8.2 What this means for the #37 decision
+
+- **If the product ships Draft** (hard-edged, no AA — normal on small/low-DPI
+  LCDs, pairs with #51 bitmap fonts): vyr is at-or-ahead of LVGL; there is
+  little to chase, and the 17× oracle cost is just the price of *having* an
+  oracle.
+- **If it needs AA curves on the MCU**: the 17× is tiny-skia's, and #37's
+  options (a scalar M4 blitter behind the Fast tier, or a narrow-width
+  pipeline — the second issue comment's route) are how to close it. The matrix
+  now gives the per-primitive target any such fix is measured against.
+
+### 8.3 Honest limits of the comparison
+
+- Only **border** and **gauge** have clean count-1 LVGL equivalents measured so
+  far; **line** is too cheap to resolve above null. `--lv-probe` supports more
+  primitives — each is a slow full LVGL recompile.
+- Ratios are **indicative**: cross-renderer content matching is imperfect
+  (LVGL's arc sits half a pixel inward, rounding maths differ). They agree with
+  the independent whole-scene anchor (Draft ≈ 1.7×, Exact ≈ 19×), which is the
+  cross-check that they are not error #5.
+- The text gap is the one embedded-tier deficit the matrix surfaces that is
+  NOT tiny-skia: glyph runs cost ~1,500 insns/px at every tier (runtime
+  rasterisation), where LVGL blits compile-time bitmap fonts — tracked as #51.
+
+Reproduce: `./dev.py microbench --deep --deep-full` then
+`./dev.py lvgl-microbench --tier draft` (and `--tier exact`).
