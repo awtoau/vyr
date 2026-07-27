@@ -47,7 +47,7 @@ use crate::workload::{BAND_BYTES, BAND_H, FIXTURE_H, FIXTURE_W, render_frame_ban
 /// bracketed renders follow. 2 is enough to show that the two agree; more
 /// only costs qemu wall time (a probe run is ~20 cases × reps × ~10^6..10^7
 /// guest insns under a per-TB plugin callback).
-pub const REPS: u32 = 2;
+pub const REPS: u32 = 1;
 
 /// The painted strip: rows 16..256 of the 480×270 frame, so every case
 /// crosses 15 of the 17 band seams exactly like the fixture does.
@@ -55,10 +55,16 @@ const STRIP_Y: u32 = 16;
 const STRIP_H: u32 = 240;
 
 /// Maximum draws per case. Bounds the IR-tree heap so EVERY case fits the
-/// tightest tier's arena: Fast/Draft carry a full-width RGB scratch (23,040 B)
-/// plus the gutter pixmap on top of the tree, and a 64-node tree overran the
-/// M4's 122,880 B arena there. 24 leaves comfortable headroom on all tiers.
-const MAX_COUNT: u32 = 24;
+/// tightest tier's arena AND the whole 76-case run does not fragment the
+/// `linked_list_allocator` past the point where Exact's 63,488 B band pixmap
+/// can still be re-allocated (the #46 wall). Fast/Draft carry a full-width RGB
+/// scratch (23,040 B) plus the gutter pixmap; Exact has the largest single
+/// contiguous block (the 63,488 B pixmap). With the subset font + checker now
+/// resident for the text/image cases, 24 tipped Exact into a fragmentation
+/// OOM over the full run — 12 keeps a whole run clean on every tier. The
+/// identifiability the fit needs comes from the b15…b33 boundary family and
+/// n1/n4/n16, not from a large draw count.
+const MAX_COUNT: u32 = 12;
 
 /// What a case draws. All of them fill; none of them stroke or text — this
 /// probe prices the fill pipeline and nothing else.

@@ -302,6 +302,32 @@ def split_task(tier: str, point: str, opt: str | None, slots: Slots, keep: bool)
     return {"tier": tier, "point": point, "w": w}
 
 
+def iso_landscape_task(tier: str, point: str, opt: str | None, slots: Slots, keep: bool) -> dict:
+    """Price ONE point in its own boot (renders [null, point]). Used when a
+    tier's single-boot landscape OOMs (Exact's 63,488 B pixmap can't survive
+    the fragmentation of a 76-case run — the #46 wall); a fresh boot per point
+    resets the heap. Returns the point's insns, its above-null delta, and the
+    measured painted px for both, so the caller can price it identically."""
+    with slots.acquire() as td:
+        elf = build(tier, opt, strip=True, point=point, target_dir=td)
+        try:
+            deltas, gout = run_libinsn(elf, f"{tier}-iso-{point}")
+        finally:
+            if not keep:
+                elf.unlink(missing_ok=True)
+    meta, cases = parse_cases(gout)
+    renders = map_deltas(deltas, meta, len(cases))
+    if renders is None:
+        return {"point": point, "ok": False}
+    idx = {c["name"]: i for i, c in enumerate(cases)}
+    if "null" not in idx or point not in idx:
+        return {"point": point, "ok": False}
+    ni, pi = idx["null"], idx[point]
+    return {"point": point, "ok": True, "insns": renders[pi],
+            "above": renders[pi] - renders[ni],
+            "pw": cases[pi].get("pw"), "null_pw": cases[ni].get("pw")}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tiers", default="exact,fast,draft")
@@ -374,6 +400,47 @@ def main() -> int:
             db.commit()
             ok_tiers[tier] = cases
             log(f"  {tier}: {len(rows)} points priced (null={null_insns:,} insns)")
+
+    # --- phase A2: per-case isolated landscape for tiers whose full boot OOM'd ---
+    if failed_tiers and ok_tiers:
+        canon = next(iter(ok_tiers.values()))  # names/kinds/px are tier-independent
+        canon_by_name = {c["name"]: c for c in canon}
+        names_all = [c["name"] for c in canon if c["name"] != "null"]
+        for tier in failed_tiers[:]:
+            log(f"=== {tier}: full boot failed — per-case isolated landscape "
+                f"({len(names_all)} boots, {jobs} workers) ===")
+            got: dict[str, dict] = {}
+            with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
+                futs = {ex.submit(iso_landscape_task, tier, n, a.opt, slots, keep): n
+                        for n in names_all}
+                for fut in cf.as_completed(futs):
+                    n = futs[fut]
+                    try:
+                        r = fut.result()
+                    except (GuestError, BuildError) as e:
+                        log(f"  {tier}/{n}: FAILED — {e}")
+                        continue
+                    if r.get("ok"):
+                        got[n] = r
+            rows = []
+            for n in names_all:
+                if n not in got or n not in canon_by_name:
+                    continue
+                c, g = canon_by_name[n], got[n]
+                px = c["px"]
+                if not px and g["pw"] is not None and g["null_pw"] is not None:
+                    px = max(0, g["pw"] - g["null_pw"])
+                ipp = g["above"] / px if px else None
+                rows.append((run_id, tier, n, c["kind"], c["w"], c["count"],
+                             c["alpha"], c["radius"], px, g["insns"], ipp))
+            cur.executemany(
+                "INSERT OR REPLACE INTO points(run_id,tier,name,kind,w,count,alpha,radius,px,"
+                "insns,insns_per_px) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+            db.commit()
+            if rows:
+                ok_tiers[tier] = canon  # now available to the deep phase too
+                failed_tiers.remove(tier)
+            log(f"  {tier}: {len(rows)} points priced (per-case isolated, #46 fallback)")
 
     # --- phase B: deep class split, every (tier, point) in parallel ---
     if a.deep and ok_tiers:
