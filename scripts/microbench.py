@@ -25,13 +25,12 @@ Two speeds, because plugin QEMU is slow:
     Slow — a build + hotblocks pass per point; `--deep` does a curated subset
     unless `--deep-full`.
 
-The LVGL ratio column (`lvgl_insns`, `lvgl_ratio`) is wired but populated by a
-later pass (`scripts/lvgl-m4-bench/`) only for the faithful-equivalent subset.
+The LVGL ratio columns (`lvgl_insns`, `lvgl_ratio`) are populated by
+`scripts/lvgl-microbench.py` for the faithful-equivalent subset (border/gauge).
 
-Store: SQLite at `--db` (default `docs/perf/ledger.db`, the mb_run / mb_points
-tables). The #25
-JSONL ledger is untouched — folding this into it is a separate, deliberate
-step (see docs/design/painter-simd-tax.md §6).
+Store: SQLite at `--db` (default `docs/perf/ledger.db`), in the mb_run /
+mb_points tables — ONE database shared with the perf ledger (its rows/commits/
+matrix tables are independent; see docs/design/painter-simd-tax.md §8).
 
 Output: the DB + tmp/microbench.log
 Parallel: tiers and per-point isolated builds fan out across `--jobs` workers,
@@ -40,7 +39,7 @@ each with its OWN `CARGO_TARGET_DIR` (concurrent cargo builds cannot share one
 
 Usage:  python3 scripts/microbench.py [--tiers exact,fast,draft]
                                       [--deep [--deep-full]] [--jobs N]
-                                      [--opt z|s|3] [--db docs/perf/ledger.db (mb_run / mb_points tables)]
+                                      [--opt z|s|3] [--db docs/perf/ledger.db]
                                       [--keep-elf]
 """
 from __future__ import annotations
