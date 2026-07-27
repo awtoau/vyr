@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lvgl-microbench.py — per-primitive vyr-vs-LVGL ratio, plugin-exact.
 
-Populates the `lvgl_insns` / `lvgl_ratio` columns of tmp/microbench.db for the
+Populates the `lvgl_insns` / `lvgl_ratio` columns of docs/perf/ledger.db (mb_run / mb_points tables) for the
 handful of showcase primitives that have an unambiguous LVGL equivalent
 (border, ring, line). The comparison is deliberately the cleanest possible:
 
@@ -24,8 +24,8 @@ Content matching is imperfect by construction (LVGL's arc sits half a pixel
 inward, its border/rounding maths differ) — the ratio is INDICATIVE, and the
 page labels it so.
 
-Output: tmp/microbench.db (updated) + tmp/lvgl-microbench.log
-Usage:  python3 scripts/lvgl-microbench.py [--db tmp/microbench.db]
+Output: docs/perf/ledger.db (mb_run / mb_points tables) (updated) + tmp/lvgl-microbench.log
+Usage:  python3 scripts/lvgl-microbench.py [--db docs/perf/ledger.db (mb_run / mb_points tables)]
                                            [--frames 40] [--tier exact]
 """
 from __future__ import annotations
@@ -151,7 +151,7 @@ def vyr_above_null(name: str, tier: str) -> int | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "microbench.db"))
+    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "ledger.db"))
     ap.add_argument("--frames", type=int, default=40)
     ap.add_argument("--tier", default="exact")
     a = ap.parse_args()
@@ -169,7 +169,7 @@ def main() -> int:
     log(f"LVGL null (background only): {lv_null:,} insns/frame")
 
     con = sqlite3.connect(a.db)
-    run_id = con.execute("SELECT max(run_id) FROM run").fetchone()[0]
+    run_id = con.execute("SELECT max(run_id) FROM mb_run").fetchone()[0]
     written = 0
     for probe, (vyr_name, label) in MAP.items():
         lv = lvgl_frame(probe, a.frames)
@@ -186,7 +186,7 @@ def main() -> int:
             log(f"  {label}: vyr above-null unavailable — skipping")
             continue
         ratio = vy / lv_above
-        con.execute("UPDATE points SET lvgl_insns=?, lvgl_ratio=? "
+        con.execute("UPDATE mb_points SET lvgl_insns=?, lvgl_ratio=? "
                     "WHERE run_id=? AND tier=? AND name=?",
                     (lv_above, ratio, run_id, a.tier, vyr_name))
         con.commit()

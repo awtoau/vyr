@@ -6,8 +6,8 @@ parametric probe sweep (`vyr-size/src/probe.rs` `cases()` — primitive × size 
 alpha × radius, ×3 tiers), prices every point on the emulated Cortex-M4, and
 writes one row per (tier, point) into a queryable SQLite database so you can:
 
-    SELECT name, tier, insns, f64_share FROM points
-    WHERE run_id = (SELECT max(run_id) FROM run)
+    SELECT name, tier, insns, f64_share FROM mb_points
+    WHERE run_id = (SELECT max(run_id) FROM mb_run)
     ORDER BY f64_share DESC;                       -- the determinism-tax leaders
 
 Two speeds, because plugin QEMU is slow:
@@ -28,7 +28,7 @@ Two speeds, because plugin QEMU is slow:
 The LVGL ratio column (`lvgl_insns`, `lvgl_ratio`) is wired but populated by a
 later pass (`scripts/lvgl-m4-bench/`) only for the faithful-equivalent subset.
 
-Store: SQLite at `--db` (default `tmp/microbench.db`, regenerable). The #25
+Store: SQLite at `--db` (default `docs/perf/ledger.db (mb_run / mb_points tables)`, regenerable). The #25
 JSONL ledger is untouched — folding this into it is a separate, deliberate
 step (see docs/design/painter-simd-tax.md §6).
 
@@ -39,7 +39,7 @@ each with its OWN `CARGO_TARGET_DIR` (concurrent cargo builds cannot share one
 
 Usage:  python3 scripts/microbench.py [--tiers exact,fast,draft]
                                       [--deep [--deep-full]] [--jobs N]
-                                      [--opt z|s|3] [--db tmp/microbench.db]
+                                      [--opt z|s|3] [--db docs/perf/ledger.db (mb_run / mb_points tables)]
                                       [--keep-elf]
 """
 from __future__ import annotations
@@ -233,11 +233,11 @@ def map_deltas(deltas: list[int], meta: dict, ncases: int) -> list[int] | None:
 # --- SQLite ------------------------------------------------------------------
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS run (
+CREATE TABLE IF NOT EXISTS mb_run (
     run_id   INTEGER PRIMARY KEY,
     ts       TEXT, git_commit TEXT, opt TEXT, band_h INTEGER, machine TEXT, note TEXT
 );
-CREATE TABLE IF NOT EXISTS points (
+CREATE TABLE IF NOT EXISTS mb_points (
     run_id INTEGER, tier TEXT, name TEXT, kind TEXT,
     w INTEGER, count INTEGER, alpha INTEGER, radius INTEGER, px INTEGER,
     insns INTEGER, insns_per_px REAL,
@@ -337,7 +337,7 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=0,
                     help="parallel workers (each gets its own CARGO_TARGET_DIR); "
                          "0 = auto (min(12, cpu//2))")
-    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "microbench.db"))
+    ap.add_argument("--db", default=str(REPO / "docs" / "perf" / "ledger.db"))
     ap.add_argument("--note", default="")
     ap.add_argument("--keep-elf", action="store_true")
     a = ap.parse_args()
@@ -351,7 +351,7 @@ def main() -> int:
 
     db = open_db(Path(a.db))
     cur = db.cursor()
-    cur.execute("INSERT INTO run(ts, git_commit, opt, machine, note) VALUES (?,?,?,?,?)",
+    cur.execute("INSERT INTO mb_run(ts, git_commit, opt, machine, note) VALUES (?,?,?,?,?)",
                 (time.strftime("%Y-%m-%dT%H:%M:%S%z"), git_commit(), a.opt or "z",
                  MACHINE, a.note))
     run_id = cur.lastrowid
@@ -379,7 +379,7 @@ def main() -> int:
                 log(f"  {tier}: delta stream did not align — skipping tier")
                 failed_tiers.append(tier)
                 continue
-            cur.execute("UPDATE run SET band_h=? WHERE run_id=?", (meta["band_h"], run_id))
+            cur.execute("UPDATE mb_run SET band_h=? WHERE run_id=?", (meta["band_h"], run_id))
             names = [c["name"] for c in cases]
             null_insns = renders[names.index("null")]
             null_pw = cases[names.index("null")].get("pw")  # background-only px
@@ -395,7 +395,7 @@ def main() -> int:
                 rows.append((run_id, tier, case["name"], case["kind"], case["w"], case["count"],
                              case["alpha"], case["radius"], px, renders[ci], ipp))
             cur.executemany(
-                "INSERT OR REPLACE INTO points(run_id,tier,name,kind,w,count,alpha,radius,px,"
+                "INSERT OR REPLACE INTO mb_points(run_id,tier,name,kind,w,count,alpha,radius,px,"
                 "insns,insns_per_px) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
             db.commit()
             ok_tiers[tier] = cases
@@ -434,7 +434,7 @@ def main() -> int:
                 rows.append((run_id, tier, n, c["kind"], c["w"], c["count"],
                              c["alpha"], c["radius"], px, g["insns"], ipp))
             cur.executemany(
-                "INSERT OR REPLACE INTO points(run_id,tier,name,kind,w,count,alpha,radius,px,"
+                "INSERT OR REPLACE INTO mb_points(run_id,tier,name,kind,w,count,alpha,radius,px,"
                 "insns,insns_per_px) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
             db.commit()
             if rows:
@@ -484,7 +484,7 @@ def main() -> int:
                 hw = max(0, w["hw_f32_insns"] - floor.get("hw_f32_insns", 0))
                 mem = max(0, w["mem_insns"] - floor.get("mem_insns", 0))
                 cur.execute(
-                    "UPDATE points SET soft_f64=?,hw_f32=?,mem=?,total_deep=?,"
+                    "UPDATE mb_points SET soft_f64=?,hw_f32=?,mem=?,total_deep=?,"
                     "f64_share=?,f32_hw_share=?,mem_share=? WHERE run_id=? AND tier=? AND name=?",
                     (f64, hw, mem, tot, f64 / tot, hw / tot, mem / tot, run_id, tier, point))
                 db.commit()
@@ -507,7 +507,7 @@ def main() -> int:
     log("=== landscape (top per-px, latest run) ===")
     for tier in tiers:
         top = cur.execute(
-            "SELECT name, insns, insns_per_px, f64_share FROM points "
+            "SELECT name, insns, insns_per_px, f64_share FROM mb_points "
             "WHERE run_id=? AND tier=? AND name!='null' "
             "ORDER BY insns_per_px DESC LIMIT 8", (run_id, tier)).fetchall()
         log(f"  {tier}: most expensive per px")
