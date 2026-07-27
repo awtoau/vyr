@@ -234,16 +234,19 @@ static void build_scene(void)
     lv_obj_set_style_border_width(o, 3, 0);
     lv_obj_set_style_border_color(o, lv_color_hex(0x88C0D0), 0);
     lv_obj_set_style_pad_all(o, 0, 0);
-#elif LV_PROBE == 2  /* ring  <-> vyr `gauge`: full arc @170,45 170x170 */
-    lv_obj_t *arc = lv_arc_create(scr);
-    lv_obj_set_pos(arc, 170, 45); lv_obj_set_size(arc, 170, 170);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_arc_set_bg_angles(arc, 0, 360);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(0x88C0D0), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, 17, LV_PART_MAIN);
-    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_set_style_pad_all(arc, 0, LV_PART_KNOB);
+#elif LV_PROBE == 2  /* ring  <-> vyr `gauge`: full arc @170,45 170x170.
+                      * NB: a distinct name from the fixed scene's `arc` — the
+                      * fixed build_scene still compiles after the return below,
+                      * so a shared name would redeclare in one scope. */
+    lv_obj_t *garc = lv_arc_create(scr);
+    lv_obj_set_pos(garc, 170, 45); lv_obj_set_size(garc, 170, 170);
+    lv_obj_remove_flag(garc, LV_OBJ_FLAG_CLICKABLE);
+    lv_arc_set_bg_angles(garc, 0, 360);
+    lv_obj_set_style_arc_color(garc, lv_color_hex(0x88C0D0), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(garc, 17, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(garc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(garc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(garc, 0, LV_PART_KNOB);
 #elif LV_PROBE == 3  /* line  <-> vyr `line_h`: 20,133 -> 460,133 width 3 */
     static lv_point_precise_t lp[2];
     lp[0].x = 20; lp[0].y = 133; lp[1].x = 460; lp[1].y = 133;
