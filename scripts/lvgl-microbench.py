@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lvgl-microbench.py — per-primitive vyr-vs-LVGL ratio, plugin-exact.
 
-Populates the `lvgl_insns` / `lvgl_ratio` columns of docs/perf/ledger.db (mb_run / mb_points tables) for the
+Populates the `lvgl_insns` / `lvgl_ratio` columns of the mb_points table in
 handful of showcase primitives that have an unambiguous LVGL equivalent
 (border, ring, line). The comparison is deliberately the cleanest possible:
 
@@ -24,8 +24,8 @@ Content matching is imperfect by construction (LVGL's arc sits half a pixel
 inward, its border/rounding maths differ) — the ratio is INDICATIVE, and the
 page labels it so.
 
-Output: docs/perf/ledger.db (mb_run / mb_points tables) (updated) + tmp/lvgl-microbench.log
-Usage:  python3 scripts/lvgl-microbench.py [--db docs/perf/ledger.db (mb_run / mb_points tables)]
+Output: docs/perf/ledger.db (mb_points table, updated) + tmp/lvgl-microbench.log
+Usage:  python3 scripts/lvgl-microbench.py [--db docs/perf/ledger.db]
                                            [--frames 40] [--tier exact]
 """
 from __future__ import annotations

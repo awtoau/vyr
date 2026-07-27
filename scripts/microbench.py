@@ -28,7 +28,8 @@ Two speeds, because plugin QEMU is slow:
 The LVGL ratio column (`lvgl_insns`, `lvgl_ratio`) is wired but populated by a
 later pass (`scripts/lvgl-m4-bench/`) only for the faithful-equivalent subset.
 
-Store: SQLite at `--db` (default `docs/perf/ledger.db (mb_run / mb_points tables)`, regenerable). The #25
+Store: SQLite at `--db` (default `docs/perf/ledger.db`, the mb_run / mb_points
+tables). The #25
 JSONL ledger is untouched — folding this into it is a separate, deliberate
 step (see docs/design/painter-simd-tax.md §6).
 
