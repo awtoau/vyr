@@ -375,7 +375,7 @@ fn main() {
                     Ok(()) => {
                         println!(
                             "INFO  [vyr-size] wrote {} probe scenes to {dir}",
-                            probe::CASES.len()
+                            probe::case_count()
                         );
                         return;
                     }

@@ -152,8 +152,11 @@ def run_qemu(elf: Path, tag: str) -> tuple[list[int], str]:
     return deltas, gout
 
 
+# `radius=` was added when the sweep became parametric; keep it OPTIONAL so
+# this script reads both the old hand-list output and the new grid output.
 CASE_RE = re.compile(
-    r"case i=(\d+) name=(\S+) kind=(\S+) w=(\d+) count=(\d+) alpha=(\d+) px=(\d+)")
+    r"case i=(\d+) name=(\S+) kind=(\S+) w=(\d+) count=(\d+) alpha=(\d+)"
+    r"(?: radius=(\d+))? px=(\d+)")
 RESULT_RE = re.compile(r"result i=(\d+) name=(\S+) fnv1a=(0x[0-9a-f]+) pixels_written=(\d+)")
 HEADER_RE = re.compile(r"probe \(#37\): (\d+) cases x (\d+) timed reps, "
                        r"(\d+)x(\d+) in \d+x(\d+) bands, quality=(\w+)")
@@ -168,7 +171,9 @@ def parse_guest(gout: str) -> dict:
     for m in CASE_RE.finditer(gout):
         cases.append({"i": int(m.group(1)), "name": m.group(2), "kind": m.group(3),
                       "w": int(m.group(4)), "count": int(m.group(5)),
-                      "alpha": int(m.group(6)), "px": int(m.group(7))})
+                      "alpha": int(m.group(6)),
+                      "radius": int(m.group(7)) if m.group(7) else 0,
+                      "px": int(m.group(8))})
     results = {int(m.group(1)): {"fnv1a": m.group(3), "pixels_written": int(m.group(4))}
                for m in RESULT_RE.finditer(gout)}
     n_cases, reps = int(h.group(1)), int(h.group(2))

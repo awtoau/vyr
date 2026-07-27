@@ -133,10 +133,13 @@ fn blend_draft_fast_full_fastpath() {
             100.0 * cov
         );
     }
+    // Exact fast-paths the FLAT translucent rect too (#37 pixmap-direct path,
+    // byte-identically — the golden-hash tests still pass), so it has a non-zero
+    // fast-path count. Curves/lines still go through tiny-skia.
     let (_, ex) = render_full(Quality::Exact);
-    assert_eq!(
-        ex.fastpath_pixels, 0,
-        "Exact must route the translucent rect through tiny-skia, not the fast path"
+    assert!(
+        ex.fastpath_pixels > 0,
+        "Exact should fast-path the flat translucent rect (#37, byte-identically)"
     );
 }
 

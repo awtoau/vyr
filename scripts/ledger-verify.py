@@ -248,13 +248,15 @@ def main(argv: list[str]) -> int:
     global FAIL
     shots = "--no-shots" not in argv
 
-    # 1. the data is not ours to change
-    d = sh("git", "diff", "--stat", "--", "docs/perf/history.jsonl")
-    check("history.jsonl unmodified", d.stdout.strip() == "",
+    # 1. the data is not ours to change — the canonical store is SQLite now.
+    d = sh("git", "diff", "--stat", "--", "docs/perf/ledger.db")
+    check("ledger.db unmodified", d.stdout.strip() == "",
           d.stdout.strip() or "clean")
 
-    rows = [json.loads(ln) for ln in (PERF / "history.jsonl").read_text().splitlines()
-            if ln.strip()]
+    import sys as _sys
+    _sys.path.insert(0, str(REPO / "scripts"))
+    import ledger_store as STORE
+    rows = STORE.load_rows()
     meas = [r for r in rows if r.get("kind", "measurement") == "measurement"]
     mrows = [r for r in meas if r.get("matrix")]
     cells = [(r, c) for r in mrows for c in r["matrix"]["cells"]]

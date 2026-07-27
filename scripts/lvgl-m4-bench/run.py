@@ -224,7 +224,7 @@ def gen_checker_header(logf):
 
 
 def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf",
-          verify=False):
+          verify=False, probe=None):
     """Compile + link the harness. `dump_path`, when set, adds -DDUMP_FRAME to
     the HARNESS translation units only (startup.c, main.c) — the LVGL objects
     are bit-identical either way, so they are reused from a previous build when
@@ -253,6 +253,9 @@ def build(mem_kb, logf, frames=None, dump_path=None, elf_name="lvgl-m4.elf",
         harness_extra = ["-DDUMP_FRAME=1", f'-DDUMP_FRAME_PATH="{dump_path}"']
     if verify:
         harness_extra += ["-DVERIFY=1"]
+    if probe is not None:
+        # #37 per-primitive comparison: render ONE primitive (main.c LV_PROBE).
+        harness_extra += [f"-DLV_PROBE={probe}"]
 
     sources = harness + lvgl_sources()
     log(f"compiling {len(sources)} translation units (LVGL + harness), "
@@ -419,6 +422,10 @@ def main():
                          "default (perf) build has no fold and reports render_only. "
                          "Writes its own suffixed ELF/log/result so it never overwrites "
                          "the perf artefacts.")
+    ap.add_argument("--lv-probe", type=int, default=None,
+                    help="#37: render ONE primitive (main.c LV_PROBE; 0=null, 1=border, "
+                         "2=ring, 3=line, 4=rrect) and write a per-probe ELF. Consumed by "
+                         "scripts/lvgl-microbench.py for the per-primitive vyr/LVGL ratio.")
     args = ap.parse_args()
 
     global LVGL_ROOT, LVGL_SRC, LVGL_INC, OPT
@@ -435,6 +442,8 @@ def main():
     sfx = "" if OPT == OPT_DEFAULT else OPT
     if args.verify:
         sfx += "-verify"
+    if args.lv_probe is not None:
+        sfx += f"-probe{args.lv_probe}"
     elf_name = f"lvgl-m4{sfx}.elf"
     semilog = os.path.join(TMP, f"lvgl-m4{sfx}.log")
     resultjson = os.path.join(TMP, f"lvgl-m4{sfx}-result.json")
@@ -474,7 +483,7 @@ def main():
             logf)
         elf = build(args.mem_kb, logf, args.frames, dump_path,
                     "lvgl-m4-dump.elf" if dump_path else elf_name,
-                    verify=args.verify)
+                    verify=args.verify, probe=args.lv_probe)
         if not elf:
             log("BUILD FAILED — see log", logf)
             return 2

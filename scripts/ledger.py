@@ -5,7 +5,7 @@ Replaces the two parallel ledgers this repo used to keep (``docs/perf`` written
 by ``perf-history.py`` and ``docs/metrics`` written by ``metrics-history.py``).
 There is now exactly ONE canonical ledger:
 
-    docs/perf/history.jsonl      append-only, committed, one row per run
+    docs/perf/ledger.db          SQLite; one row per run (rows table, lossless)
     docs/perf/index.html         regenerated from it (+ SVG charts beside it)
 
 Canonical entry point: ``./dev.py track``. Output timestamped → tmp/ledger.log.
@@ -123,7 +123,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TMP = REPO / "tmp"
 LEDGER_DIR = REPO / "docs" / "perf"
-HISTORY = LEDGER_DIR / "history.jsonl"
+# The canonical store is SQLite now (docs/perf/ledger.db, scripts/ledger_store).
+# history.jsonl is retired. Rows are kept losslessly, so everything downstream
+# (index.html) reads the SAME dicts it always did — only the I/O moved.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ledger_store as STORE  # noqa: E402
+HISTORY = STORE.DB  # kept as the name every message/path reference already uses
 SCHEMA = 3
 
 
@@ -555,15 +560,8 @@ def build_row() -> dict:
 
 
 def _ledger_suite_fingerprint() -> str | None:
-    if not HISTORY.exists():
-        return None
-    for ln in HISTORY.read_text().splitlines():
-        if not ln.strip():
-            continue
-        r = json.loads(ln)
-        if r.get("kind") == "schema-note":
-            return r.get("suite_fingerprint")
-    return None
+    note = STORE.schema_note()
+    return note.get("suite_fingerprint") if note else None
 
 
 def append_row() -> dict | None:
@@ -591,17 +589,16 @@ def append_row() -> dict | None:
             "(run ./dev.py ladder / anim / size-mcu / qemu-m4, or scripts/qemu-insn.py)")
         return None
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    with open(HISTORY, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    STORE.append(row)
     log(f"appended row: commit {row['commit']}{'+dirty' if row['dirty'] else ''}, "
         f"sections [{', '.join(sections)}] → {HISTORY.relative_to(REPO)}")
     return row
 
 
 def load_all(path: Path = HISTORY) -> list[dict]:
-    if not path.exists():
+    rows = STORE.load_rows(path)
+    if not rows:
         return []
-    rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
     bad = [r.get("commit", r.get("kind")) for r in rows if r.get("schema") != SCHEMA]
     if bad:
         raise SystemExit(
@@ -725,8 +722,7 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
         raise SystemExit(f"ledger: no replay file at {replay_path}")
     # Deliberately NOT load_all(): the rebuild is the one path allowed to read a
     # previous schema, precisely so it can delete what that schema got wrong.
-    old = [json.loads(ln) for ln in HISTORY.read_text().splitlines() if ln.strip()] \
-        if HISTORY.exists() else []
+    old = STORE.load_rows()
     # The replay is the ONLY authority. Old-instrument (schema-2) rows are NOT
     # carried forward: they were measured with tooling the four measurement
     # errors discredited, some with a dirty worktree, and — having no `matrix` —
@@ -791,10 +787,7 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
         note["suite_fingerprint"] = None
         log(f"WARN: suite fingerprint unavailable ({e})")
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    with open(HISTORY, "w", encoding="utf-8") as f:
-        f.write(json.dumps(note, separators=(",", ":")) + "\n")
-        for r in allrows + skips:
-            f.write(json.dumps(r, separators=(",", ":")) + "\n")
+    STORE.rewrite([note] + allrows + skips)
     log(f"rebuilt {HISTORY.relative_to(REPO)}: {len(allrows)} row(s) + {len(skips)} skip(s)")
     return allrows
 
@@ -805,7 +798,7 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
 # callouts, no narrative bands, no status colour, no wall of charts: those
 # interpreted the data, and interpretation belongs in a commit message or an
 # issue, not in the ledger's own view of itself. What is here is every field of
-# every row of history.jsonl, sortable by any column — plus one plot of how the
+# every ledger row, sortable by any column — plus one plot of how the
 # numeric ones moved, which reports shape and computes no verdict.
 #
 # Sorting is Tabulator's (vendored, MIT — see docs/perf/vendor/README.md).
@@ -1005,7 +998,7 @@ def other_rows(allrows: list[dict]) -> list[dict]:
     return out
 
 
-# --- table 3: one row per line of history.jsonl ------------------------------
+# --- table 3: one row per ledger entry ------------------------------
 
 def run_rows(allrows: list[dict]) -> list[dict]:
     rows = []
@@ -1041,7 +1034,7 @@ def _c(f, t, k="text", d="", w=None, lst=False):
 
 
 IDENT_COLS = [
-    _c("run", "run", "num", "position in history.jsonl — 0 is the oldest line", 100),
+    _c("run", "run", "num", "position in the ledger — 0 is the oldest row", 100),
     _c("commit", "commit", "mono", "short commit the measurement was taken on", lst=True),
     _c("commit_full", "commit (full)", "mono"),
     _c("commit_date", "commit date", "mono", "author date of that commit"),
@@ -1120,7 +1113,7 @@ MATRIX_COLS = [
 ]
 
 OTHER_COLS = [
-    _c("run", "run", "num", "position in history.jsonl", 100),
+    _c("run", "run", "num", "position in the ledger", 100),
     _c("kind", "kind", "text", "", lst=True),
     _c("commit", "commit", "mono", "", lst=True),
     _c("commit_date", "commit date", "mono"),
@@ -1133,7 +1126,7 @@ OTHER_COLS = [
 ]
 
 RUN_COLS = [
-    _c("run", "run", "num", "position in history.jsonl", 82),
+    _c("run", "run", "num", "position in the ledger", 82),
     _c("kind", "kind", "text", "", lst=True),
     _c("schema", "schema", "num"),
 ] + IDENT_COLS[1:] + [
@@ -1672,7 +1665,7 @@ TABLE_JS = r"""
     /* honest failure: a blank div is a bug, so say what is missing */
     Array.prototype.forEach.call(document.querySelectorAll('.tablecard'), function(n){
       n.textContent = 'vendor/tabulator.min.js did not load, so no table was built. '
-        + 'The data itself is in docs/perf/history.jsonl.';
+        + 'The data itself is in docs/perf/ledger.db.';
     });
     return;
   }
@@ -1813,7 +1806,7 @@ CHART_JS = r"""
   }
   if (typeof uPlot === 'undefined') {
     dead('vendor/uplot.min.js did not load, so the chart was not drawn. Every '
-       + 'value it plots is in the tables below and in docs/perf/history.jsonl.');
+       + 'value it plots is in the tables below and in docs/perf/ledger.db.');
     return;
   }
 
@@ -2490,9 +2483,9 @@ def page_html(history: list[dict]) -> str:
   <button id="themetoggle" class="themetoggle" type="button">Theme: auto</button>
 </div>
 <p class="lede">Every value recorded in
-<a href="history.jsonl"><code>history.jsonl</code></a>, as flat sortable tables:
+<a href="ledger.db"><code>ledger.db</code></a> (SQLite), as flat sortable tables:
 the performance matrix cell by cell, every other recorded value one value per
-row, and one row per line of the file. Nothing is summarised, ranked or
+row, and one row per ledger entry. Nothing is summarised, ranked or
 coloured here. Regenerated from the file by <code>./dev.py track</code>
 (<code>scripts/ledger.py</code>) and never hand-edited; to change a number, take
 a measurement.</p>
@@ -2521,13 +2514,13 @@ how each number is produced:
               "<code>section</code> or sort <code>path</code> to get a series back.")}
 
 {_table_block("t-runs", "Runs",
-              "One row per line of <code>history.jsonl</code>, including the schema "
+              "One row per ledger entry, including the schema "
               "note and any commit that could not be measured. <code>has …</code> "
               "is 1 where the run recorded that section — rows are sparse because "
               "a run records what it measured and nothing else.")}
 
 <p class="foot">Generated by <code>scripts/ledger.py</code> from
-<code>docs/perf/history.jsonl</code> — one writer, one file, one page. Table
+<code>docs/perf/ledger.db</code> (SQLite) — one writer, one store, one page. Table
 rendering by <a href="https://tabulator.info/">Tabulator</a> {TAB_VERSION} and
 the chart by <a href="https://github.com/leeoniya/uPlot">uPlot</a>
 {UPLOT_VERSION}, both MIT and both vendored under

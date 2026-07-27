@@ -8,7 +8,7 @@ from this file without re-running its command is a claim about the past.
 
 **The live version of every figure below is the ledger**,
 [`docs/perf/index.html`](perf/index.html), rebuilt from
-[`history.jsonl`](perf/history.jsonl) — one row per measured commit, one
+[`ledger.db`](perf/ledger.db) (SQLite) — one row per measured commit, one
 instrument, full per-cell provenance.
 
 **Chronology:** [`measurements/perf-history.md`](measurements/perf-history.md) records how
@@ -126,7 +126,7 @@ fixed window overhead 7-11 instructions (the clock-read call itself).
 
 **Measured 2026-07-24 at `5482dad`** by `scripts/perf-harness.py` — one
 instrument, one session, every firmware, and the same figures replayed over the
-whole history into [`perf/history.jsonl`](perf/index.html).
+whole history into [`perf/ledger.db`](perf/index.html) (SQLite).
 
 > ### Quote the RENDER-ONLY column, and check how it was obtained
 >
@@ -522,7 +522,7 @@ provenance — tool version, source commit, ELF SHA-256, every run's raw values.
 | §4.4 reproducibility of two such runs | `python3 scripts/present-compare-runs.py A.json B.json` | `tmp/present-compare-runs.log` |
 | Host ladder / ns-px | `./dev.py ladder`, `./dev.py bench` | `tmp/rig-ladder.json` |
 | Register-level board debugging | `python3 scripts/board-diag.py` | `tmp/board-diag.json` |
-| **Record all of the above as one dated row** | `./dev.py track` | `docs/perf/history.jsonl` + `docs/perf/index.html` |
+| **Record all of the above as one dated row** | `./dev.py track` | `docs/perf/ledger.db` + `docs/perf/index.html` |
 
 Notes that will cost time if forgotten:
 
@@ -547,7 +547,7 @@ Notes that will cost time if forgotten:
 
 | Issue | Why it matters here |
 |---|---|
-| ~~[#25](https://github.com/awtoau/vyr/issues/25)~~ | **closed.** The two parallel ledgers are now one: `docs/perf/history.jsonl` (`"schema": 3`), with the `matrix` section as the only source of an M4 instruction figure and first-class sections for §4 (`silicon`, `board_anim`). Rebuilt 2026-07-24 from a replay of the whole history by one instrument; the SYS_CLOCK-era numbers are deleted rather than relabelled. |
+| ~~[#25](https://github.com/awtoau/vyr/issues/25)~~ | **closed.** The two parallel ledgers are now one SQLite store: `docs/perf/ledger.db` (`"schema": 3`), with the `matrix` section as the only source of an M4 instruction figure and first-class sections for §4 (`silicon`, `board_anim`). Rebuilt 2026-07-24 from a replay of the whole history by one instrument; the SYS_CLOCK-era numbers are deleted rather than relabelled. |
 | [#27](https://github.com/awtoau/vyr/issues/27) | partly addressed: the `Fast` tier exists and matches Exact's edge quality, but at 4.4x Draft's cost; the LVGL harness's checker and gauge are content-matched, its theme colours and font are not |
 | [#30](https://github.com/awtoau/vyr/issues/30) | LTDC+SDRAM — weakened by §4.3, not eliminated |
 | [#29](https://github.com/awtoau/vyr/issues/29) | scaling: unresolved, and constrained by byte-exact band equivalence |

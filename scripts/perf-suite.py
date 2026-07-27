@@ -34,7 +34,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TMP = REPO / "tmp"
-LEDGER = REPO / "docs" / "perf" / "history.jsonl"
+# (the canonical store is docs/perf/ledger.db via scripts/ledger_store)
 WORKLOAD = REPO / "vyr-size" / "src" / "workload.rs"
 LVGL_MAIN = REPO / "scripts" / "lvgl-m4-bench" / "main.c"
 LVGL_CONF = REPO / "scripts" / "lvgl-m4-bench" / "lv_conf.h"
@@ -96,15 +96,11 @@ def fingerprint(inputs: dict | None = None) -> str:
 
 
 def ledger_fingerprint() -> str | None:
-    if not LEDGER.exists():
-        return None
-    for line in LEDGER.read_text().splitlines():
-        if not line.strip():
-            continue
-        r = json.loads(line)
-        if r.get("kind") == "schema-note":
-            return r.get("suite_fingerprint")
-    return None
+    # Canonical store is SQLite now (scripts/ledger_store).
+    sys.path.insert(0, str(REPO / "scripts"))
+    import ledger_store as STORE
+    note = STORE.schema_note()
+    return note.get("suite_fingerprint") if note else None
 
 
 def main() -> int:
