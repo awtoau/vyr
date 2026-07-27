@@ -73,10 +73,10 @@ One discoverable entry point per repo; AI agents enumerate it via
 measurement-ledger writer — see below). Return codes:
 0 success, non-zero failure, 2 usage/unimplemented.
 
-## The measurement ledger — ONE file, ONE writer
+## The measurement ledger — ONE store, ONE writer
 
-`docs/perf/history.jsonl` is **the** canonical measurement history: append-only,
-committed, one row per run, `"schema": 3` (the matrix — platform × tier ×
+`docs/perf/ledger.db` (SQLite) is **the** canonical measurement history: one
+committed store, one row per run, `"schema": 3` (the matrix — platform × tier ×
 opt-level cells, each with render-only, the benchmark's own fold and the total
 as separate fields). `docs/perf/index.html` — one indexed line chart plus flat
 sortable tables of every value in that file, and nothing else — is regenerated

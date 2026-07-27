@@ -334,7 +334,7 @@ at `3e7c620`, 64,422,179 at `56da347`, 51,349,644 at `f0a101a`, fold 3,110,434 �
 which is the evidence that the instrument, not the memory of it, is what the
 new series rests on.
 
-`docs/perf/history.jsonl` is **schema 3**: the `insns` section is gone, replaced
+`docs/perf/ledger.db` (SQLite; the JSONL was retired) is **schema 3**: the `insns` section is gone, replaced
 by a `matrix` whose cells are keyed by platform × tier × opt-level and record
 `insns_per_frame_total`, `harness_fold_insns` and `insns_per_frame_render_only`
 as three separate mandatory fields. The SYS_CLOCK-derived rows are **deleted,

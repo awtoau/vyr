@@ -34,7 +34,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TMP = REPO / "tmp"
-LEDGER = REPO / "docs" / "perf" / "history.jsonl"
+# (the canonical store is docs/perf/ledger.db via scripts/ledger_store)
 WORKLOAD = REPO / "vyr-size" / "src" / "workload.rs"
 LVGL_MAIN = REPO / "scripts" / "lvgl-m4-bench" / "main.c"
 LVGL_CONF = REPO / "scripts" / "lvgl-m4-bench" / "lv_conf.h"

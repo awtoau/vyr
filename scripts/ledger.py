@@ -5,7 +5,7 @@ Replaces the two parallel ledgers this repo used to keep (``docs/perf`` written
 by ``perf-history.py`` and ``docs/metrics`` written by ``metrics-history.py``).
 There is now exactly ONE canonical ledger:
 
-    docs/perf/history.jsonl      append-only, committed, one row per run
+    docs/perf/ledger.db          SQLite; one row per run (rows table, lossless)
     docs/perf/index.html         regenerated from it (+ SVG charts beside it)
 
 Canonical entry point: ``./dev.py track``. Output timestamped → tmp/ledger.log.
@@ -798,7 +798,7 @@ def rebuild_from_replay(replay_path: Path) -> list[dict]:
 # callouts, no narrative bands, no status colour, no wall of charts: those
 # interpreted the data, and interpretation belongs in a commit message or an
 # issue, not in the ledger's own view of itself. What is here is every field of
-# every row of history.jsonl, sortable by any column — plus one plot of how the
+# every ledger row, sortable by any column — plus one plot of how the
 # numeric ones moved, which reports shape and computes no verdict.
 #
 # Sorting is Tabulator's (vendored, MIT — see docs/perf/vendor/README.md).
@@ -998,7 +998,7 @@ def other_rows(allrows: list[dict]) -> list[dict]:
     return out
 
 
-# --- table 3: one row per line of history.jsonl ------------------------------
+# --- table 3: one row per ledger entry ------------------------------
 
 def run_rows(allrows: list[dict]) -> list[dict]:
     rows = []
@@ -1034,7 +1034,7 @@ def _c(f, t, k="text", d="", w=None, lst=False):
 
 
 IDENT_COLS = [
-    _c("run", "run", "num", "position in history.jsonl — 0 is the oldest line", 100),
+    _c("run", "run", "num", "position in the ledger — 0 is the oldest row", 100),
     _c("commit", "commit", "mono", "short commit the measurement was taken on", lst=True),
     _c("commit_full", "commit (full)", "mono"),
     _c("commit_date", "commit date", "mono", "author date of that commit"),
@@ -1113,7 +1113,7 @@ MATRIX_COLS = [
 ]
 
 OTHER_COLS = [
-    _c("run", "run", "num", "position in history.jsonl", 100),
+    _c("run", "run", "num", "position in the ledger", 100),
     _c("kind", "kind", "text", "", lst=True),
     _c("commit", "commit", "mono", "", lst=True),
     _c("commit_date", "commit date", "mono"),
@@ -1126,7 +1126,7 @@ OTHER_COLS = [
 ]
 
 RUN_COLS = [
-    _c("run", "run", "num", "position in history.jsonl", 82),
+    _c("run", "run", "num", "position in the ledger", 82),
     _c("kind", "kind", "text", "", lst=True),
     _c("schema", "schema", "num"),
 ] + IDENT_COLS[1:] + [
@@ -1665,7 +1665,7 @@ TABLE_JS = r"""
     /* honest failure: a blank div is a bug, so say what is missing */
     Array.prototype.forEach.call(document.querySelectorAll('.tablecard'), function(n){
       n.textContent = 'vendor/tabulator.min.js did not load, so no table was built. '
-        + 'The data itself is in docs/perf/history.jsonl.';
+        + 'The data itself is in docs/perf/ledger.db.';
     });
     return;
   }
@@ -1806,7 +1806,7 @@ CHART_JS = r"""
   }
   if (typeof uPlot === 'undefined') {
     dead('vendor/uplot.min.js did not load, so the chart was not drawn. Every '
-       + 'value it plots is in the tables below and in docs/perf/history.jsonl.');
+       + 'value it plots is in the tables below and in docs/perf/ledger.db.');
     return;
   }
 
@@ -2514,7 +2514,7 @@ how each number is produced:
               "<code>section</code> or sort <code>path</code> to get a series back.")}
 
 {_table_block("t-runs", "Runs",
-              "One row per line of <code>history.jsonl</code>, including the schema "
+              "One row per ledger entry, including the schema "
               "note and any commit that could not be measured. <code>has …</code> "
               "is 1 where the run recorded that section — rows are sparse because "
               "a run records what it measured and nothing else.")}

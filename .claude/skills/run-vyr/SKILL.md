@@ -58,7 +58,7 @@ python3 dev.py selftest        # render the demo PNG via vyr-cli
 python3 dev.py test            # cargo test --workspace
 python3 dev.py ci --quick      # THE gate: fmt+clippy+tests+check-mcu+M4+bench+size+ladder (~4s)
 python3 dev.py qemu-m4 --draft # M4 instruction-count + heap (needs qemu-system-arm)
-python3 dev.py track           # record one measurement-ledger row → docs/perf/history.jsonl + page
+python3 dev.py track           # record one measurement-ledger row → docs/perf/ledger.db (SQLite) + page
 ```
 
 `./dev.py ci --quick` is the run-after-every-change gate; the full `./dev.py ci` adds the cross-ISA ARM replay. Both end with `track`, which appends one row to the single measurement ledger.
