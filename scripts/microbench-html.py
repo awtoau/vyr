@@ -340,6 +340,8 @@ new Tabulator('#grid', {{
     {{title:'f64', field:'f64_share', sorter:'number', hozAlign:'right', formatter:pct}},
     {{title:'hw-f32', field:'f32_hw_share', sorter:'number', hozAlign:'right', formatter:pct}},
     {{title:'mem', field:'mem_share', sorter:'number', hozAlign:'right', formatter:pct}},
+    {{title:'vyr/LVGL', field:'lvgl_ratio', sorter:'number', hozAlign:'right',
+      formatter:c=>c.getValue()==null?'—':c.getValue().toFixed(1)+'×'}},
   ],
 }});
 </script></body></html>"""
@@ -390,12 +392,13 @@ def render_standalone(meta: dict, rows: list[dict], scenes: dict | None = None) 
     cols = [("tier", "tier", 0), ("point", "name", 0), ("kind", "kind", 0), ("w", "w", 1),
             ("α", "alpha", 1), ("r", "radius", 1), ("px", "px", 1), ("insns", "insns", 1),
             ("insns/px", "insns_per_px", 1), ("f64", "f64_share", 2),
-            ("hw-f32", "f32_hw_share", 2), ("mem", "mem_share", 2)]
+            ("hw-f32", "f32_hw_share", 2), ("mem", "mem_share", 2),
+            ("vyr/LVGL", "lvgl_ratio", 3)]
     head = "".join(f'<th data-c="{i}">{lbl}</th>' for i, (lbl, _, _) in enumerate(cols))
     body = ""
     for r in sorted(rows, key=lambda x: -(x["insns_per_px"] or 0)):
         tds = ""
-        for lbl, f, kind in cols:
+        for _lbl, f, kind in cols:
             v = r[f]
             if v is None:
                 disp, sval = "—", "-1"
@@ -403,6 +406,8 @@ def render_standalone(meta: dict, rows: list[dict], scenes: dict | None = None) 
                 disp, sval = (f"{v:,.1f}" if f == "insns_per_px" else f"{v:,}"), str(v)
             elif kind == 2:
                 disp, sval = f"{100*v:.1f}%", str(v)
+            elif kind == 3:  # ratio (vyr/LVGL)
+                disp, sval = f"{v:.1f}×", str(v)
             else:
                 disp, sval = str(v), str(v)
             if f == "name" and scenes and v in scenes:
